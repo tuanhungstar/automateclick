@@ -1,0 +1,12 @@
+__GLOBAL_VARIABLES__
+SAP_name,"""Q94"""
+number_line,427
+excel_link,"""C:/Users/puu1hc/OneDrive - Bosch Group/vba/BOT block BP V2/BP blocking list.xlsx"""
+excel_content,""""""
+iterate_,0
+cell_value,""""""
+Workbook,""""""
+__BOT_STEPS__
+StepType,DataJSON
+step,"{""type"": ""step"", ""class_name"": ""File_handle"", ""method_name"": ""read_excel"", ""module_name"": ""Bot_utility"", ""parameters_config"": {""file_name"": {""type"": ""variable"", ""value"": ""excel_link""}, ""sheet_name"": {""type"": ""hardcoded"", ""value"": ""Sheet1""}}, ""assign_to_variable_name"": ""Workbook""}"
+step,"{""type"": ""step"", ""class_name"": ""File_handle"", ""method_name"": ""read_excel_cells"", ""module_name"": ""Bot_utility"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""Workbook""}, ""col"": {""type"": ""hardcoded"", ""value"": ""A""}, ""row"": {""type"": ""hardcoded"", ""value"": 2}}, ""assign_to_variable_name"": null}"
