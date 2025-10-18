@@ -2,7 +2,9 @@
 setlocal enableDelayedExpansion
 
 REM --- Configuration ---
-set "VENV_DIR=D:\venv_automate"
+REM VENV_DIR is set to a subdirectory 'venv_automate' in the same folder as this BAT file.
+set "VENV_NAME=venv_automate"
+set "VENV_DIR=%~dp0%VENV_NAME%"
 set "PYTHON_EXE=python"
 set "PIP_VENV_EXE=%VENV_DIR%\Scripts\pip.exe"
 set "PYTHON_VENV_EXE=%VENV_DIR%\Scripts\python.exe"
@@ -20,16 +22,25 @@ if %errorlevel% neq 0 (
     goto :cleanup
 )
 
-REM --- 1. Create Virtual Environment (if missing) ---
-if not exist "%VENV_DIR%" (
-    echo Creating virtual environment at '%VENV_DIR%'...
-    %PYTHON_EXE% -m venv "%VENV_DIR%"
-    if not exist "%VENV_DIR%" (
-        echo Error: Failed to create virtual environment at %VENV_DIR%.
+REM --- 1. Cleanup and Create Virtual Environment ---
+
+if exist "%VENV_DIR%" (
+    echo Existing virtual environment found at '%VENV_DIR%'.
+    echo Deleting existing environment before creating a new one...
+    REM /S: Removes all directories and files in addition to the directory itself.
+    REM /Q: Quiet mode, meaning it will delete without asking for confirmation.
+    rmdir /s /q "%VENV_DIR%"
+    if exist "%VENV_DIR%" (
+        echo Error: Failed to delete existing environment. Please delete manually and try again.
         goto :cleanup
     )
-) else (
-    echo Virtual environment '%VENV_DIR%' already exists.
+)
+
+echo Creating virtual environment at '%VENV_DIR%'...
+%PYTHON_EXE% -m venv "%VENV_DIR%"
+if not exist "%VENV_DIR%" (
+    echo Error: Failed to create virtual environment.
+    goto :cleanup
 )
 
 REM Check for VENV's pip
@@ -67,8 +78,7 @@ echo Creating temporary dependency scanner script...
     echo                 else: # Simple case
     echo                     installed.add(line.lower())
     echo         return installed
-    echo     except Exception as e:
-    echo         # print(f"Error checking installed packages: {e}", file=sys.stderr)
+    echo     except Exception:
     echo         return set()
     
     echo def discover_and_filter_packages():
@@ -76,12 +86,13 @@ echo Creating temporary dependency scanner script...
     echo     STANDARD_LIB = set(sys.builtin_module_names) | set(name for _, name, _ in pkgutil.iter_modules())
     echo     REQUIRED_PACKAGES = set()
     echo     
-    echo     # Get installed packages from the specific VENV
-    echo     VENV_PYTHON = os.path.join(r"%VENV_DIR%", "Scripts", "python.exe")
+    echo     # --- IMPORTANT: Get VENV_DIR from the BAT environment variable ---
+    echo     VENV_DIR_PATH = r"%VENV_DIR%" 
+    echo     VENV_PYTHON = os.path.join(VENV_DIR_PATH, "Scripts", "python.exe")
     echo     INSTALLED_PACKAGES = get_installed_packages(VENV_PYTHON)
     echo     
     echo     # Scan Python files in the current directory and subdirectories
-    echo     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    echo     # The current directory is where the BAT file is run from.
     echo     for root, _, files in os.walk('.'):
     echo         for file in files:
     echo             if file.endswith('.py'):
@@ -109,4 +120,63 @@ echo Creating temporary dependency scanner script...
     echo         REQUIRED_PACKAGES.add('Pillow')
     
     echo     # Determine which packages are missing
-    echo     MISS
+    echo     MISSING_PACKAGES = set()
+    echo     for pkg in REQUIRED_PACKAGES:
+    echo         # Check if the required package (converted to lowercase for robust check) is installed
+    echo         if pkg.lower() not in INSTALLED_PACKAGES:
+    echo             MISSING_PACKAGES.add(pkg)
+
+    echo     # Write the space-separated list of missing packages to a file
+    echo     with open(r"%MISSING_PACKAGE_LIST%", 'w') as f:
+    echo         f.write(' '.join(MISSING_PACKAGES))
+
+    echo if __name__ == '__main__':
+    echo     discover_and_filter_packages()
+
+) > %DEP_SCRIPT%
+
+REM Execute the script using the new VENV's Python
+"%PYTHON_VENV_EXE%" %DEP_SCRIPT%
+
+if %errorlevel% neq 0 (
+    echo Error: Dependency discovery script failed to execute.
+    goto :cleanup
+)
+
+REM --- 3. Install Missing Packages ---
+echo Reading required packages from %MISSING_PACKAGE_LIST%...
+set /p PACKAGES_TO_INSTALL=< %MISSING_PACKAGE_LIST%
+
+if "%PACKAGES_TO_INSTALL%"=="" (
+    echo.
+    echo All required third-party packages are already installed. Nothing to do.
+) else (
+    echo Found packages to install: !PACKAGES_TO_INSTALL!
+    echo.
+    echo Installing packages...
+    "%PIP_VENV_EXE%" install !PACKAGES_TO_INSTALL!
+
+    if %errorlevel% neq 0 (
+        echo.
+        echo ERROR: Failed to install one or more packages.
+    ) else (
+        echo.
+        echo All packages installed successfully!
+    )
+)
+
+:cleanup
+echo.
+echo --- 4. Cleanup ---
+REM Delete temporary files
+if exist "%DEP_SCRIPT%" del %DEP_SCRIPT%
+if exist "%MISSING_PACKAGE_LIST%" del %MISSING_PACKAGE_LIST%
+echo Cleanup finished.
+
+:final_exit
+echo.
+echo --- SCRIPT EXECUTION FINISHED ---
+echo The environment is located at: %VENV_DIR%
+echo Press any key to close this window...
+pause >nul
+endlocal
