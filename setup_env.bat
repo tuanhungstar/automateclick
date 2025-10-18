@@ -1,9 +1,13 @@
 @echo off
-REM --- Check for Python and Virtual Environment Setup ---
-
-set "VENV_NAME=venv_automate"
+REM --- Configuration ---
+set "VENV_DIR=D:\venv_automate"
 set "PYTHON_EXE=python"
-set "PIP_EXE=%VENV_NAME%\Scripts\pip"
+
+REM --- Windows Virtual Environment Pathing ---
+REM The path to the pip executable inside the new venv location
+set "PIP_EXE=%VENV_DIR%\Scripts\pip.exe"
+REM The path to the Python executable inside the new venv location
+set "PYTHON_VENV_EXE=%VENV_DIR%\Scripts\python.exe"
 
 echo Checking for Python...
 where %PYTHON_EXE% >nul 2>nul
@@ -13,25 +17,24 @@ if %errorlevel% neq 0 (
     goto :end
 )
 
-REM --- Create Virtual Environment ---
-if not exist %VENV_NAME% (
-    echo Creating virtual environment '%VENV_NAME%'...
-    %PYTHON_EXE% -m venv %VENV_NAME%
-    if exist %VENV_NAME% (
+REM --- Create Virtual Environment in D:\venv_automate ---
+if not exist "%VENV_DIR%" (
+    echo Creating virtual environment at '%VENV_DIR%'...
+    %PYTHON_EXE% -m venv "%VENV_DIR%"
+    if exist "%VENV_DIR%" (
         echo Virtual environment created successfully.
     ) else (
         echo Error: Failed to create virtual environment.
         goto :end
     )
 ) else (
-    echo Virtual environment '%VENV_NAME%' already exists.
+    echo Virtual environment '%VENV_DIR%' already exists.
 )
 
-REM --- Activate Environment and Install Packages ---
-echo Activating virtual environment and installing packages...
+REM --- Install Packages ---
+echo Installing required packages (PyQt6, Pillow)...
 
-REM Use the pip executable directly from the new environment
-if not exist "%PIP_EXE%.exe" (
+if not exist "%PIP_EXE%" (
     echo Error: Could not find pip in the new environment. Check the environment creation.
     goto :end
 )
@@ -46,9 +49,7 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo Setup complete. The following packages were installed:
-echo - PyQt6
-echo - Pillow
+echo Setup complete. The environment is located at: %VENV_DIR%
 echo.
 
 :end
