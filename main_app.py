@@ -1256,6 +1256,59 @@ class SaveTemplateDialog(QDialog):
             return None
         return sanitized_name
 
+# --- NEW CLASS: SaveBotDialog ---
+class SaveBotDialog(QDialog):
+    def __init__(self, existing_bots: List[str], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Bot Steps")
+        self.setMinimumWidth(350)
+        
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        self.info_label = QLabel("Select an existing bot to overwrite, or type a new name.")
+        
+        self.bots_combo = QComboBox()
+        self.bots_combo.addItem("-- Create New Bot --")
+        self.bots_combo.addItems(sorted(existing_bots))
+
+        self.name_editor = QLineEdit()
+        self.name_editor.setPlaceholderText("Enter new bot name")
+
+        self.bots_combo.currentTextChanged.connect(self._selection_changed)
+
+        form_layout.addRow("Action:", self.bots_combo)
+        form_layout.addRow("Bot Name:", self.name_editor)
+
+        main_layout.addWidget(self.info_label)
+        main_layout.addLayout(form_layout)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self._selection_changed(self.bots_combo.currentText())
+
+    def _selection_changed(self, text: str) -> None:
+        if text == "-- Create New Bot --":
+            self.name_editor.clear()
+            self.name_editor.setEnabled(True)
+            self.name_editor.setPlaceholderText("Enter new bot name")
+        else:
+            self.name_editor.setText(text)
+            self.name_editor.setEnabled(True)
+
+    def get_bot_name(self) -> Optional[str]:
+        name = self.name_editor.text().strip()
+        sanitized_name = "".join(c for c in name if c.isalnum() or c in (' ', '_')).rstrip()
+        if not sanitized_name:
+            QMessageBox.warning(self, "Invalid Name", "Bot name cannot be empty or contain only invalid characters.")
+            return None
+        return sanitized_name
+
+# In main_app.py, REPLACE your existing GroupedTreeWidget class with this one
+
 class GroupedTreeWidget(QTreeWidget):
     """
     A custom QTreeWidget that draws vertical lines to indicate the scope
@@ -1284,8 +1337,9 @@ class GroupedTreeWidget(QTreeWidget):
             # Get the data associated with this tree item.
             item_data = self.main_window._get_item_data(child_item)
             
+            # --- THIS IS THE CORRECTED LINE ---
             # Check if this item is a block start and is currently expanded.
-            if (item_data and item_data.get("type") in ["group_start", "loop_start", "IF_START"] and self.isItemExpanded(child_item)):
+            if (item_data and item_data.get("type") in ["group_start", "loop_start", "IF_START"] and child_item.isExpanded()):
                 
                 start_index = item_data.get("original_listbox_row_index")
                 # Use MainWindow's helper to find the index of the matching 'end' block.
@@ -1323,7 +1377,7 @@ class GroupedTreeWidget(QTreeWidget):
                         painter.drawLine(x_offset, end_y, x_offset + tick_width, end_y)
 
             # Recurse into the children of the current item to draw nested block lines.
-            if self.isItemExpanded(child_item):
+            if child_item.isExpanded():
                 self._draw_group_lines_recursive(child_item, painter)
 
 # --- NEW WIDGET: FindReplaceWidget ---
@@ -1844,13 +1898,17 @@ class MainWindow(QWidget):
 
         self.init_ui()
         self.load_all_modules_to_tree()
-        self.load_saved_steps_to_dropdown()
+        self.load_saved_steps_to_tree()
+        
         self._update_variables_list_display()
         # In MainWindow.__init__ method
         self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
         self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
         self.template_document_directory = os.path.join(self.base_directory, "template_document") # <--- ADD THIS LINE
-        self.added_steps_data: List[Dict[str, Any]] = []        
+        self.added_steps_data: List[Dict[str, Any]] = []       
+        # In MainWindow.__init__
+        self.all_parsed_method_data: Dict[str, Dict[str, List[Tuple[str, str, str, str, Dict[str, Any]]]]] = {}
+        self.data_to_item_map: Dict[int, QTreeWidgetItem] = {} # <--- ADD THIS LINE
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1874,6 +1932,8 @@ class MainWindow(QWidget):
         self._log_to_console("ParameterInputDialog hidden, opening screenshot tool.")
         self.open_screenshot_tool()
 
+    # In main_app.py, REPLACE your entire init_ui method with this one:
+    
     def init_ui(self) -> None:
         os.makedirs(self.steps_template_directory, exist_ok=True)
         
@@ -1883,7 +1943,8 @@ class MainWindow(QWidget):
         
         self.full_view_container = QWidget()
         main_layout = QVBoxLayout(self.full_view_container)
-
+    
+        # --- TOP LAYOUT (Dropdown is removed from here) ---
         top_layout = QHBoxLayout()
         self.filter_label = QLabel("Filter Module:")
         font_height = self.filter_label.fontMetrics().height()
@@ -1894,23 +1955,29 @@ class MainWindow(QWidget):
         self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
         top_layout.addWidget(self.filter_label)
         top_layout.addWidget(self.module_filter_dropdown, 1)
-        top_layout.addStretch(1)
-        
-        self.label2 = QLabel("Load Saved Steps:")
-        self.dropdown2 = QComboBox()
-        self.dropdown2.currentIndexChanged.connect(self.saved_steps_selection_changed)
-        top_layout.addWidget(self.label2)
-        top_layout.addWidget(self.dropdown2)
-        top_layout.addStretch(1)
+        top_layout.addStretch(2) # Adjusted stretch
         main_layout.addLayout(top_layout)
         
         bottom_layout = QHBoxLayout()
+        
+        # --- LEFT PANEL (Completely Reorganized) ---
         self.left_panel_widget = QWidget()
         left_panel_layout = QVBoxLayout(self.left_panel_widget)
         
+        # NEW: Saved Bots Tree (Added correctly here)
+        self.saved_bots_group = QGroupBox("Saved Bots")
+        saved_bots_layout = QVBoxLayout()
+        self.saved_steps_tree = QTreeWidget()
+        self.saved_steps_tree.setHeaderLabels(["Bot Name", "Schedule", "Status"])
+        self.saved_steps_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected)
+        saved_bots_layout.addWidget(self.saved_steps_tree)
+        self.saved_bots_group.setLayout(saved_bots_layout)
+        left_panel_layout.addWidget(self.saved_bots_group, 1) # Use addWidget and stretch factor
+        
+        # Available Modules Tree
         self.tree_section_layout = QVBoxLayout()
         self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
-        # --- NEW: Search box ---
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search for methods or templates...")
         self.search_box.textChanged.connect(self.search_module_tree)
@@ -1920,11 +1987,8 @@ class MainWindow(QWidget):
         self.module_tree.setHeaderLabels(["Module/Class/Method"])
         self.module_tree.itemDoubleClicked.connect(self.add_item_to_execution_tree)
         self.module_tree.itemClicked.connect(self.update_selected_method_info)
-        # --- ADD THESE TWO LINES HERE ---
         self.module_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.module_tree.customContextMenuRequested.connect(self.show_context_menu)
-
-        
         self.tree_section_layout.addWidget(self.module_tree)
         self.label_info1 = QLabel("Module Info: None")
         self.label_info1.setStyleSheet("max-width: 180px; font-style: italic; color: gray;")
@@ -1936,10 +2000,10 @@ class MainWindow(QWidget):
         self.label_info3 = QLabel("Image Name")
         self.label_info3.setStyleSheet("font-style: italic; color: blue;")
         self.tree_section_layout.addWidget(self.label_info3)
-        left_panel_layout.addLayout(self.tree_section_layout, 1)
+        left_panel_layout.addLayout(self.tree_section_layout, 1) # Use addLayout and stretch factor
         left_panel_layout.addSpacing(10)
-        
-
+    
+        # Global Variables Section
         self.variables_group_box = QGroupBox("Global Variables")
         variables_layout = QVBoxLayout()
         self.variables_list = QListWidget()
@@ -1963,6 +2027,7 @@ class MainWindow(QWidget):
         left_panel_layout.addWidget(self.variables_group_box)
         left_panel_layout.addSpacing(10)
         
+        # Execution Buttons
         execute_buttons_layout = QVBoxLayout()
         execute_row_layout = QHBoxLayout()
         self.execute_all_button = QPushButton("Execute All Steps")
@@ -1983,15 +2048,14 @@ class MainWindow(QWidget):
         execute_buttons_layout.addLayout(block_buttons_layout)
         left_panel_layout.addLayout(execute_buttons_layout)
         
+        # Step Management Buttons
         button_row_layout_1 = QHBoxLayout()
         self.save_steps_button = QPushButton("Save Bot Steps")
         self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
         button_row_layout_1.addWidget(self.save_steps_button)
-        
         self.group_steps_button = QPushButton("Group Selected")
         self.group_steps_button.clicked.connect(self.group_selected_steps)
         button_row_layout_1.addWidget(self.group_steps_button)
-
         self.clear_selected_button = QPushButton("Clear Selected Steps")
         self.clear_selected_button.clicked.connect(self.clear_selected_steps)
         button_row_layout_1.addWidget(self.clear_selected_button)
@@ -2000,13 +2064,15 @@ class MainWindow(QWidget):
         button_row_layout_1.addWidget(self.remove_all_steps_button)
         left_panel_layout.addLayout(button_row_layout_1)
         
+        # Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
-        left_panel_layout.addWidget(self.progress_bar)
         self.progress_bar.hide()
+        left_panel_layout.addWidget(self.progress_bar)
         left_panel_layout.addSpacing(10)
         
+        # Utility Buttons
         utility_buttons_layout = QHBoxLayout()
         self.utility_buttons_layout_2 = QHBoxLayout()
         self.always_on_top_button = QPushButton("Always On Top: Off")
@@ -2017,26 +2083,27 @@ class MainWindow(QWidget):
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
         utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
         self.toggle_log_checkbox = QCheckBox("Show Execution Log")
-        self.toggle_log_checkbox.setChecked(True)
+        self.toggle_log_checkbox.setChecked(False) # Ensure log is hidden by default
         self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
         self.exit_button = QPushButton("Exit GUI")
         self.exit_button.clicked.connect(QApplication.instance().quit)
         self.utility_buttons_layout_2.addWidget(self.exit_button)
         left_panel_layout.addLayout(utility_buttons_layout)
         left_panel_layout.addLayout(self.utility_buttons_layout_2)
-
+    
+        # --- RIGHT PANEL ---
         self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.execution_tree_widget = QWidget()
         self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
         self.listbox_label2 = QLabel("Execution Flow:")
-        self.execution_tree = QTreeWidget()
+        self.execution_tree = GroupedTreeWidget(self) # Changed to custom widget
         self.execution_tree.setHeaderLabels(["Execution Flow"])
         self.execution_tree.setDragDropMode(QTreeWidget.DragDropMode.NoDragDrop)
         self.execution_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.execution_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.execution_tree_layout.addWidget(self.listbox_label2)
         self.execution_tree_layout.addWidget(self.execution_tree)
-
+    
         self.log_widget = QWidget()
         log_layout = QVBoxLayout(self.log_widget)
         log_group_box = QGroupBox("Execution Log")
@@ -2052,27 +2119,30 @@ class MainWindow(QWidget):
         log_layout.addWidget(log_group_box)
         
         self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
+        self.log_widget.setVisible(False) # Ensure log is hidden by default
+        
         self.right_splitter.addWidget(self.execution_tree_widget)
         self.right_splitter.addWidget(self.log_widget)
         self.right_splitter.setSizes([600, 400])
-
+    
         bottom_layout.addWidget(self.left_panel_widget, 1)
         bottom_layout.addWidget(self.right_splitter, 2)
         main_layout.addLayout(bottom_layout)
         
+        # --- MINI VIEW ---
         self.mini_view_container = QWidget()
         self.mini_view_layout = QVBoxLayout(self.mini_view_container)
         self.mini_view_layout.setContentsMargins(5,5,5,5)
-
+    
         self.stacked_layout.addWidget(self.full_view_container)
         self.stacked_layout.addWidget(self.mini_view_container)
         master_layout.addLayout(self.stacked_layout)
         
         self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
-
+    
         self.widget_homes = {
             self.execution_tree: (self.execution_tree_layout, 1),
-            self.label_info2: (self.tree_section_layout, 4), # Index updated due to search box
+            self.label_info2: (self.tree_section_layout, 5), # Index updated
             self.progress_bar: (left_panel_layout, 5),
             self.exit_button: (self.utility_buttons_layout_2, 1)
         }
@@ -2179,17 +2249,22 @@ class MainWindow(QWidget):
         
         traverse(self.execution_tree.invisibleRootItem())
     
+    # In the MainWindow class, REPLACE your existing method with this one
+    
     def _rebuild_execution_tree(self, item_to_focus_data: Optional[Dict[str, Any]] = None) -> None:
         """
         Rebuilds the entire execution tree from the flat `added_steps_data` list.
         - Handles nesting of blocks correctly.
         - Selects and scrolls to a specified item.
         - PRESERVES the expansion state of blocks.
+        - Populates the data_to_item_map for visual guides.
         """
-        # 1. Remember which items are currently expanded before clearing the tree.
         expanded_state = self._get_expansion_state()
     
         self.execution_tree.clear()
+        # --- ADD THIS LINE to clear the map ---
+        self.data_to_item_map.clear()
+        
         current_parent_stack: List[QTreeWidgetItem] = [self.execution_tree.invisibleRootItem()]
         item_to_focus: Optional[QTreeWidgetItem] = None
     
@@ -2197,19 +2272,17 @@ class MainWindow(QWidget):
             step_data_dict["original_listbox_row_index"] = i
             step_type = step_data_dict.get("type")
     
-            # Stack Popping Logic (handles leaving a block)
+            # Stack Popping Logic
             if step_type == "group_end":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
                     if last_parent_data and last_parent_data.get("type") == "group_start" and last_parent_data.get("group_id") == step_data_dict.get("group_id"):
                         current_parent_stack.pop()
-    
             elif step_type == "loop_end":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
                     if last_parent_data and last_parent_data.get("type") == "loop_start" and last_parent_data.get("loop_id") == step_data_dict.get("loop_id"):
                         current_parent_stack.pop()
-    
             elif step_type == "IF_END":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
@@ -2222,10 +2295,14 @@ class MainWindow(QWidget):
                     elif last_parent_data and last_parent_data.get("type") == "IF_START" and last_parent_data.get("if_id") == step_data_dict.get("if_id"):
                         current_parent_stack.pop()
     
-            # Item Creation (for ALL items)
+            # Item Creation
             parent_for_current_item = current_parent_stack[-1]
             tree_item = QTreeWidgetItem(parent_for_current_item)
             tree_item.setData(0, Qt.ItemDataRole.UserRole, QVariant(step_data_dict))
+            
+            # --- ADD THIS LINE to populate the map ---
+            self.data_to_item_map[i] = tree_item
+    
             card = ExecutionStepCard(step_data_dict, i + 1)
             card.edit_requested.connect(self._handle_edit_request)
             card.delete_requested.connect(self._handle_delete_request)
@@ -2239,18 +2316,15 @@ class MainWindow(QWidget):
             if item_to_focus_data and step_data_dict == item_to_focus_data:
                 item_to_focus = tree_item
     
-            # Stack Pushing Logic (handles entering a new block)
+            # Stack Pushing Logic
             if step_type in ["loop_start", "IF_START", "ELSE", "group_start"]:
                 current_parent_stack.append(tree_item)
     
-        # Focus Logic (runs after the tree is fully built)
         if item_to_focus:
             self.execution_tree.setCurrentItem(item_to_focus)
             self.execution_tree.scrollToItem(item_to_focus, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
     
         self.update_status_column_for_all_items()
-        
-        # 2. Restore the saved expansion state after the tree is rebuilt.
         self._restore_expansion_state(expanded_state)
     
 
@@ -2612,36 +2686,19 @@ class MainWindow(QWidget):
         for i in range(root.childCount()):
             filter_recursive(root.child(i))
 
-    def load_saved_steps_to_dropdown(self) -> None:
-        try:
-            self.dropdown2.currentIndexChanged.disconnect(self.saved_steps_selection_changed)
-        except TypeError:
-            pass
-        self.dropdown2.clear()
-        self.dropdown2.addItem("-- Select Step File --")
-        try:
-            os.makedirs(self.bot_steps_directory, exist_ok=True)
-            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
-            self.dropdown2.addItems(step_files)
-            if not step_files:
-                self.dropdown2.addItem("No saved steps found.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error Loading Saved Steps", f"Could not load step files: {e}")
-        finally:
-            self.dropdown2.currentIndexChanged.connect(self.saved_steps_selection_changed)
-
-    def saved_steps_selection_changed(self, index: int) -> None:
-        if index <= 0:
+    def saved_step_tree_item_selected(self, item: QTreeWidgetItem, column: int):
+        """Loads a bot's steps when its item is double-clicked in the tree."""
+        bot_name = item.text(0)
+        if bot_name == "No saved bots found.":
             return
-        selected_file_name = self.dropdown2.currentText()
-        if not selected_file_name.endswith(".csv"):
-            return
-        file_path = os.path.join(self.bot_steps_directory, selected_file_name)
+    
+        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
         if os.path.exists(file_path):
             self.load_steps_from_file(file_path)
         else:
-            QMessageBox.warning(self, "File Not Found", f"The selected step file was not found:\n{file_path}")
-        self.load_saved_steps_to_dropdown()
+            QMessageBox.warning(self, "File Not Found", f"The selected bot file was not found:\n{file_path}")
+            self.load_saved_steps_to_tree() # Refresh the tree if a file is missing
+
 
     # --- NEW HELPER: _extract_variables_from_steps ---
     def _extract_variables_from_steps(self, steps: List[Dict[str, Any]]) -> set:
@@ -3275,11 +3332,13 @@ class MainWindow(QWidget):
         new_height = int(qimage_input.height() * (percentage / 100))
         return QPixmap.fromImage(qimage_input.scaled(QSize(new_width, new_height), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
+# In the MainWindow class, REPLACE your existing method with this one
+
     def set_ui_enabled_state(self, enabled: bool) -> None:
         widgets_to_toggle = [
             self.execute_all_button, self.add_loop_button, self.add_conditional_button, 
             self.save_steps_button, self.clear_selected_button, self.remove_all_steps_button,
-            self.module_filter_dropdown, self.dropdown2, self.module_tree, 
+            self.module_filter_dropdown, self.module_tree, self.saved_steps_tree, # Corrected line
             self.add_var_button, self.edit_var_button, self.delete_var_button, 
             self.clear_vars_button, self.open_screenshot_tool_button, 
             self.group_steps_button
@@ -3346,34 +3405,64 @@ class MainWindow(QWidget):
                 self.global_variables[var_name] = None
             self._update_variables_list_display()
 
+# In the MainWindow class, REPLACE your existing save_bot_steps_dialog method with this one
+
     def save_bot_steps_dialog(self) -> None:
+        """Opens a custom dialog to get a name and save the bot steps,
+        sanitizing any non-serializable global variables."""
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
             return
+        
         os.makedirs(self.bot_steps_directory, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_filename = f"bot_steps_{timestamp}.csv"
-        initial_path = os.path.join(self.bot_steps_directory, default_filename)
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Bot Steps", initial_path, "CSV Files (*.csv);;All Files (*)")
-        if file_path:
+        existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
+        
+        dialog = SaveBotDialog(existing_bots, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            bot_name = dialog.get_bot_name()
+            if not bot_name:
+                return
+    
+            if bot_name in existing_bots:
+                reply = QMessageBox.question(self, "Confirm Overwrite",
+                                             f"A bot named '{bot_name}' already exists. Overwrite it?",
+                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
+                    return
+    
+            file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
             try:
+                # --- NEW: Create a sanitized copy of global variables for saving ---
+                variables_to_save = {}
+                for var_name, var_value in self.global_variables.items():
+                    try:
+                        # Attempt to serialize the value to see if it's valid
+                        json.dumps(var_value)
+                        variables_to_save[var_name] = var_value
+                    except (TypeError, OverflowError):
+                        # If it fails, the value is a non-serializable object. Set to None.
+                        variables_to_save[var_name] = None
+                # --- End of new section ---
+    
                 with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
                     writer = csv.writer(csvfile)
                     writer.writerow(["__GLOBAL_VARIABLES__"])
-                    for var_name, var_value in self.global_variables.items():
+                    # Use the sanitized dictionary for writing
+                    for var_name, var_value in variables_to_save.items():
                         writer.writerow([var_name, json.dumps(var_value)])
                     writer.writerow(["__BOT_STEPS__"])
                     writer.writerow(["StepType", "DataJSON"])
                     for step_data_dict in self.added_steps_data:
                         step_data_to_save = json.loads(json.dumps(step_data_dict))
                         step_data_to_save.pop("original_listbox_row_index", None)
-                        if step_data_to_save["type"] == "step" and step_data_to_save.get("parameters_config"):
+                        if step_data_to_save.get("type") == "step" and step_data_to_save.get("parameters_config"):
                             step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
                         writer.writerow([step_data_to_save["type"], json.dumps(step_data_to_save)])
-                QMessageBox.information(self, "Save Successful", f"Bot steps saved to:\n{file_path}")
-                self.load_saved_steps_to_dropdown()
+                QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{file_path}\n(Object variables were reset to 'None' in the file.)")
+                self.load_saved_steps_to_tree()
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
+    
 
     def load_steps_from_file(self, file_path: str) -> None:
         self._internal_clear_all_steps()
@@ -3433,6 +3522,8 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
             self._log_to_console(f"Load Error: {e}")
     # REPLACE your old show_method_context_menu with this one
+    # In the MainWindow class, REPLACE your old show_context_menu with this one
+
     def show_context_menu(self, position: QPoint):
         item = self.module_tree.itemAt(position)
         if not item:
@@ -3443,14 +3534,11 @@ class MainWindow(QWidget):
         # --- Handle Methods ---
         if isinstance(item_data, tuple) and len(item_data) == 5:
             _, class_name, method_name, module_name, _ = item_data
-    
             context_menu = QMenu(self)
             read_doc_action = context_menu.addAction("Read Documentation")
             modify_action = context_menu.addAction("Modify Method")
             delete_action = context_menu.addAction("Delete Method")
-    
             action = context_menu.exec(self.module_tree.mapToGlobal(position))
-    
             if action == read_doc_action:
                 self.read_method_documentation(module_name, class_name, method_name)
             elif action == modify_action:
@@ -3458,23 +3546,29 @@ class MainWindow(QWidget):
             elif action == delete_action:
                 self.delete_method(module_name, class_name, method_name)
     
-        # --- Handle Templates ---
+        # --- Handle Templates (UPDATED) ---
         elif isinstance(item_data, dict) and item_data.get('type') == 'template':
             template_name = item_data.get('name')
             if not template_name:
                 return
     
             context_menu = QMenu(self)
+            add_action = context_menu.addAction("Add to Execution Flow")
+            context_menu.addSeparator()
             doc_action = context_menu.addAction("View Documentation")
-    
-            # Check if a doc file exists for this template
+            delete_action = context_menu.addAction("Delete Template")
+            
             doc_path = os.path.join(self.template_document_directory, f"{template_name}.html")
             doc_action.setEnabled(os.path.exists(doc_path))
     
             action = context_menu.exec(self.module_tree.mapToGlobal(position))
     
-            if action == doc_action:
+            if action == add_action:
+                self._load_template_by_name(template_name)
+            elif action == doc_action:
                 self.view_template_documentation(template_name)
+            elif action == delete_action:
+                self.delete_template(template_name)
 
     # Add this new method to the MainWindow class
     def view_template_documentation(self, template_name: str):
@@ -3489,6 +3583,28 @@ class MainWindow(QWidget):
         else:
             QMessageBox.information(self, "Documentation Not Found",
                                       f"No documentation file found at:\n{doc_path}")
+
+    # Add this new method to the MainWindow class
+    
+    def delete_template(self, template_name: str):
+        """Deletes a template file after user confirmation."""
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     f"Are you sure you want to permanently delete the template '{template_name}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+    
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                template_path = os.path.join(self.steps_template_directory, f"{template_name}.json")
+                if os.path.exists(template_path):
+                    os.remove(template_path)
+                    QMessageBox.information(self, "Success", f"Template '{template_name}' has been deleted.")
+                    # Refresh the module tree to reflect the deletion
+                    self.load_all_modules_to_tree()
+                else:
+                    QMessageBox.warning(self, "File Not Found", f"The template file for '{template_name}' could not be found.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"An error occurred while deleting the template:\n{e}")
     # Add this method to the MainWindow class
     def read_method_documentation(self, module_name: str, class_name: str, method_name: str):
         try:
@@ -3527,6 +3643,21 @@ class MainWindow(QWidget):
     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not open the code editor: {e}")
+
+    def load_saved_steps_to_tree(self) -> None:
+        """Loads saved bot step files into the QTreeWidget."""
+        self.saved_steps_tree.clear()
+        try:
+            os.makedirs(self.bot_steps_directory, exist_ok=True)
+            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
+            for file_name in step_files:
+                bot_name = os.path.splitext(file_name)[0]
+                # Create a tree item with placeholder text for the new columns
+                tree_item = QTreeWidgetItem(self.saved_steps_tree, [bot_name, "Not Set", "Idle"])
+            if not step_files:
+                self.saved_steps_tree.addTopLevelItem(QTreeWidgetItem(["No saved bots found."]))
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
