@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutomateTask User Documentation</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background-color: #f4f7f6; }
+        .container { max-width: 1000px; margin: auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); }
+        h1 { color: #0056b3; border-bottom: 3px solid #0056b3; padding-bottom: 10px; margin-top: 0; }
+        h2 { color: #007bff; border-bottom: 2px solid #eee; padding-bottom: 5px; margin-top: 25px; }
+        h3 { color: #28a745; margin-top: 20px; }
+        .section { margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 6px; }
+        .code { background-color: #f8f9fa; padding: 2px 5px; border-radius: 3px; font-family: Consolas, monospace; color: #d63384; font-size: 0.9em; }
+        ul { padding-left: 20px; }
+        li { margin-bottom: 10px; }
+        .button-style { background-color: #f0f0f0; border: 1px solid #ccc; padding: 3px 6px; border-radius: 4px; font-weight: bold; }
+        .note { background-color: #fff3cd; color: #856404; padding: 10px; border-radius: 5px; border: 1px solid #ffeeba; margin-top: 15px; }
+        .warning { background-color: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; border: 1px solid #f5c6cb; margin-top: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <h1>AutomateTask GUI Application Documentation</h1>
+
+    <div class="section">
+        <h2>1. Overview</h2>
+        <p><strong>AutomateTask</strong> is a graphical user interface (GUI) application for building and running automation bots. It allows you to orchestrate steps, manage dynamic data using global variables, and incorporate complex control flow logic from modular Python code.</p>
+        <p>Your automation logic resides in Python modules within the <span class="code">Bot_module</span> directory, and this application dynamically loads and executes their methods.</p>
+    </div>
+
+    <div class="section">
+        <h2>2. Main Interface Layout</h2>
+        <p>The application is divided into three main areas:</p>
+        <ul>
+            <li><strong>Left Panel:</strong> Contains the Module/Template Browser, Global Variables manager, and Control Buttons.</li>
+            <li><strong>Execution Flow (Center):</strong> A tree-view where you build and organize the bot's steps (the core logic).</li>
+            <li><strong>Execution Log (Right):</strong> Displays real-time messages, warnings, and errors during bot execution.</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>3. Building the Automation Flow</h2>
+
+        <h3>3.1. Available Modules, Classes, and Methods</h3>
+        <p>The top-left panel loads all accessible classes and methods from Python files in the <span class="code">Bot_module</span> folder. You can:</p>
+        <ul>
+            <li><strong>Filter Module:</strong> Use the dropdown to show steps from a specific module only.</li>
+            [cite_start]<li><strong>Search:</strong> Use the search box to filter for methods or templates by name[cite: 217, 302].</li>
+            [cite_start]<li><strong>Add Step:</strong> <strong>Double-click</strong> any method to open the **Parameter Input Dialog** and configure it as an execution step[cite: 217, 336].</li>
+            [cite_start]<li><strong>View Info:</strong> Single-click an item to display its details in the **Module Info** section below, including image previews if applicable[cite: 218, 219, 333].</li>
+        </ul>
+        [cite_start]<p>Templates saved from block structures are also listed under the "Bot Templates" item[cite: 296, 297].</p>
+
+        <h3>3.2. Execution Flow Tree</h3>
+        [cite_start]<p>This is where your automation script is constructed using **Execution Step Cards**[cite: 227].</p>
+        <ul>
+            <li><strong>Add a Step:</strong> Double-click a method from the left panel. [cite_start]A **Step Insertion Dialog** will prompt you to choose where to place the new step (as a child of a block, before/after a selected step, or at the end)[cite: 338, 339, 340, 341].</li>
+            [cite_start]<li><strong>Edit Step:</strong> Click the <span class="button-style">Edit</span> button on a step card to re-open the configuration dialog[cite: 247, 248, 353].</li>
+            [cite_start]<li><strong>Move Step:</strong> Use the <span class="button-style">↑</span> and <span class="button-style">↓</span> buttons to reorder single steps or entire blocks (loops/conditionals/groups)[cite: 248, 260, 263].</li>
+            [cite_start]<li><strong>Delete Step:</strong> Use the <span class="button-style">Delete</span> button to remove the step or an entire block structure[cite: 248, 252].</li>
+            <li><strong>Save Template:</strong> The <span class="button-style">Save Template</span> button appears on block start steps (Loop, IF, Group). [cite_start]Click it to save the entire block structure (start to end) as a reusable template in the <span class="code">Steps_template</span> folder[cite: 265, 267].</li>
+        </ul>
+
+        <h3>3.3. Control Flow Blocks</h3>
+        <p>Use the buttons in the Left Panel to add structural logic:</p>
+        <ul>
+            [cite_start]<li><strong>Add Loop:</strong> Opens the **Loop Configuration Dialog** where you set the iteration count (hardcoded or variable) and an optional variable to track the current iteration[cite: 342, 343]. [cite_start]Adds matching <span class="code">loop_start</span> and <span class="code">loop_end</span> steps[cite: 344].</li>
+            <li><strong>Add Conditional Block:</strong> Opens the **Conditional Configuration Dialog** to define an IF condition (e.g., <span class="code">@var_A == 5</span>). [cite_start]Adds matching <span class="code">IF_START</span>, <span class="code">ELSE</span>, and <span class="code">IF_END</span> steps[cite: 345, 346, 347].</li>
+            [cite_start]<li><strong>Group Selected:</strong> Select one or more steps and click <span class="button-style">Group Selected</span> to wrap them in a named group (<span class="code">group_start</span> / <span class="code">group_end</span>) for organizational purposes[cite: 348, 351, 352].</li>
+        </ul>
+
+    </div>
+
+    <div class="section">
+        <h2>4. Global Variables Management</h2>
+        [cite_start]<p>The <strong>Global Variables</strong> box allows you to define and manage variables that can be shared across all steps and used for loop counts, conditional checks, and method parameters[cite: 220, 222].</p>
+        <ul>
+            [cite_start]<li><strong>Add Variable:</strong> Click <span class="button-style">Add Variable</span> to define a new variable name and its initial value[cite: 403].</li>
+            [cite_start]<li><strong>Edit Variable:</strong> Select a variable and click <span class="button-style">Edit Variable</span> to change its name or value[cite: 406].</li>
+            [cite_start]<li><strong>Delete Variable:</strong> Removes the selected variable[cite: 407].</li>
+            [cite_start]<li><strong>Reset All Values to None:</strong> Sets the value of all global variables to <span class="code">None</span>[cite: 409].</li>
+            [cite_start]<li><strong>Variable Use:</strong> When configuring a step, you can select a global variable instead of entering a hardcoded value[cite: 76, 77].</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>5. Execution and Control</h2>
+
+        <h3>5.1. Execution</h3>
+        <ul>
+            [cite_start]<li><strong>Execute All Steps:</strong> Runs the entire sequence of steps in the Execution Flow[cite: 222, 376].</li>
+            <li><strong>Execute 1 Step:</strong> Select a single step in the tree and click <span class="button-style">Execute 1 Step</span> to run only that step in isolation. [cite_start]The execution context (variables, etc.) will be maintained[cite: 222, 383].</li>
+            [cite_start]<li><strong>Execute This:</strong> Click the <span class="button-style">Execute This</span> button on an **Execution Step Card** to run that specific step[cite: 271, 273].</li>
+            [cite_start]<li><strong>Progress Bar:</strong> Shows the overall progress of the execution[cite: 225, 386].</li>
+            [cite_start]<li><strong>Execution Log:</strong> Provides detailed, real-time feedback on step execution, results, and errors[cite: 229, 389].</li>
+        </ul>
+
+        <h3>5.2. Utility</h3>
+        <ul>
+            [cite_start]<li><strong>Open Screenshot Tool:</strong> Opens a separate **Take and Manage Screenshots** window (<span class="code">SecondWindow</span>) for capturing and managing images used in image-based automation steps[cite: 276].</li>
+            [cite_start]<li><strong>Always On Top:</strong> Toggles whether the main GUI window remains above all other applications[cite: 275]. [cite_start]When executing, the main GUI can optionally minimize to a smaller view that stays on top for quick status checking[cite: 233, 234].</li>
+            [cite_start]<li><strong>Save Bot Steps:</strong> Saves the current steps and all global variables to a CSV file in the <span class="code">Bot_steps</span> directory[cite: 410, 411, 412, 414].</li>
+            [cite_start]<li><strong>Load Saved Steps:</strong> Use the "Load Saved Steps" dropdown to load steps and variables from a previously saved CSV file[cite: 216, 309, 415].</li>
+        </ul>
+    </div>
+
+    <div class="section">
+        <h2>6. Handling Image Parameters</h2>
+        [cite_start]<p>If a method parameter is for an image file (e.g., <span class="code">current_file</span>), the Parameter Input Dialog presents special controls[cite: 78]:</p>
+        <ul>
+            <li><strong>Select from Files:</strong> Choose an existing image name from the dropdown.</li>
+            [cite_start]<li><strong>Add new image:</strong> Selecting this option will temporarily hide the dialog and automatically open the **Screenshot Tool**[cite: 99]. [cite_start]Once an image is saved, the dialog re-appears and the new image is selected[cite: 277].</li>
+            <li><strong>Global Variable:</strong> Use a global variable whose value is the image file name.</li>
+        </ul>
+    </div>
+
+    <div class="warning">
+        <h3>Important Note on Block Structure:</h3>
+        <p>Moving, editing, or deleting steps within the Execution Flow must maintain a valid block structure (e.g., every <span class="code">loop_start</span> must have a corresponding <span class="code">loop_end</span>, and <span class="code">IF_START</span> must be followed by <span class="code">ELSE</span> and <span class="code">IF_END</span>). [cite_start]The application performs a validation check before executing all steps[cite: 377, 379, 380, 381, 382]. Manually removing block markers can lead to errors.</p>
+    </div>
+
+</div>
+</body>
+</html>
