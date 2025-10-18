@@ -24,13 +24,7 @@ import keyboard
 import openpyxl
 import datetime
 from datetime import datetime
-script_dir = os.path.dirname(os.path.abspath(__file__))
-my_lib_dir = os.path.join(script_dir, "my_lib")
-if my_lib_dir not in sys.path:
-    sys.path.insert(0, my_lib_dir)
-    
-with open('my_lib/config.txt') as json_file:
-    config = json.load(json_file)
+
     
 from my_lib.shared_context import ExecutionContext as Context
 
@@ -389,12 +383,8 @@ class Bot_utility:
         time.sleep(value)
         return f'sleep {value} second'  
 
-    def Hung_test(self):
-        """A simple test method for debugging purposes. Prints 'Hung' to the console."""
-        print ('Hung')
-        pass
         
-class Bot_sap:
+class Bot_SAP:
     '''
     A class containing methods specifically designed for automating tasks within
     the SAP GUI environment.
@@ -427,13 +417,13 @@ class Bot_sap:
         Returns:
             None
         """
-        win = self.bot_utility.check_win_title_exits(SAP,timeout=1)
+        win = self.bot_utility.check_win_title_exits(SAP,saplogon_exe,timeout=1)
         if win==False:
-            activate_SAP_log_on = self.bot_utility.check_win_title_exits(config['SAP_log_on_ver'],timeout=1)
+            activate_SAP_log_on = self.bot_utility.check_win_title_exits('SAP Logon',timeout=1)
             if activate_SAP_log_on==False:
-                subprocess.Popen(config['SAP_log_pad'], creationflags=subprocess.CREATE_NEW_CONSOLE) 
+                subprocess.Popen(saplogon_exe, creationflags=subprocess.CREATE_NEW_CONSOLE) 
             else:
-                self.bot_utility.activate_window(config['SAP_log_on_ver'])
+                self.bot_utility.activate_window('SAP Logon')
             time.sleep(2)
             
             self.bot_utility.check_image_exits('SAP_logon_button',timeout=10)
@@ -525,6 +515,7 @@ class Bot_sap:
             str: A status message indicating success ('BP number is blocked'), failure
                  ('BP number is not found'), or an error at a specific step
                  (e.g., 'BOT ERROR step 1').
+            Hung add new text
         """
         print (partner_code,reason_block)
         time.sleep(5)
@@ -786,21 +777,3 @@ class File_handle():
         except Exception as e:
             print(f"An error occurred while counting column '{column_identifier}': {e}")
             return -1
-class variable_manipulation:
-    """A class for basic variable manipulation tasks."""
-    def __init__(self):
-        """Initializes the variable_manipulation class."""
-        pass
-    def assign_value2variable(self,value):
-        """Assigns a value to a variable by returning it.
-
-        This method acts as a simple pass-through, which can be useful in
-        automation workflows to explicitly set a variable's value.
-
-        Args:
-            value (any): The input value of any data type.
-
-        Returns:
-            any: The same value that was provided as input.
-        """
-        return value
