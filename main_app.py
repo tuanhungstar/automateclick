@@ -1,0 +1,2891 @@
+import sys
+import os
+import inspect
+import importlib
+import time
+import csv
+import io
+from datetime import datetime
+import json
+import base64
+from PIL import ImageGrab
+import PIL.Image
+from PIL.ImageQt import ImageQt
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen
+from PyQt6 import QtWidgets, QtGui
+from typing import Optional, List, Dict, Any, Tuple, Union
+
+# Ensure my_lib is in the Python path
+script_dir = os.path.dirname(os.path.abspath(__file__))
+my_lib_dir = os.path.join(script_dir, "my_lib")
+if my_lib_dir not in sys.path:
+    sys.path.insert(0, my_lib_dir)
+
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QComboBox, QListWidget, QLabel, QPushButton, QListWidgetItem,
+    QMessageBox, QProgressBar, QFileDialog, QDialog,
+    QLineEdit, QVBoxLayout as QVBoxLayoutDialog, QFormLayout,
+    QDialogButtonBox,
+    QRadioButton, QGroupBox, QCheckBox, QTextEdit,
+    QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
+    QStackedLayout, QBoxLayout
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint
+from PyQt6.QtGui import QIntValidator
+
+# Use the actual libraries from the my_lib folder
+from my_lib.shared_context import ExecutionContext, GuiCommunicator
+from my_lib.BOT_take_image import MainWindow as BotTakeImageWindow
+
+
+
+class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer a full window
+
+    screenshot_saved = pyqtSignal(str)
+
+    def __init__(self, image: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Take and Manage Screenshots")
+        self.setMinimumSize(679, 248) # Set a minimum size to match the original GUI
+
+        self.bot_take_image_ui = BotTakeImageWindow(image)
+
+        self.bot_take_image_ui.screenshotSaved.connect(self._handle_screenshot_saved)
+
+        self.bot_take_image_ui.exit_BOT_butt.clicked.connect(self.accept) # Accept the dialog when exit is clicked
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.bot_take_image_ui.centralwidget)
+        self.setLayout(layout)
+
+        self.finished.connect(self._on_dialog_closed)
+
+    def _handle_screenshot_saved(self, filename: str):
+        """Pass through the signal from the embedded UI."""
+        self.screenshot_saved.emit(filename)
+
+    def _on_dialog_closed(self, result: int):
+        """Handles dialog closure, including via 'X' button."""
+
+        if result == QDialog.DialogCode.Rejected: # Closed via 'X' or Escape
+            self.screenshot_saved.emit("") # No specific file was saved/selected
+
+# --- ExecutionStepCard ---
+class ExecutionStepCard(QWidget):
+    edit_requested = pyqtSignal(dict)
+    delete_requested = pyqtSignal(dict)
+    move_up_requested = pyqtSignal(dict)
+    move_down_requested = pyqtSignal(dict)
+    save_as_template_requested = pyqtSignal(dict)
+    execute_this_requested = pyqtSignal(dict)
+
+
+    def __init__(self, step_data: Dict[str, Any], step_number: int, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.step_data = step_data
+        self.step_number = step_number
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(5)
+        self.setObjectName("ExecutionStepCard")
+        self.set_status("#D3D3D3")
+
+        top_row_layout = QHBoxLayout()
+        step_label_text = self._get_formatted_title()
+        self.step_label = QLabel(step_label_text)
+        
+        step_type = self.step_data.get("type")
+        if step_type == 'group_start':
+            self.step_label.setStyleSheet("font-weight: bold; background-color: #D6EAF8; padding: 4px; border-radius: 3px;")
+        else:
+            self.step_label.setStyleSheet("font-weight: bold; background-color: #EAEAEA; padding: 4px; border-radius: 3px;")
+
+        top_row_layout.addWidget(self.step_label)
+        top_row_layout.addStretch()
+
+        self.up_button = QPushButton("↑")
+        self.down_button = QPushButton("↓")
+        self.edit_button = QPushButton("Edit")
+        self.delete_button = QPushButton("Delete")
+        self.save_template_button = QPushButton("Save Template")
+        self.execute_this_button = QPushButton("Execute This")
+
+        button_font = self.up_button.font()
+        button_font.setBold(True)
+        self.up_button.setFont(button_font)
+        self.down_button.setFont(button_font)
+
+        self.up_button.setFixedSize(25, 25)
+        self.down_button.setFixedSize(25, 25)
+        self.edit_button.setFixedSize(60, 25)
+        self.delete_button.setFixedSize(60, 25)
+        self.save_template_button.setFixedSize(100, 25)
+        self.execute_this_button.setFixedSize(100, 25)
+
+        self.up_button.clicked.connect(lambda: self.move_up_requested.emit(self.step_data))
+        self.down_button.clicked.connect(lambda: self.move_down_requested.emit(self.step_data))
+        self.edit_button.clicked.connect(lambda: self.edit_requested.emit(self.step_data))
+        self.delete_button.clicked.connect(lambda: self.delete_requested.emit(self.step_data))
+        self.save_template_button.clicked.connect(lambda: self.save_as_template_requested.emit(self.step_data))
+        self.execute_this_button.clicked.connect(lambda: self.execute_this_requested.emit(self.step_data))
+
+        if self.step_data.get("type") not in ["loop_start", "IF_START", "group_start"]:
+            self.save_template_button.hide()
+        
+        if self.step_data.get("type") in ["loop_end", "ELSE", "IF_END", "group_end"]:
+            self.up_button.hide()
+            self.down_button.hide()
+            self.edit_button.hide()
+            self.delete_button.hide()
+            self.execute_this_button.hide()
+
+        top_row_layout.addWidget(self.up_button)
+        top_row_layout.addWidget(self.down_button)
+        top_row_layout.addWidget(self.edit_button)
+        top_row_layout.addWidget(self.delete_button)
+        top_row_layout.addWidget(self.save_template_button)
+        top_row_layout.addWidget(self.execute_this_button)
+
+        main_layout.addLayout(top_row_layout)
+
+        # NEW: Store original method text and create the label
+        self._original_method_text = self._get_formatted_method_name()
+        if self._original_method_text:
+            self.method_label = QLabel(self._original_method_text)
+            self.method_label.setStyleSheet("font-size: 10pt; padding: 5px; background-color: white; border: 1px solid #E0E0E0; border-radius: 3px;")
+            self.method_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            main_layout.addWidget(self.method_label)
+        else:
+            self.method_label = None # Ensure it exists for other methods to check
+
+        if self.step_data.get("type") == "step":
+            parameters_config = self.step_data.get("parameters_config", {})
+            if parameters_config:
+                params_group = QGroupBox("Parameters")
+                params_layout = QFormLayout()
+                params_layout.setContentsMargins(8, 5, 8, 5)
+                for param_name, config in parameters_config.items():
+                    if param_name == "original_listbox_row_index": continue
+                    value_str = ""
+                    if config.get('type') == 'hardcoded': value_str = repr(config['value'])
+                    elif config.get('type') == 'hardcoded_file': value_str = f"File: '{config['value']}'"
+                    elif config.get('type') == 'variable': value_str = f"Variable: @{config['value']}"
+                    param_label = QLabel(f"{param_name}:")
+                    value_label = QLineEdit(value_str)
+                    value_label.setReadOnly(True)
+                    # NEW: Adjusted style for readability
+                    value_label.setStyleSheet("background-color: #FFFFFF; font-size: 9pt; padding: 2px; border: 1px solid #D3D3D3;")
+                    params_layout.addRow(param_label, value_label)
+                params_group.setLayout(params_layout)
+                main_layout.addWidget(params_group)
+
+    def _get_formatted_title(self) -> str:
+        step_type = self.step_data.get("type", "Unknown")
+        if step_type == "group_start":
+            return f"Group: {self.step_data.get('group_name', 'Unnamed')}"
+        
+        # MODIFIED: Only show method name for standard steps
+        if step_type == "step":
+            method_name = self.step_data.get("method_name", "UnknownMethod")
+            return f"Step {self.step_number}: {method_name}"
+            
+        step_type_display = step_type.replace("_", " ").title()
+        return f"Step {self.step_number}: {step_type_display}"
+
+    def _get_formatted_method_name(self) -> str:
+        step_type = self.step_data["type"]
+        if step_type == "step":
+            class_name, method_name = self.step_data["class_name"], self.step_data["method_name"]
+            assign_to_variable_name = self.step_data["assign_to_variable_name"]
+            display_text = f"{class_name}.{method_name}"
+            if assign_to_variable_name:
+                display_text = f"@{assign_to_variable_name} = " + display_text
+            return display_text
+        elif step_type == "loop_start":
+            loop_config = self.step_data["loop_config"]
+            custom_loop_name = loop_config.get("loop_name")
+            name_display = f"'{custom_loop_name}'" if custom_loop_name else f"(ID: {self.step_data['loop_id']})"
+            count_config = loop_config["iteration_count_config"]
+            loop_info = f"@{count_config['value']}" if count_config["type"] == "variable" else f"{count_config['value']} times"
+            assign_var = loop_config.get("assign_iteration_to_variable")
+            if assign_var: loop_info += f", assign iter to @{assign_var}"
+            return f"{name_display} - {loop_info}"
+        elif step_type in ["loop_end", "ELSE", "IF_END", "group_start", "group_end"]:
+            return ""
+        elif step_type == "IF_START":
+            condition_config = self.step_data["condition_config"]
+            block_name = condition_config.get("block_name")
+            name_display = f"'{block_name}'" if block_name else f"(ID: {self.step_data['if_id']})"
+            left_op, right_op, op = condition_config["condition"]["left_operand"], condition_config["condition"]["right_operand"], condition_config["condition"]["operator"]
+            left_str = f"@{left_op['value']}" if left_op['type'] == 'variable' else repr(left_op['value'])
+            right_str = f"@{right_op['value']}" if right_op['type'] == 'variable' else repr(right_op['value'])
+            return f"{name_display} ({left_str} {op} {right_str})"
+        return ""
+
+    def set_status(self, border_color: str, is_running: bool = False):
+        background_color = "#D4EDDA" if is_running else "#F8F8F8"
+        self.setStyleSheet(f"#ExecutionStepCard {{ background-color: {background_color}; border: 2px solid {border_color}; border-radius: 4px; }}")
+
+    def set_result_text(self, result_message: str):
+        """Displays the execution result on the card by updating the method label."""
+        if not self.method_label:
+            return
+
+        # Truncate long results for display
+        if len(result_message) > 300:
+             result_message = result_message[:297] + "..."
+
+        assign_to_var = self.step_data.get("assign_to_variable_name")
+        
+        # Check if this is a standard step with a variable assignment and a valid result message
+        if self.step_data.get("type") == "step" and assign_to_var and "Result: " in result_message:
+            try:
+                # Extract the actual result value (it's between "Result: " and " (Assigned to")
+                result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0]
+            except IndexError:
+                result_val_str = "Error parsing result"
+            
+            # NEW FORMAT: @variable = result
+            display_text = f"@{assign_to_var} = {result_val_str}"
+            self.method_label.setText(display_text)
+            self.method_label.setStyleSheet("font-size: 10pt; font-style: italic; color: #155724; padding: 5px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 3px;")
+        
+        else:
+            # For other step types (loops, ifs) or steps without assignment, just show the worker message
+            self.method_label.setText(f"✓ {result_message}")
+            self.method_label.setStyleSheet("font-size: 10pt; font-style: italic; color: #155724; padding: 5px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 3px;")
+
+
+    def clear_result(self):
+        """Resets the method label to its pre-execution state."""
+        if self.method_label:
+            self.method_label.setText(self._original_method_text)
+            # Reset to original style
+            self.method_label.setStyleSheet("font-size: 10pt; padding: 5px; background-color: white; border: 1px solid #E0E0E0; border-radius: 3px;")
+
+class LoopConfigDialog(QDialog):
+    def __init__(self, global_variables: Dict[str, Any], parent: Optional[QWidget] = None, initial_config: Optional[Dict[str, Any]] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Loop Group")
+        self.setMinimumWidth(300)
+        self.global_variables = global_variables
+        main_layout, form_layout = QVBoxLayout(), QFormLayout()
+        self.loop_name_editor = QLineEdit()
+        self.loop_name_editor.setPlaceholderText("Optional: Enter a name for this loop")
+        form_layout.addRow("Loop Name:", self.loop_name_editor)
+        self.repeat_count_editor = QLineEdit("1")
+        self.repeat_count_editor.setValidator(QIntValidator(1, 999999, self))
+        form_layout.addRow("Loop Count:", self.repeat_count_editor)
+        self.use_var_checkbox = QCheckBox("Use Global Variable for Loop Count")
+        self.use_var_checkbox.stateChanged.connect(self._toggle_count_var_input)
+        form_layout.addRow("", self.use_var_checkbox)
+        self.global_var_combo_count = QComboBox()
+        self.global_var_combo_count.addItem("-- Select Global Variable --")
+        self.global_var_combo_count.addItems(sorted(global_variables.keys()))
+        self.global_var_combo_count.setEnabled(False)
+        form_layout.addRow("Variable for Loop Count:", self.global_var_combo_count)
+        self.assign_iter_checkbox = QCheckBox("Assign Current Iteration to Global Variable")
+        self.assign_iter_checkbox.stateChanged.connect(self._toggle_assign_iter_input)
+        form_layout.addRow("", self.assign_iter_checkbox)
+        self.global_var_combo_assign_iter = QComboBox()
+        self.global_var_combo_assign_iter.addItem("-- Select Global Variable --")
+        self.global_var_combo_assign_iter.addItems(sorted(global_variables.keys()))
+        self.global_var_combo_assign_iter.setEnabled(False)
+        form_layout.addRow("Assign Iteration To:", self.global_var_combo_assign_iter)
+        self.new_var_iter_editor = QLineEdit()
+        self.new_var_iter_editor.setPlaceholderText("Enter new variable name")
+        self.new_var_iter_editor.setEnabled(False)
+        form_layout.addRow("New Var Name for Iter:", self.new_var_iter_editor)
+        main_layout.addLayout(form_layout)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        self.setLayout(main_layout)
+        if initial_config: self.set_config(initial_config)
+        else: self._toggle_count_var_input(); self._toggle_assign_iter_input()
+
+    def _toggle_count_var_input(self) -> None:
+        is_using_var = self.use_var_checkbox.isChecked()
+        self.repeat_count_editor.setEnabled(not is_using_var)
+        self.repeat_count_editor.setVisible(not is_using_var)
+        self.global_var_combo_count.setEnabled(is_using_var)
+        self.global_var_combo_count.setVisible(is_using_var)
+        if is_using_var: self.repeat_count_editor.clear()
+        else: self.global_var_combo_count.setCurrentIndex(0)
+
+    def _toggle_assign_iter_input(self) -> None:
+        is_assigning_iter = self.assign_iter_checkbox.isChecked()
+        self.global_var_combo_assign_iter.setEnabled(is_assigning_iter)
+        self.global_var_combo_assign_iter.setVisible(is_assigning_iter)
+        self.new_var_iter_editor.setEnabled(is_assigning_iter and self.global_var_combo_assign_iter.currentIndex() == 0)
+        self.new_var_iter_editor.setVisible(is_assigning_iter)
+        self.global_var_combo_assign_iter.currentIndexChanged.connect(self._update_new_var_iter_editor_state)
+        self._update_new_var_iter_editor_state()
+
+    def _update_new_var_iter_editor_state(self) -> None:
+        is_assigning_iter = self.assign_iter_checkbox.isChecked()
+        is_selecting_new = self.global_var_combo_assign_iter.currentIndex() == 0
+        self.new_var_iter_editor.setEnabled(is_assigning_iter and is_selecting_new)
+        if not (is_assigning_iter and is_selecting_new): self.new_var_iter_editor.clear()
+
+    def get_config(self) -> Optional[Dict[str, Any]]:
+        loop_name = self.loop_name_editor.text().strip()
+        count_config = {}
+        if self.use_var_checkbox.isChecked():
+            global_var_name = self.global_var_combo_count.currentText()
+            if global_var_name == "-- Select Global Variable --": QMessageBox.warning(self, "Input Error", "Please select a global variable for loop count."); return None
+            count_config = {"type": "variable", "value": global_var_name}
+        else:
+            try:
+                repeat_count_str = self.repeat_count_editor.text()
+                if not repeat_count_str: QMessageBox.warning(self, "Input Error", "Please enter a value for loop count."); return None
+                repeat_count = int(repeat_count_str)
+                if repeat_count < 1: raise ValueError("Loop count must be at least 1.")
+            except ValueError: QMessageBox.warning(self, "Input Error", "Please enter a valid positive integer for loop count."); return None
+            count_config = {"type": "hardcoded", "value": repeat_count}
+        assign_iter_var_name: Optional[str] = None
+        if self.assign_iter_checkbox.isChecked():
+            if self.global_var_combo_assign_iter.currentIndex() == 0:
+                new_var_name = self.new_var_iter_editor.text().strip()
+                if not new_var_name: QMessageBox.warning(self, "Input Error", "Please enter a new variable name to assign the iteration count to."); return None
+                assign_iter_var_name = new_var_name
+            else: assign_iter_var_name = self.global_var_combo_assign_iter.currentText()
+            if count_config["type"] == "variable" and count_config["value"] == assign_iter_var_name: QMessageBox.warning(self, "Input Error", "The variable for Loop Count cannot be the same as the variable for assigning Current Iteration."); return None
+        return {"loop_name": loop_name if loop_name else None, "iteration_count_config": count_config, "assign_iteration_to_variable": assign_iter_var_name}
+
+    def set_config(self, config: Dict[str, Any]) -> None:
+        self.loop_name_editor.setText(config.get("loop_name", "") or "")
+        count_config = config.get("iteration_count_config", {})
+        if count_config.get("type") == "variable":
+            self.use_var_checkbox.setChecked(True)
+            idx = self.global_var_combo_count.findText(count_config["value"])
+            if idx != -1: self.global_var_combo_count.setCurrentIndex(idx)
+        else:
+            self.use_var_checkbox.setChecked(False)
+            self.repeat_count_editor.setText(str(count_config.get("value", 1)))
+        self._toggle_count_var_input()
+        assign_iter_var_name = config.get("assign_iteration_to_variable")
+        if assign_iter_var_name:
+            self.assign_iter_checkbox.setChecked(True)
+            idx = self.global_var_combo_assign_iter.findText(assign_iter_var_name)
+            if idx != -1: self.global_var_combo_assign_iter.setCurrentIndex(idx); self.new_var_iter_editor.clear()
+            else: self.global_var_combo_assign_iter.setCurrentIndex(0); self.new_var_iter_editor.setText(assign_iter_var_name)
+        else: self.assign_iter_checkbox.setChecked(False)
+        self._toggle_assign_iter_input()
+
+class ConditionalConfigDialog(QDialog):
+    def __init__(self, global_variables: Dict[str, Any], parent: Optional[QWidget] = None, initial_config: Optional[Dict[str, Any]] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Conditional Block (IF-ELSE)")
+        self.setMinimumWidth(400)
+        self.global_variables = global_variables
+        main_layout, form_layout = QVBoxLayout(), QFormLayout()
+        self.block_name_editor = QLineEdit()
+        self.block_name_editor.setPlaceholderText("Optional: Enter a name for this conditional block")
+        form_layout.addRow("Block Name:", self.block_name_editor)
+        condition_group, condition_layout = QGroupBox("Condition"), QGridLayout()
+        self.left_operand_source_combo = QComboBox(); self.left_operand_source_combo.addItems(["Hardcoded Value", "Global Variable"])
+        self.left_operand_editor = QLineEdit()
+        self.left_operand_var_combo = QComboBox(); self.left_operand_var_combo.addItem("-- Select Variable --"); self.left_operand_var_combo.addItems(sorted(global_variables.keys()))
+        self.left_operand_source_combo.currentIndexChanged.connect(self._toggle_left_operand_input)
+        condition_layout.addWidget(QLabel("Left Operand:"), 0, 0); condition_layout.addWidget(self.left_operand_source_combo, 0, 1); condition_layout.addWidget(self.left_operand_editor, 0, 2); condition_layout.addWidget(self.left_operand_var_combo, 0, 2)
+        self.operator_combo = QComboBox(); self.operator_combo.addItems(['==', '!=', '<', '>', '<=', '>=', 'in', 'not in', 'is', 'is not'])
+        condition_layout.addWidget(QLabel("Operator:"), 1, 0); condition_layout.addWidget(self.operator_combo, 1, 1, 1, 2)
+        self.right_operand_source_combo = QComboBox(); self.right_operand_source_combo.addItems(["Hardcoded Value", "Global Variable"])
+        self.right_operand_editor = QLineEdit()
+        self.right_operand_var_combo = QComboBox(); self.right_operand_var_combo.addItem("-- Select Variable --"); self.right_operand_var_combo.addItems(sorted(global_variables.keys()))
+        self.right_operand_source_combo.currentIndexChanged.connect(self._toggle_right_operand_input)
+        condition_layout.addWidget(QLabel("Right Operand:"), 2, 0); condition_layout.addWidget(self.right_operand_source_combo, 2, 1); condition_layout.addWidget(self.right_operand_editor, 2, 2); condition_layout.addWidget(self.right_operand_var_combo, 2, 2)
+        condition_group.setLayout(condition_layout)
+        main_layout.addWidget(condition_group)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept); button_box.rejected.connect(self.reject)
+        main_layout.addLayout(form_layout); main_layout.addWidget(button_box)
+        self.setLayout(main_layout)
+        self._toggle_left_operand_input(); self._toggle_right_operand_input()
+        if initial_config: self.set_config(initial_config)
+
+    def _toggle_left_operand_input(self) -> None:
+        is_using_var = (self.left_operand_source_combo.currentIndex() == 1)
+        self.left_operand_editor.setVisible(not is_using_var)
+        self.left_operand_var_combo.setVisible(is_using_var)
+        if not is_using_var: self.left_operand_var_combo.setCurrentIndex(0)
+        else: self.left_operand_editor.clear()
+
+    def _toggle_right_operand_input(self) -> None:
+        is_using_var = (self.right_operand_source_combo.currentIndex() == 1)
+        self.right_operand_editor.setVisible(not is_using_var)
+        self.right_operand_var_combo.setVisible(is_using_var)
+        if not is_using_var: self.right_operand_var_combo.setCurrentIndex(0)
+        else: self.right_operand_editor.clear()
+
+    def _parse_value_from_string(self, value_str: str) -> Any:
+        try:
+            if value_str.lower() == 'none': return None
+            if value_str.lower() == 'true': return True
+            if value_str.lower() == 'false': return False
+            if value_str.isdigit(): return int(value_str)
+            if value_str.replace('.', '', 1).isdigit(): return float(value_str)
+            if (value_str.startswith('{') and value_str.endswith('}')) or (value_str.startswith('[') and value_str.endswith(']')): return json.loads(value_str)
+            return value_str
+        except (ValueError, json.JSONDecodeError): return value_str
+
+    def get_config(self) -> Optional[Dict[str, Any]]:
+        block_name = self.block_name_editor.text().strip()
+        left_op_config: Dict[str, Any] = {}
+        if self.left_operand_source_combo.currentIndex() == 1:
+            var_name = self.left_operand_var_combo.currentText()
+            if var_name == "-- Select Variable --": QMessageBox.warning(self, "Input Error", "Please select a global variable for the left operand."); return None
+            left_op_config = {"type": "variable", "value": var_name}
+        else:
+            value_str = self.left_operand_editor.text().strip()
+            if not value_str and self.operator_combo.currentText() not in ['is', 'is not']: QMessageBox.information(self, "Input Hint", "Left operand is empty. It will be treated as an empty string.", QMessageBox.StandardButton.Ok)
+            left_op_config = {"type": "hardcoded", "value": self._parse_value_from_string(value_str)}
+        right_op_config: Dict[str, Any] = {}
+        if self.right_operand_source_combo.currentIndex() == 1:
+            var_name = self.right_operand_var_combo.currentText()
+            if var_name == "-- Select Variable --": QMessageBox.warning(self, "Input Error", "Please select a global variable for the right operand."); return None
+            right_op_config = {"type": "variable", "value": var_name}
+        else:
+            value_str = self.right_operand_editor.text().strip()
+            if not value_str and self.operator_combo.currentText() not in ['is', 'is not']: QMessageBox.information(self, "Input Hint", "Right operand is empty. It will be treated as an empty string.", QMessageBox.StandardButton.Ok)
+            right_op_config = {"type": "hardcoded", "value": self._parse_value_from_string(value_str)}
+        operator = self.operator_combo.currentText()
+        return {"block_name": block_name if block_name else None, "condition": {"left_operand": left_op_config, "operator": operator, "right_operand": right_op_config}}
+
+    def set_config(self, config: Dict[str, Any]) -> None:
+        self.block_name_editor.setText(config.get("block_name", "") or "")
+        condition = config.get("condition", {})
+        if not condition: return
+        left_op = condition.get("left_operand", {})
+        if left_op.get("type") == "variable":
+            self.left_operand_source_combo.setCurrentIndex(1)
+            idx = self.left_operand_var_combo.findText(left_op.get("value", ""));
+            if idx != -1: self.left_operand_var_combo.setCurrentIndex(idx)
+        else:
+            self.left_operand_source_combo.setCurrentIndex(0)
+            val_to_display = left_op.get("value", "")
+            if not isinstance(val_to_display, str): val_to_display = repr(val_to_display)
+            self.left_operand_editor.setText(str(val_to_display))
+        idx = self.operator_combo.findText(condition.get("operator", "=="))
+        if idx != -1: self.operator_combo.setCurrentIndex(idx)
+        right_op = condition.get("right_operand", {})
+        if right_op.get("type") == "variable":
+            self.right_operand_source_combo.setCurrentIndex(1)
+            idx = self.right_operand_var_combo.findText(right_op.get("value", ""))
+            if idx != -1: self.right_operand_var_combo.setCurrentIndex(idx)
+        else:
+            self.right_operand_source_combo.setCurrentIndex(0)
+            val_to_display = right_op.get("value", "")
+            if not isinstance(val_to_display, str): val_to_display = repr(val_to_display)
+            self.right_operand_editor.setText(str(val_to_display))
+        self._toggle_left_operand_input(); self._toggle_right_operand_input()
+
+class GlobalVariableDialog(QDialog):
+    def __init__(self, variable_name: str = "", variable_value: Any = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Add/Edit Global Variable")
+        self.layout = QFormLayout(self)
+
+        self.name_input = QLineEdit(variable_name)
+        self.value_input = QLineEdit(str(variable_value))
+        self.browse_button = QPushButton("Browse...")
+        self.browse_button.clicked.connect(self._open_file_dialog)
+
+        self.layout.addRow("Name:", self.name_input)
+        self.value_layout = QHBoxLayout()
+        self.value_layout.addWidget(self.value_input)
+        self.value_layout.addWidget(self.browse_button)
+        self.layout.addRow("Value:", self.value_layout)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addRow(self.buttons)
+
+        self.name_input.editingFinished.connect(self._toggle_browse_button)
+        self._toggle_browse_button()
+
+    def _toggle_browse_button(self):
+        """Shows or hides the browse button based on the variable name."""
+        name = self.name_input.text()
+        if name:
+            self.browse_button.setVisible("link" in name.lower())
+        else:
+            self.browse_button.setVisible(False)
+
+    def _open_file_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
+        if file_path:
+            self.value_input.setText(file_path)
+
+    def get_variable_data(self) -> Optional[Tuple[str, str]]:
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Input Error", "Variable name cannot be empty.")
+            return None
+        return name, self.value_input.text()
+
+class ParameterInputDialog(QDialog):
+    request_screenshot = pyqtSignal()
+    update_image_filenames = pyqtSignal(list, str)
+
+    def __init__(self, method_name: str, parameters_to_configure: Dict[str, Tuple[Any, Any]],
+                 current_global_var_names: List[str], image_filenames: List[str],
+                 gui_communicator: GuiCommunicator,
+                 initial_parameters_config: Optional[Dict[str, Any]] = None, initial_assign_to_variable_name: Optional[str] = None, parent: Optional[QWidget] = None):
+
+        super().__init__(parent)
+        self.setWindowTitle(f"Configure Parameters for '{method_name}'")
+        self.parameters_config: Dict[str, Any] = {}
+        self.assign_to_variable_name: Optional[str] = None
+        self.gui_communicator = gui_communicator
+        self._parent_main_window = parent
+        self._image_filenames = image_filenames
+        self.param_editors: Dict[str, QLineEdit] = {}
+        self.param_var_selectors: Dict[str, QComboBox] = {}
+        self.param_value_source_combos: Dict[str, QComboBox] = {}
+        self.file_selector_combos: Dict[str, QComboBox] = {}
+        self.param_kinds: Dict[str, Any] = {}
+
+        main_layout, form_layout = QVBoxLayoutDialog(), QFormLayout()
+        initial_parameters_config = initial_parameters_config if initial_parameters_config is not None else {}
+
+        for param_name, (default_value, param_kind) in parameters_to_configure.items():
+            param_h_layout = QHBoxLayout()
+            label = QLabel(f"{param_name}:")
+            self.param_kinds[param_name] = param_kind
+
+            val_to_display = ""
+            value_source_combo = QComboBox()
+            value_source_combo.addItems(["Hardcoded Value", "Global Variable"])
+            self.param_value_source_combos[param_name] = value_source_combo
+
+            hardcoded_editor = QLineEdit()
+            self.param_editors[param_name] = hardcoded_editor
+
+            variable_select_combo = QComboBox()
+            variable_select_combo.addItem("-- Select Variable --")
+            variable_select_combo.addItems(current_global_var_names)
+            self.param_var_selectors[param_name] = variable_select_combo
+
+            if "file_link" in param_name:
+                browse_button = QPushButton("Browse...")
+                browse_button.clicked.connect(lambda _, p_name=param_name: self._open_file_dialog_for_param(p_name))
+                param_h_layout.addWidget(browse_button)
+
+            if param_name == "current_file" and image_filenames is not None:
+                file_source_combo = QComboBox()
+                file_source_combo.addItems(["Select from Files", "Global Variable"])
+                self.param_value_source_combos[param_name] = file_source_combo
+
+                file_selector_combo = QComboBox()
+                file_selector_combo.addItem("-- Select File --")
+                file_selector_combo.addItems(sorted(self._image_filenames))
+                file_selector_combo.addItem("--- Add new image ---")
+                self.file_selector_combos[param_name] = file_selector_combo
+
+                variable_select_combo = QComboBox()
+                variable_select_combo.addItem("-- Select Variable --")
+                variable_select_combo.addItems(current_global_var_names)
+                self.param_var_selectors[param_name] = variable_select_combo
+
+                file_source_combo.currentIndexChanged.connect(lambda index, f_sel=file_selector_combo, v_sel=variable_select_combo: self._toggle_file_or_var_input(index, f_sel, v_sel))
+                file_selector_combo.currentIndexChanged.connect(lambda index, p_name=param_name: self._on_file_selection_changed(p_name, index))
+                self.update_image_filenames.connect(self._refresh_file_selector_combo)
+
+                param_h_layout.addWidget(file_source_combo, 0)
+                param_h_layout.addWidget(file_selector_combo, 2)
+                param_h_layout.addWidget(variable_select_combo, 1)
+
+                if param_name in initial_parameters_config:
+                    config = initial_parameters_config[param_name]
+                    if config.get('type') == 'hardcoded_file':
+                        file_source_combo.setCurrentIndex(0)
+                        idx = file_selector_combo.findText(config['value'])
+                        if idx != -1:
+                            file_selector_combo.setCurrentIndex(idx)
+                            self._on_file_selection_changed(param_name, idx)
+                    elif config.get('type') == 'variable':
+                        file_source_combo.setCurrentIndex(1)
+                        idx = variable_select_combo.findText(config['value'])
+                        if idx != -1:
+                            variable_select_combo.setCurrentIndex(idx)
+                self._toggle_file_or_var_input(file_source_combo.currentIndex(), file_selector_combo, variable_select_combo)
+            else:
+                if param_name in initial_parameters_config:
+                    config = initial_parameters_config[param_name]
+                    if config.get('type') == 'hardcoded':
+                        value_source_combo.setCurrentIndex(0)
+                        val_to_display = config['value']
+                        if not isinstance(val_to_display, str):
+                            val_to_display = repr(val_to_display)
+                        hardcoded_editor.setText(str(val_to_display))
+                    elif config.get('type') == 'variable':
+                        value_source_combo.setCurrentIndex(1)
+                        idx = variable_select_combo.findText(config['value'])
+                        if idx != -1:
+                            variable_select_combo.setCurrentIndex(idx)
+                        else:
+                            QMessageBox.warning(self, "Warning", f"Global variable '{config['value']}' not found for parameter '{param_name}'.")
+                elif default_value is not inspect.Parameter.empty:
+                    val_to_display = default_value
+                    if not isinstance(val_to_display, str):
+                        val_to_display = repr(val_to_display)
+                    hardcoded_editor.setText(str(val_to_display))
+                elif param_kind == inspect.Parameter.VAR_POSITIONAL:
+                    hardcoded_editor.setPlaceholderText("comma, separated, values")
+                elif param_kind == inspect.Parameter.VAR_KEYWORD:
+                    hardcoded_editor.setPlaceholderText('{"key": "value", "another": 123}')
+                else:
+                    hardcoded_editor.setPlaceholderText(f"Enter value for {param_name}")
+
+                param_h_layout.insertWidget(0, value_source_combo)
+                param_h_layout.insertWidget(1, hardcoded_editor, 2)
+                param_h_layout.insertWidget(2, variable_select_combo, 1)
+
+                value_source_combo.currentIndexChanged.connect(lambda index, editor=hardcoded_editor, selector=variable_select_combo: self._toggle_param_input_type(index, editor, selector))
+                self._toggle_param_input_type(value_source_combo.currentIndex(), hardcoded_editor, variable_select_combo)
+
+            form_layout.addRow(label, param_h_layout)
+
+        main_layout.addLayout(form_layout)
+        assignment_group_box = QGroupBox("Assign Method Result to Variable")
+        assignment_layout = QVBoxLayoutDialog()
+
+        self.assign_checkbox = QCheckBox("Assign result")
+        self.assign_checkbox.stateChanged.connect(self._toggle_assignment_widgets)
+        assignment_layout.addWidget(self.assign_checkbox)
+
+        self.new_var_radio = QRadioButton("New Variable Name:")
+        self.new_var_input = QLineEdit()
+        self.new_var_input.setPlaceholderText("Enter new variable name")
+
+        self.existing_var_radio = QRadioButton("Existing Variable:")
+        self.existing_var_combo = QComboBox()
+        self.existing_var_combo.addItem("-- Select Variable --")
+        self.existing_var_combo.addItems(current_global_var_names)
+
+        if initial_assign_to_variable_name:
+            if initial_assign_to_variable_name in current_global_var_names:
+                self.existing_var_radio.setChecked(True)
+                idx = self.existing_var_combo.findText(initial_assign_to_variable_name)
+                if idx != -1:
+                    self.existing_var_combo.setCurrentIndex(idx)
+            else:
+                self.new_var_radio.setChecked(True)
+                self.new_var_input.setText(initial_assign_to_variable_name)
+            self.assign_checkbox.setChecked(True)
+        else:
+            self.new_var_radio.setChecked(True)
+
+        self.new_var_radio.toggled.connect(self._toggle_assignment_widgets)
+        self.existing_var_radio.toggled.connect(self._toggle_assignment_widgets)
+
+        assignment_form_layout = QFormLayout()
+        assignment_form_layout.addRow(self.new_var_radio, self.new_var_input)
+        assignment_form_layout.addRow(self.existing_var_radio, self.existing_var_combo)
+        assignment_layout.addLayout(assignment_form_layout)
+        assignment_group_box.setLayout(assignment_layout)
+        main_layout.addWidget(assignment_group_box)
+
+        self._toggle_assignment_widgets()
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        self.setLayout(main_layout)
+
+    def _open_file_dialog_for_param(self, param_name: str):
+        editor = self.param_editors.get(param_name)
+        if editor:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
+            if file_path:
+                editor.setText(file_path)
+
+    def _toggle_param_input_type(self, index: int, hardcoded_editor: QLineEdit, variable_select_combo: QComboBox) -> None:
+        is_hardcoded = (index == 0)
+        hardcoded_editor.setVisible(is_hardcoded)
+        variable_select_combo.setVisible(not is_hardcoded)
+        if not is_hardcoded:
+            hardcoded_editor.clear()
+
+    def _toggle_file_or_var_input(self, index: int, file_selector_combo: QComboBox, variable_select_combo: QComboBox) -> None:
+        is_file_selection = (index == 0)
+        file_selector_combo.setVisible(is_file_selection)
+        variable_select_combo.setVisible(not is_file_selection)
+        if not is_file_selection:
+            file_selector_combo.setCurrentIndex(0)
+
+    def _on_file_selection_changed(self, param_name: str, index: int) -> None:
+        if param_name == "current_file" and param_name in self.file_selector_combos:
+            file_selector_combo = self.file_selector_combos[param_name]
+            selected_text = file_selector_combo.currentText()
+            if selected_text == "--- Add new image ---":
+                file_selector_combo.blockSignals(True)
+                file_selector_combo.setCurrentIndex(0)
+                file_selector_combo.blockSignals(False)
+                self.request_screenshot.emit()
+            elif selected_text != "-- Select File --":
+                self.gui_communicator.update_module_info_signal.emit(selected_text)
+            else:
+                self.gui_communicator.update_module_info_signal.emit("")
+
+    def _refresh_file_selector_combo(self, new_filenames: List[str], saved_filename: str = "") -> None:
+        for param_name, combo_box in self.file_selector_combos.items():
+            if param_name == "current_file":
+                combo_box.blockSignals(True)
+                combo_box.clear()
+                combo_box.addItem("-- Select File --")
+                combo_box.addItems(sorted(new_filenames))
+                combo_box.addItem("--- Add new image ---")
+                if saved_filename:
+                    idx = combo_box.findText(saved_filename)
+                    if idx != -1:
+                        combo_box.setCurrentIndex(idx)
+                        self.gui_communicator.update_module_info_signal.emit(saved_filename)
+                combo_box.blockSignals(False)
+                if combo_box.currentIndex() == 0:
+                    self.gui_communicator.update_module_info_signal.emit("")
+                else:
+                    self.gui_communicator.update_module_info_signal.emit(combo_box.currentText())
+
+    def _toggle_assignment_widgets(self) -> None:
+        is_assign_enabled = self.assign_checkbox.isChecked()
+        self.new_var_radio.setVisible(is_assign_enabled)
+        self.new_var_input.setVisible(is_assign_enabled and self.new_var_radio.isChecked())
+        self.existing_var_radio.setVisible(is_assign_enabled)
+        self.existing_var_combo.setVisible(is_assign_enabled and self.existing_var_radio.isChecked())
+        if not is_assign_enabled:
+            self.new_var_input.clear()
+            self.existing_var_combo.setCurrentIndex(0)
+
+    def get_parameters_config(self) -> Optional[Dict[str, Any]]:
+        config_data: Dict[str, Any] = {}
+        for param_name, source_combo in self.param_value_source_combos.items():
+            if param_name == "current_file" and param_name in self.file_selector_combos:
+                value_source_index = source_combo.currentIndex()
+                if value_source_index == 0:
+                    file_name = self.file_selector_combos[param_name].currentText()
+                    if file_name in ["-- Select File --", "--- Add new image ---"]:
+                        QMessageBox.warning(self, "Input Error", f"Please select a file for parameter '{param_name}'.")
+                        return None
+                    config_data[param_name] = {'type': 'hardcoded_file', 'value': file_name}
+                else:
+                    var_name = self.param_var_selectors[param_name].currentText()
+                    if var_name == "-- Select Variable --":
+                        QMessageBox.warning(self, "Input Error", f"Please select a global variable for parameter '{param_name}'.")
+                        return None
+                    config_data[param_name] = {'type': 'variable', 'value': var_name}
+                continue
+
+            value_source_index = source_combo.currentIndex()
+            if value_source_index == 0:
+                value_str = self.param_editors[param_name].text().strip()
+                param_kind = self.param_kinds[param_name]
+                try:
+                    parsed_value = None
+                    if value_str.lower() == 'none':
+                        parsed_value = None
+                    elif param_kind == inspect.Parameter.VAR_POSITIONAL:
+                        parsed_value = [item.strip() for item in value_str.split(',') if item.strip()]
+                    elif param_kind == inspect.Parameter.VAR_KEYWORD:
+                        parsed_value = json.loads(value_str)
+                    elif value_str.lower() == 'true':
+                        parsed_value = True
+                    elif value_str.lower() == 'false':
+                        parsed_value = False
+                    elif value_str.isdigit():
+                        parsed_value = int(value_str)
+                    elif value_str.replace('.', '', 1).isdigit():
+                        parsed_value = float(value_str)
+                    else:
+                        if (value_str.startswith('{') and value_str.endswith('}')) or (value_str.startswith('[') and value_str.endswith(']')):
+                            try:
+                                parsed_value = json.loads(value_str)
+                            except json.JSONDecodeError:
+                                parsed_value = value_str
+                        else:
+                            parsed_value = value_str
+                except (ValueError, json.JSONDecodeError) as e:
+                    QMessageBox.warning(self, "Input Error", f"Could not parse value '{value_str}' for '{param_name}' ({param_kind}): {e}. Storing as string.")
+                    parsed_value = value_str
+                config_data[param_name] = {'type': 'hardcoded', 'value': parsed_value}
+            else:
+                var_name = self.param_var_selectors[param_name].currentText()
+                if var_name == "-- Select Variable --":
+                    QMessageBox.warning(self, "Input Error", f"Please select a global variable for parameter '{param_name}'.")
+                    return None
+                config_data[param_name] = {'type': 'variable', 'value': var_name}
+
+        self.parameters_config = config_data
+        return config_data
+
+    def get_assignment_variable(self) -> Optional[str]:
+        if not self.assign_checkbox.isChecked():
+            return None
+        if self.new_var_radio.isChecked():
+            var_name = self.new_var_input.text().strip()
+            if not var_name:
+                QMessageBox.warning(self, "Input Error", "New variable name cannot be empty for assignment.")
+                return None
+            return var_name
+        else:
+            var_name = self.existing_var_combo.currentText()
+            if var_name == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select an existing variable to assign the result to.")
+                return None
+            return var_name
+
+class ExecutionWorker(QThread):
+    execution_started = pyqtSignal(str)
+    execution_progress = pyqtSignal(int)
+    execution_item_started = pyqtSignal(dict, int)
+    execution_item_finished = pyqtSignal(dict, str, int)
+    execution_error = pyqtSignal(dict, str, int)
+    execution_finished_all = pyqtSignal(ExecutionContext, bool, int)
+
+    def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
+                 global_variables_ref: Dict[str, Any], parent: Optional[QWidget] = None,
+                 single_step_mode: bool = False, selected_start_index: int = 0):
+        super().__init__(parent)
+        self.steps_to_execute = steps_to_execute
+        self.module_directory = module_directory
+        self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
+        self.instantiated_objects: Dict[Tuple[str, str], Any] = {}
+        self.context = ExecutionContext()
+        self.context.set_gui_communicator(gui_communicator)
+        self.global_variables = global_variables_ref
+        self._is_stopped = False
+        self.loop_stack: List[Dict[str, Any]] = []
+        self.conditional_stack: List[Dict[str, Any]] = []
+        self.single_step_mode = single_step_mode
+        self.selected_start_index = selected_start_index
+        self.next_step_index_to_select: int = -1
+
+    def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
+        count_config = loop_config["iteration_count_config"]
+        if count_config["type"] == "variable":
+            var_name = count_config["value"]
+            var_value = self.global_variables.get(var_name)
+            if isinstance(var_value, int) and var_value >= 1: return var_value
+            else: self.context.add_log(f"Warning: Global variable '{var_name}' for loop count is not a valid positive integer (value: {var_value}). Defaulting to 1 iteration."); return 1
+        else: return count_config.get("value", 1)
+
+    def _resolve_operand_value(self, operand_config: Dict[str, Any]) -> Any:
+        if operand_config["type"] == "variable":
+            var_name = operand_config["value"]
+            if var_name not in self.global_variables: raise ValueError(f"Global variable '{var_name}' not found for condition operand.")
+            return self.global_variables[var_name]
+        else: return operand_config["value"]
+
+    def _evaluate_condition(self, condition_config: Dict[str, Any]) -> bool:
+        left_val = self._resolve_operand_value(condition_config["left_operand"])
+        right_val = self._resolve_operand_value(condition_config["right_operand"])
+        operator = condition_config["operator"]
+        try:
+            if operator == '==': return left_val == right_val
+            elif operator == '!=': return left_val != right_val
+            elif operator == '<': return left_val < right_val
+            elif operator == '>': return left_val > right_val
+            elif operator == '<=': return left_val <= right_val
+            elif operator == '>=': return left_val >= right_val
+            elif operator == 'in': return left_val in right_val
+            elif operator == 'not in': return left_val not in right_val
+            elif operator == 'is': return left_val is right_val
+            elif operator == 'is not': return left_val is not right_val
+            else: raise ValueError(f"Unknown operator: {operator}")
+        except Exception as e: raise ValueError(f"Error evaluating condition '{left_val} {operator} {right_val}': {e}")
+
+    def run(self) -> None:
+        self.execution_started.emit("Starting execution...")
+        if not self.steps_to_execute: self.execution_finished_all.emit(self.context, False, -1); return
+        total_steps_for_progress = len(self.steps_to_execute) * 2 if not self.single_step_mode else 1
+        if total_steps_for_progress == 0: total_steps_for_progress = 1
+        current_execution_item_count = 0
+        original_sys_path = sys.path[:]
+        if self.module_directory not in sys.path: sys.path.insert(0, self.module_directory)
+        self.loop_stack = []
+        self.conditional_stack = []
+        step_index = self.selected_start_index if self.single_step_mode else 0
+        original_listbox_row_index = 0
+        try:
+            while step_index < len(self.steps_to_execute):
+                if self._is_stopped: break
+                if self.single_step_mode and current_execution_item_count >= 1: break
+                step_data = self.steps_to_execute[step_index]; step_type = step_data["type"]
+                original_listbox_row_index = step_data.get("original_listbox_row_index", step_index)
+                current_execution_item_count += 1
+                progress_percentage = int((current_execution_item_count / total_steps_for_progress) * 100)
+                self.execution_progress.emit(min(progress_percentage, 100))
+                is_skipping = False
+                if self.conditional_stack:
+                    current_if = self.conditional_stack[-1]
+                    # Use .get() to safely access keys that might not exist in a skipped block
+                    if not current_if.get('condition_result', True) and not current_if.get('else_taken', False):
+                        if not (step_type == "ELSE" and step_data.get("if_id") == current_if["if_id"]): is_skipping = True
+                    elif current_if.get('condition_result', False) and current_if.get('else_taken', False):
+                        if not (step_type == "IF_END" and step_data.get("if_id") == current_if["if_id"]): is_skipping = True
+                if is_skipping:
+                    self.execution_item_started.emit(step_data, original_listbox_row_index)
+                    if step_type == "IF_START": self.conditional_stack.append({'if_id': step_data['if_id'], 'skipped_marker': True})
+                    elif step_type == "loop_start": self.loop_stack.append({'loop_id': step_data['loop_id'], 'skipped_marker': True})
+                    elif step_type == "IF_END":
+                        if self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'): self.conditional_stack.pop()
+                    elif step_type == "loop_end":
+                        if self.loop_stack and self.loop_stack[-1].get('skipped_marker'): self.loop_stack.pop()
+                    self.execution_item_finished.emit(step_data, "SKIPPED", original_listbox_row_index)
+                    step_index += 1
+                    continue
+                self.execution_item_started.emit(step_data, original_listbox_row_index)
+                QThread.msleep(50)
+
+                if step_type in ["group_start", "group_end"]:
+                    self.execution_item_finished.emit(step_data, "Organizational Step", original_listbox_row_index)
+                    step_index += 1
+                    continue
+
+                if step_type == "step":
+                    class_name, method_name, module_name = step_data["class_name"], step_data["method_name"], step_data["module_name"]
+                    parameters_config = step_data["parameters_config"]; assign_to_variable_name = step_data["assign_to_variable_name"]
+                    resolved_parameters, params_str_debug = {}, []
+                    for param_name, config in parameters_config.items():
+                        if param_name == "original_listbox_row_index": continue
+                        if config['type'] == 'hardcoded': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}={repr(config['value'])}")
+                        elif config['type'] == 'hardcoded_file': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
+                        elif config['type'] == 'variable':
+                            var_name = config['value']
+                            if var_name in self.global_variables: resolved_parameters[param_name] = self.global_variables[var_name]; params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
+                            else: raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
+                    self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
+                    try:
+                        module = importlib.import_module(module_name); importlib.reload(module)
+                        class_obj = getattr(module, class_name); instance_key = (class_name, module_name)
+                        if instance_key not in self.instantiated_objects:
+                            init_kwargs = {};
+                            if 'context' in inspect.signature(class_obj.__init__).parameters: init_kwargs['context'] = self.context
+                            self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
+                        instance = self.instantiated_objects[instance_key]; method_func = getattr(instance, method_name)
+                        method_kwargs = {k:v for k,v in resolved_parameters.items()}
+                        if 'context' in inspect.signature(method_func).parameters: method_kwargs['context'] = self.context
+                        result = method_func(**method_kwargs)
+                        if assign_to_variable_name: self.global_variables[assign_to_variable_name] = result; result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
+                        else: result_msg = f"Result: {result}"
+                        self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
+                    except Exception as e: raise e
+                elif step_type == "loop_start":
+                    loop_id, loop_config = step_data["loop_id"], step_data["loop_config"]
+                    is_new_loop = not (self.loop_stack and self.loop_stack[-1].get('loop_id') == loop_id)
+                    if is_new_loop:
+                        loop_end_index, nesting_level = -1, 0
+                        for i in range(step_index + 1, len(self.steps_to_execute)):
+                            s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
+                            if s_type in ["loop_start", "IF_START"]: nesting_level += 1
+                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0: loop_end_index = i; break
+                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: nesting_level -= 1
+                        if loop_end_index == -1: raise ValueError(f"Loop '{loop_id}' has no matching 'loop_end' marker.")
+                        total_iterations = self._resolve_loop_count(loop_config)
+                        current_loop_info = {'loop_id': loop_id, 'start_index': step_index, 'end_index': loop_end_index, 'current_iteration': 1, 'total_iterations': total_iterations, 'loop_config': loop_config}
+                        self.loop_stack.append(current_loop_info)
+                    else:
+                        current_loop_info = self.loop_stack[-1]; current_loop_info['current_iteration'] += 1
+                        current_loop_info['total_iterations'] = self._resolve_loop_count(loop_config)
+                    if current_loop_info['current_iteration'] > current_loop_info['total_iterations']: self.loop_stack.pop(); step_index = current_loop_info['end_index']; self.execution_item_finished.emit(step_data, "Loop Finished", original_listbox_row_index)
+                    else:
+                        assign_var = loop_config.get("assign_iteration_to_variable")
+                        if assign_var: self.global_variables[assign_var] = current_loop_info['current_iteration']; self.context.add_log(f"Assigned iteration {current_loop_info['current_iteration']} to @{assign_var}")
+                        self.execution_item_finished.emit(step_data, f"Iter {current_loop_info['current_iteration']}/{current_loop_info['total_iterations']}", original_listbox_row_index)
+                elif step_type == "loop_end":
+                    if not self.loop_stack or self.loop_stack[-1].get('loop_id') != step_data['loop_id']: raise ValueError(f"Mismatched loop_end for ID: {step_data['loop_id']}")
+                    step_index = self.loop_stack[-1]['start_index'] - 1; self.execution_item_finished.emit(step_data, "Looping...", original_listbox_row_index)
+                elif step_type == "IF_START":
+                    if_id, condition_config = step_data["if_id"], step_data["condition_config"]
+                    condition_result = self._evaluate_condition(condition_config["condition"]); self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}")
+                    self.conditional_stack.append({'if_id': if_id, 'condition_result': condition_result, 'else_taken': False}); self.execution_item_finished.emit(step_data, f"Condition: {condition_result}", original_listbox_row_index)
+                elif step_type == "ELSE":
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: raise ValueError(f"Mismatched ELSE for ID: {step_data['if_id']}")
+                    current_if = self.conditional_stack[-1]; current_if['else_taken'] = True
+                    self.execution_item_finished.emit(step_data, "Branching", original_listbox_row_index)
+                    if current_if.get('condition_result', False):
+                        nesting_level = 0
+                        for i in range(step_index + 1, len(self.steps_to_execute)):
+                            s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
+                            if s_type in ["loop_start", "IF_START"]: nesting_level += 1
+                            elif s_type == "IF_END" and s.get("if_id") == current_if["if_id"] and nesting_level == 0: step_index = i-1; break
+                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: nesting_level -= 1
+                elif step_type == "IF_END":
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: raise ValueError(f"Mismatched IF_END for ID: {step_data['if_id']}")
+                    self.conditional_stack.pop(); self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
+                step_index += 1
+        except Exception as e:
+            error_msg = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"; self.context.add_log(error_msg)
+            self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, error_msg, original_listbox_row_index); self._is_stopped = True
+        finally:
+            sys.path = original_sys_path
+            if self.single_step_mode:
+                next_index = -1
+                if not self._is_stopped and step_index < len(self.steps_to_execute): next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
+                self.next_step_index_to_select = next_index
+            self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
+
+class StepInsertionDialog(QDialog):
+    def __init__(self, execution_tree: QTreeWidget, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Insert Step At...")
+        self.layout = QVBoxLayout(self)
+        self.execution_tree_view = QTreeWidget()
+        self.execution_tree_view.setHeaderHidden(True)
+        self.execution_tree_view.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        self.insertion_mode_group = QGroupBox("Insertion Mode")
+        self.insertion_mode_layout = QHBoxLayout()
+        self.insert_as_child_radio = QRadioButton("Insert as Child")
+        self.insert_before_radio = QRadioButton("Insert Before Selected")
+        self.insert_after_radio = QRadioButton("Insert After Selected")
+        self.insert_as_child_radio.setChecked(True)
+        self.insertion_mode_layout.addWidget(self.insert_as_child_radio)
+        self.insertion_mode_layout.addWidget(self.insert_before_radio)
+        self.insertion_mode_layout.addWidget(self.insert_after_radio)
+        self.insertion_mode_group.setLayout(self.insertion_mode_layout)
+        self.insert_as_child_radio.toggled.connect(self._update_insertion_options)
+        self.insert_before_radio.toggled.connect(self._update_insertion_options)
+        self.insert_after_radio.toggled.connect(self._update_insertion_options)
+        self.layout.addWidget(QLabel("Select Parent or Sibling for new step:"))
+        self.layout.addWidget(self.execution_tree_view)
+        self.layout.addWidget(self.insertion_mode_group)
+        self._populate_tree_view(execution_tree)
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        self.layout.addWidget(self.button_box)
+        self.selected_parent_item: Optional[QTreeWidgetItem] = None
+        self.insert_mode: str = "child"
+        self.execution_tree_view.currentItemChanged.connect(self._update_insertion_options)
+        self._update_insertion_options()
+
+    def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
+        if not item: return None
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        return data.value() if isinstance(data, QVariant) else data
+
+    def _populate_tree_view(self, source_tree: QTreeWidget):
+        self.execution_tree_view.clear()
+        self._copy_children(source_tree.invisibleRootItem(), self.execution_tree_view.invisibleRootItem())
+        self.execution_tree_view.expandAll()
+
+    def _copy_children(self, source_item: QTreeWidgetItem, dest_item: QTreeWidgetItem):
+        for i in range(source_item.childCount()):
+            child_source = source_item.child(i)
+            card_widget = self.parent().execution_tree.itemWidget(child_source, 0)
+            display_text = f"{card_widget.step_label.text()}" if card_widget else ""
+            child_dest = QTreeWidgetItem(dest_item, [display_text])
+            child_dest.setData(0, Qt.ItemDataRole.UserRole, self._get_item_data(child_source))
+            self._copy_children(child_source, child_dest)
+
+    def _update_insertion_options(self) -> None:
+        selected_item = self.execution_tree_view.currentItem()
+        if selected_item is None:
+            self.insert_as_child_radio.setEnabled(True); self.insert_before_radio.setEnabled(False); self.insert_after_radio.setEnabled(False); self.insert_as_child_radio.setChecked(True)
+        else:
+            step_data_dict = self._get_item_data(selected_item)
+            is_block_parent = step_data_dict and step_data_dict.get("type") in ["loop_start", "IF_START", "ELSE", "group_start"]
+            self.insert_as_child_radio.setEnabled(is_block_parent); self.insert_before_radio.setEnabled(True); self.insert_after_radio.setEnabled(True)
+            if self.insert_as_child_radio.isChecked() and not self.insert_as_child_radio.isEnabled():
+                if self.insert_after_radio.isEnabled(): self.insert_after_radio.setChecked(True)
+                elif self.insert_before_radio.isEnabled(): self.insert_before_radio.setChecked(True)
+            if (self.insert_before_radio.isChecked() or self.insert_after_radio.isChecked()) and not (self.insert_before_radio.isEnabled() and not self.insert_after_radio.isEnabled()):
+                if self.insert_as_child_radio.isEnabled(): self.insert_as_child_radio.setChecked(True)
+        if not (self.insert_as_child_radio.isChecked() or self.insert_before_radio.isChecked() or self.insert_after_radio.isChecked()):
+            if self.insert_as_child_radio.isEnabled(): self.insert_as_child_radio.setChecked(True)
+            elif self.insert_after_radio.isEnabled(): self.insert_after_radio.setChecked(True)
+            elif self.insert_before_radio.isEnabled(): self.insert_before_radio.setChecked(True)
+
+    def get_insertion_point(self) -> Tuple[Optional[QTreeWidgetItem], str]:
+        self.selected_parent_item = self.execution_tree_view.currentItem()
+        if self.insert_before_radio.isChecked(): self.insert_mode = "before"
+        elif self.insert_after_radio.isChecked(): self.insert_mode = "after"
+        else: self.insert_mode = "child"
+        return self.selected_parent_item, self.insert_mode
+
+# --- NEW CLASS: TemplateVariableMappingDialog ---
+class TemplateVariableMappingDialog(QDialog):
+    """A dialog to map variables from a template to global variables."""
+    def __init__(self, template_variables: set, global_variables: list, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Map Template Variables")
+        self.setMinimumWidth(500)
+        self.template_variables = sorted(list(template_variables))
+        self.global_variables = global_variables
+        self.mapping_widgets = {}
+
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        for var_name in self.template_variables:
+            # Layout for each row
+            row_layout = QHBoxLayout()
+            
+            # Action selection (Map, Create, Keep)
+            action_combo = QComboBox()
+            action_combo.addItems(["Map to Existing", "Create New", "Keep Original Name"])
+            
+            # Input for existing variable selection
+            existing_var_combo = QComboBox()
+            existing_var_combo.addItem("-- Select Existing --")
+            existing_var_combo.addItems(self.global_variables)
+            
+            # Input for new/kept variable name
+            new_var_editor = QLineEdit(var_name)
+
+            row_layout.addWidget(action_combo, 1)
+            row_layout.addWidget(existing_var_combo, 2)
+            row_layout.addWidget(new_var_editor, 2)
+            
+            form_layout.addRow(QLabel(f"'{var_name}':"), row_layout)
+
+            # Store widgets for later retrieval
+            self.mapping_widgets[var_name] = {
+                'action': action_combo,
+                'existing': existing_var_combo,
+                'new': new_var_editor
+            }
+            
+            # Connect signal to toggle visibility
+            action_combo.currentIndexChanged.connect(
+                lambda index, v=var_name: self._toggle_inputs(v, index)
+            )
+            self._toggle_inputs(var_name, 0) # Set initial state
+
+        main_layout.addLayout(form_layout)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _toggle_inputs(self, var_name: str, index: int):
+        widgets = self.mapping_widgets[var_name]
+        is_mapping = (index == 0)
+        widgets['existing'].setVisible(is_mapping)
+        widgets['new'].setVisible(not is_mapping)
+
+    def get_mapping(self) -> Optional[Tuple[Dict[str, str], Dict[str, Any]]]:
+        mapping = {}
+        new_variables = {}
+        for var_name, widgets in self.mapping_widgets.items():
+            action_index = widgets['action'].currentIndex()
+            
+            if action_index == 0: # Map to Existing
+                target_var = widgets['existing'].currentText()
+                if target_var == "-- Select Existing --":
+                    QMessageBox.warning(self, "Input Error", f"Please select an existing variable to map '{var_name}' to.")
+                    return None
+                mapping[var_name] = target_var
+            else: # Create New or Keep Original
+                target_var = widgets['new'].text().strip()
+                if not target_var:
+                    QMessageBox.warning(self, "Input Error", f"The new variable name for '{var_name}' cannot be empty.")
+                    return None
+                mapping[var_name] = target_var
+                if target_var not in self.global_variables:
+                    new_variables[target_var] = None
+
+        return mapping, new_variables
+
+# --- NEW CLASS: SaveTemplateDialog ---
+class SaveTemplateDialog(QDialog):
+    def __init__(self, existing_templates: List[str], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Step Template")
+        self.setMinimumWidth(350)
+        
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        self.info_label = QLabel("Select an existing template to overwrite, or type a new name.")
+        
+        self.templates_combo = QComboBox()
+        self.templates_combo.addItem("-- Create New Template --")
+        self.templates_combo.addItems(sorted(existing_templates))
+
+        self.name_editor = QLineEdit()
+        self.name_editor.setPlaceholderText("Enter new template name")
+
+        self.templates_combo.currentTextChanged.connect(self._selection_changed)
+
+        form_layout.addRow("Action:", self.templates_combo)
+        form_layout.addRow("Template Name:", self.name_editor)
+
+        main_layout.addWidget(self.info_label)
+        main_layout.addLayout(form_layout)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self._selection_changed(self.templates_combo.currentText())
+
+    def _selection_changed(self, text: str) -> None:
+        if text == "-- Create New Template --":
+            self.name_editor.clear()
+            self.name_editor.setEnabled(True)
+            self.name_editor.setPlaceholderText("Enter new template name")
+        else:
+            self.name_editor.setText(text)
+            self.name_editor.setEnabled(True)
+
+    def get_template_name(self) -> Optional[str]:
+        name = self.name_editor.text().strip()
+        # Sanitize name
+        sanitized_name = "".join(c for c in name if c.isalnum() or c in (' ', '_')).rstrip()
+        if not sanitized_name:
+            QMessageBox.warning(self, "Invalid Name", "Template name cannot be empty or contain only invalid characters.")
+            return None
+        return sanitized_name
+
+class GroupedTreeWidget(QTreeWidget):
+    """
+    A custom QTreeWidget that draws vertical lines to indicate the scope
+    of expanded groups, loops, and conditional blocks.
+    """
+    def __init__(self, main_window: 'MainWindow', parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.main_window = main_window
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        # First, run the default paint event to draw all the items.
+        super().paintEvent(event)
+        
+        # Now, draw our custom lines on top.
+        painter = QPainter(self.viewport())
+        pen = QPen(QColor("#C0392B")) # A shade of red
+        pen.setWidth(2)
+        painter.setPen(pen)
+
+        self._draw_group_lines_recursive(self.invisibleRootItem(), painter)
+
+    def _draw_group_lines_recursive(self, parent_item: QTreeWidgetItem, painter: QPainter):
+        for i in range(parent_item.childCount()):
+            child_item = parent_item.child(i)
+            
+            # Get the data associated with this tree item.
+            item_data = self.main_window._get_item_data(child_item)
+            
+            # Check if this item is a block start and is currently expanded.
+            if (item_data and item_data.get("type") in ["group_start", "loop_start", "IF_START"] and self.isItemExpanded(child_item)):
+                
+                start_index = item_data.get("original_listbox_row_index")
+                # Use MainWindow's helper to find the index of the matching 'end' block.
+                _ , end_index = self.main_window._find_block_indices(start_index)
+                
+                # Find the corresponding end item widget using the map from MainWindow.
+                end_item = self.main_window.data_to_item_map.get(end_index)
+                
+                start_rect = self.visualItemRect(child_item)
+                
+                # Proceed only if we found the end item and the start item is visible.
+                if end_item and not start_rect.isEmpty():
+                    end_rect = self.visualItemRect(end_item)
+                    
+                    # Define line geometry.
+                    x_offset = 8    # How far from the left edge.
+                    tick_width = 5  # The width of the small horizontal ticks.
+                    start_y = start_rect.center().y()
+                    
+                    # If the end item is scrolled out of view, draw the line to the
+                    # bottom of the visible area. Otherwise, draw to the end item's center.
+                    end_y = end_rect.center().y() if not end_rect.isEmpty() else self.viewport().height()
+
+                    # Don't draw if the line would be pointing upwards.
+                    if end_y < start_y:
+                        continue
+                        
+                    # --- Draw the lines ---
+                    # 1. The main vertical line.
+                    painter.drawLine(x_offset, start_y, x_offset, end_y)
+                    # 2. The top horizontal tick.
+                    painter.drawLine(x_offset, start_y, x_offset + tick_width, start_y)
+                    # 3. The bottom horizontal tick (only if the end item is visible).
+                    if not end_rect.isEmpty():
+                        painter.drawLine(x_offset, end_y, x_offset + tick_width, end_y)
+
+            # Recurse into the children of the current item to draw nested block lines.
+            if self.isItemExpanded(child_item):
+                self._draw_group_lines_recursive(child_item, painter)
+                
+class MainWindow(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("PyQt6 Module, Class, and Method Loader")
+        self.setGeometry(100, 100, 1200, 800)
+        self.gui_communicator = GuiCommunicator()
+        self.gui_communicator.log_message_signal.connect(self._log_to_console)
+        self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
+        self.base_directory = os.path.dirname(os.path.abspath(__file__))
+        self.module_subfolder = "Bot_module"
+        self.module_directory = os.path.join(self.base_directory, self.module_subfolder)
+        self.click_image_dir = os.path.join(self.base_directory, "Click_image")
+        os.makedirs(self.click_image_dir, exist_ok=True)
+        self.bot_steps_subfolder = "Bot_steps"
+        self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
+        self.steps_template_subfolder = "Steps_template"
+        self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
+        self.added_steps_data: List[Dict[str, Any]] = []
+        self.last_executed_context: Optional[ExecutionContext] = None
+        self.global_variables: Dict[str, Any] = {}
+        self.loop_id_counter: int = 0
+        self.if_id_counter: int = 0
+        self.group_id_counter: int = 0
+        self.active_param_input_dialog: Optional[ParameterInputDialog] = None
+        self.all_parsed_method_data: Dict[str, Dict[str, List[Tuple[str, str, str, str, Dict[str, Any]]]]] = {}
+        
+        self.minimized_for_execution = False
+        self.original_geometry = None
+        self.widget_homes = {}
+
+        self.init_ui()
+        self.load_all_modules_to_tree()
+        self.load_saved_steps_to_dropdown()
+        self._update_variables_list_display()
+        
+    def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
+        if not item: return None
+        data = item.data(0, Qt.ItemDataRole.UserRole)
+        return data.value() if isinstance(data, QVariant) else data
+
+    def _get_image_filenames(self) -> List[str]:
+        filenames: List[str] = []
+        if os.path.exists(self.click_image_dir):
+            for filename in os.listdir(self.click_image_dir):
+                if filename.lower().endswith(".txt"):
+                    filenames.append(os.path.splitext(filename)[0])
+        return sorted(filenames)
+
+    def _log_to_console(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_console.append(f"[{timestamp}] {message}")
+
+    def _handle_screenshot_request_from_param_dialog(self) -> None:
+        if self.active_param_input_dialog:
+            self.active_param_input_dialog.hide()
+        self._log_to_console("ParameterInputDialog hidden, opening screenshot tool.")
+        self.open_screenshot_tool()
+
+    def init_ui(self) -> None:
+        os.makedirs(self.steps_template_directory, exist_ok=True)
+        
+        master_layout = QVBoxLayout(self)
+        master_layout.setContentsMargins(0, 0, 0, 0)
+        self.stacked_layout = QStackedLayout()
+        
+        self.full_view_container = QWidget()
+        main_layout = QVBoxLayout(self.full_view_container)
+
+        top_layout = QHBoxLayout()
+        self.filter_label = QLabel("Filter Module:")
+        font_height = self.filter_label.fontMetrics().height()
+        self.filter_label.setMinimumHeight(int(font_height * 1.5))
+        self.filter_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        self.module_filter_dropdown = QComboBox()
+        self.module_filter_dropdown.addItem("-- Show All Modules --")
+        self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
+        top_layout.addWidget(self.filter_label)
+        top_layout.addWidget(self.module_filter_dropdown, 1)
+        top_layout.addStretch(1)
+        
+        self.label2 = QLabel("Load Saved Steps:")
+        self.dropdown2 = QComboBox()
+        self.dropdown2.currentIndexChanged.connect(self.saved_steps_selection_changed)
+        top_layout.addWidget(self.label2)
+        top_layout.addWidget(self.dropdown2)
+        top_layout.addStretch(1)
+        main_layout.addLayout(top_layout)
+        
+        bottom_layout = QHBoxLayout()
+        self.left_panel_widget = QWidget()
+        left_panel_layout = QVBoxLayout(self.left_panel_widget)
+        
+        self.tree_section_layout = QVBoxLayout()
+        self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search for methods or templates...")
+        self.search_box.textChanged.connect(self.search_module_tree)
+        self.tree_section_layout.addWidget(self.tree_label)
+        self.tree_section_layout.addWidget(self.search_box)
+        self.module_tree = QTreeWidget()
+        self.module_tree.setHeaderLabels(["Module/Class/Method"])
+        self.module_tree.itemDoubleClicked.connect(self.add_item_to_execution_tree)
+        self.module_tree.itemClicked.connect(self.update_selected_method_info)
+        self.tree_section_layout.addWidget(self.module_tree)
+        self.label_info1 = QLabel("Module Info: None")
+        self.label_info1.setStyleSheet("max-width: 180px; font-style: italic; color: gray;")
+        self.tree_section_layout.addWidget(self.label_info1)
+        self.label_info2 = QLabel("Image Preview")
+        self.label_info2.setStyleSheet("font-style: italic; color: gray;")
+        self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tree_section_layout.addWidget(self.label_info2)
+        self.label_info3 = QLabel("Image Name")
+        self.label_info3.setStyleSheet("font-style: italic; color: blue;")
+        self.tree_section_layout.addWidget(self.label_info3)
+        left_panel_layout.addLayout(self.tree_section_layout, 1)
+        left_panel_layout.addSpacing(10)
+
+        self.variables_group_box = QGroupBox("Global Variables")
+        variables_layout = QVBoxLayout()
+        self.variables_list = QListWidget()
+        self.variables_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        variables_layout.addWidget(self.variables_list)
+        var_buttons_layout = QHBoxLayout()
+        self.add_var_button = QPushButton("Add Variable")
+        self.add_var_button.clicked.connect(self.add_variable)
+        var_buttons_layout.addWidget(self.add_var_button)
+        self.edit_var_button = QPushButton("Edit Variable")
+        self.edit_var_button.clicked.connect(self.edit_variable)
+        var_buttons_layout.addWidget(self.edit_var_button)
+        self.delete_var_button = QPushButton("Delete Variable")
+        self.delete_var_button.clicked.connect(self.delete_variable)
+        var_buttons_layout.addWidget(self.delete_var_button)
+        self.clear_vars_button = QPushButton("Reset All Values to None")
+        self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
+        var_buttons_layout.addWidget(self.clear_vars_button)
+        variables_layout.addLayout(var_buttons_layout)
+        self.variables_group_box.setLayout(variables_layout)
+        left_panel_layout.addWidget(self.variables_group_box)
+        left_panel_layout.addSpacing(10)
+        
+        execute_buttons_layout = QVBoxLayout()
+        execute_row_layout = QHBoxLayout()
+        self.execute_all_button = QPushButton("Execute All Steps")
+        self.execute_all_button.clicked.connect(self.execute_all_steps)
+        execute_row_layout.addWidget(self.execute_all_button)
+        self.execute_one_step_button = QPushButton("Execute 1 Step")
+        self.execute_one_step_button.clicked.connect(self.execute_one_step)
+        self.execute_one_step_button.setEnabled(False)
+        execute_row_layout.addWidget(self.execute_one_step_button)
+        execute_buttons_layout.addLayout(execute_row_layout)
+        block_buttons_layout = QHBoxLayout()
+        self.add_loop_button = QPushButton("Add Loop")
+        self.add_loop_button.clicked.connect(self.add_loop_block)
+        block_buttons_layout.addWidget(self.add_loop_button)
+        self.add_conditional_button = QPushButton("Add Conditional Block")
+        self.add_conditional_button.clicked.connect(self.add_conditional_block)
+        block_buttons_layout.addWidget(self.add_conditional_button)
+        execute_buttons_layout.addLayout(block_buttons_layout)
+        left_panel_layout.addLayout(execute_buttons_layout)
+        
+        button_row_layout_1 = QHBoxLayout()
+        self.save_steps_button = QPushButton("Save Bot Steps")
+        self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
+        button_row_layout_1.addWidget(self.save_steps_button)
+        
+        self.group_steps_button = QPushButton("Group Selected")
+        self.group_steps_button.clicked.connect(self.group_selected_steps)
+        button_row_layout_1.addWidget(self.group_steps_button)
+
+        self.clear_selected_button = QPushButton("Clear Selected Steps")
+        self.clear_selected_button.clicked.connect(self.clear_selected_steps)
+        button_row_layout_1.addWidget(self.clear_selected_button)
+        self.remove_all_steps_button = QPushButton("Remove All Steps")
+        self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
+        button_row_layout_1.addWidget(self.remove_all_steps_button)
+        left_panel_layout.addLayout(button_row_layout_1)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        left_panel_layout.addWidget(self.progress_bar)
+        self.progress_bar.hide()
+        left_panel_layout.addSpacing(10)
+        
+        utility_buttons_layout = QHBoxLayout()
+        self.utility_buttons_layout_2 = QHBoxLayout()
+        self.always_on_top_button = QPushButton("Always On Top: Off")
+        self.always_on_top_button.setCheckable(True)
+        self.always_on_top_button.clicked.connect(self.toggle_always_on_top)
+        utility_buttons_layout.addWidget(self.always_on_top_button)
+        self.open_screenshot_tool_button = QPushButton("Open Screenshot Tool")
+        self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
+        utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
+        self.toggle_log_checkbox = QCheckBox("Show Execution Log")
+        # --- MODIFIED: Set checkbox to be unchecked by default ---
+        self.toggle_log_checkbox.setChecked(False)
+        self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
+        self.exit_button = QPushButton("Exit GUI")
+        self.exit_button.clicked.connect(QApplication.instance().quit)
+        self.utility_buttons_layout_2.addWidget(self.exit_button)
+        left_panel_layout.addLayout(utility_buttons_layout)
+        left_panel_layout.addLayout(self.utility_buttons_layout_2)
+
+        self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.execution_tree_widget = QWidget()
+        self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
+        self.listbox_label2 = QLabel("Execution Flow:")
+        self.execution_tree = QTreeWidget()
+        self.execution_tree.setHeaderLabels(["Execution Flow"])
+        self.execution_tree.setDragDropMode(QTreeWidget.DragDropMode.NoDragDrop)
+        self.execution_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
+        self.execution_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.execution_tree_layout.addWidget(self.listbox_label2)
+        self.execution_tree_layout.addWidget(self.execution_tree)
+
+        self.log_widget = QWidget()
+        log_layout = QVBoxLayout(self.log_widget)
+        log_group_box = QGroupBox("Execution Log")
+        log_group_layout = QVBoxLayout()
+        self.log_console = QTextEdit()
+        self.log_console.setReadOnly(True)
+        self.log_console.setStyleSheet("background-color: #2E2E2E; color: #E0E0E0; font-family: 'Consolas', 'Courier New', monospace;")
+        log_group_layout.addWidget(self.log_console)
+        self.clear_log_button = QPushButton("Clear Log")
+        self.clear_log_button.clicked.connect(self.log_console.clear)
+        log_group_layout.addWidget(self.clear_log_button)
+        log_group_box.setLayout(log_group_layout)
+        log_layout.addWidget(log_group_box)
+        
+        self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
+        # --- NEW: Hide log widget initially ---
+        self.log_widget.setVisible(False)
+        self.right_splitter.addWidget(self.execution_tree_widget)
+        self.right_splitter.addWidget(self.log_widget)
+        self.right_splitter.setSizes([600, 400])
+
+        bottom_layout.addWidget(self.left_panel_widget, 1)
+        bottom_layout.addWidget(self.right_splitter, 2)
+        main_layout.addLayout(bottom_layout)
+        
+        self.mini_view_container = QWidget()
+        self.mini_view_layout = QVBoxLayout(self.mini_view_container)
+        self.mini_view_layout.setContentsMargins(5,5,5,5)
+
+        self.stacked_layout.addWidget(self.full_view_container)
+        self.stacked_layout.addWidget(self.mini_view_container)
+        master_layout.addLayout(self.stacked_layout)
+        
+        self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
+
+        self.widget_homes = {
+            self.execution_tree: (self.execution_tree_layout, 1),
+            self.label_info2: (self.tree_section_layout, 4), # Index updated due to search box
+            self.progress_bar: (left_panel_layout, 5),
+            self.exit_button: (self.utility_buttons_layout_2, 1)
+        }
+
+    def _toggle_minimized_view(self, minimize: bool):
+        if minimize:
+            self.minimized_for_execution = True
+            self.original_geometry = self.geometry()
+
+            self.mini_view_layout.addWidget(self.execution_tree)
+            self.mini_view_layout.addWidget(self.label_info2)
+            self.mini_view_layout.addWidget(self.progress_bar)
+            self.mini_view_layout.addWidget(self.exit_button)
+            
+            self.progress_bar.show()
+
+            self.stacked_layout.setCurrentWidget(self.mini_view_container)
+
+            new_width, new_height = 350, 400
+            screen_geometry = QApplication.primaryScreen().geometry()
+            self.move(screen_geometry.width() - new_width, 0)
+            self.setFixedSize(new_width, new_height)
+
+        else:
+            if self.original_geometry:
+                self.setFixedSize(QSize(16777215, 16777215))
+                self.setGeometry(self.original_geometry)
+
+            for widget, (layout, index) in self.widget_homes.items():
+                if isinstance(layout, QBoxLayout):
+                    layout.insertWidget(index, widget)
+                else:
+                    layout.addWidget(widget)
+
+            self.progress_bar.hide()
+            
+            self.stacked_layout.setCurrentWidget(self.full_view_container)
+            self.minimized_for_execution = False
+
+
+    def _toggle_execute_one_step_button(self) -> None:
+        self.execute_one_step_button.setEnabled(len(self.execution_tree.selectedItems()) > 0)
+
+    def _rebuild_added_steps_data_from_tree(self):
+        new_flat_data: List[Dict[str, Any]] = []
+        self._flatten_tree_recursive(self.execution_tree.invisibleRootItem(), new_flat_data)
+        self.added_steps_data = new_flat_data
+        self._update_original_listbox_row_indices()
+        selected_item_data = self._get_item_data(self.execution_tree.currentItem())
+        self._rebuild_execution_tree(item_to_focus_data=selected_item_data)
+
+    def _flatten_tree_recursive(self, parent_item: QTreeWidgetItem, flat_list: List[Dict[str, Any]]):
+        for i in range(parent_item.childCount()):
+            child_item = parent_item.child(i)
+            step_data = self._get_item_data(child_item)
+            if step_data and isinstance(step_data, dict):
+                flat_list.append(step_data)
+            self._flatten_tree_recursive(child_item, flat_list)
+
+    def _update_original_listbox_row_indices(self):
+        for i, step_data in enumerate(self.added_steps_data):
+            step_data["original_listbox_row_index"] = i
+            if step_data["type"] == "step" and "parameters_config" in step_data and step_data["parameters_config"] is not None:
+                step_data["parameters_config"]["original_listbox_row_index"] = i
+
+    def _rebuild_execution_tree(self, item_to_focus_data: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Rebuilds the entire execution tree from the flat `added_steps_data` list.
+        - Handles nesting of blocks correctly.
+        - Selects and scrolls to a specified item.
+        - Does NOT auto-expand parent groups.
+        """
+        self.execution_tree.clear()
+        current_parent_stack: List[QTreeWidgetItem] = [self.execution_tree.invisibleRootItem()]
+        item_to_focus: Optional[QTreeWidgetItem] = None
+
+        for i, step_data_dict in enumerate(self.added_steps_data):
+            step_data_dict["original_listbox_row_index"] = i
+            step_type = step_data_dict.get("type")
+
+            # --- Stack Popping Logic (handles leaving a block) ---
+            if step_type == "group_end":
+                if len(current_parent_stack) > 1:
+                    last_parent_data = self._get_item_data(current_parent_stack[-1])
+                    if last_parent_data and last_parent_data.get("type") == "group_start" and last_parent_data.get("group_id") == step_data_dict.get("group_id"):
+                        current_parent_stack.pop()
+
+            elif step_type == "loop_end":
+                if len(current_parent_stack) > 1:
+                    last_parent_data = self._get_item_data(current_parent_stack[-1])
+                    if last_parent_data and last_parent_data.get("type") == "loop_start" and last_parent_data.get("loop_id") == step_data_dict.get("loop_id"):
+                        current_parent_stack.pop()
+
+            elif step_type == "IF_END":
+                if len(current_parent_stack) > 1:
+                    last_parent_data = self._get_item_data(current_parent_stack[-1])
+                    if last_parent_data and last_parent_data.get("type") == "ELSE" and last_parent_data.get("if_id") == step_data_dict.get("if_id"):
+                        current_parent_stack.pop()
+                        if len(current_parent_stack) > 1:
+                             if_start_parent_data = self._get_item_data(current_parent_stack[-1])
+                             if if_start_parent_data and if_start_parent_data.get("type") == "IF_START" and if_start_parent_data.get("if_id") == step_data_dict.get("if_id"):
+                                 current_parent_stack.pop()
+                    elif last_parent_data and last_parent_data.get("type") == "IF_START" and last_parent_data.get("if_id") == step_data_dict.get("if_id"):
+                        current_parent_stack.pop()
+
+            # --- Item Creation (for ALL items) ---
+            parent_for_current_item = current_parent_stack[-1]
+            tree_item = QTreeWidgetItem(parent_for_current_item)
+            tree_item.setData(0, Qt.ItemDataRole.UserRole, QVariant(step_data_dict))
+            card = ExecutionStepCard(step_data_dict, i + 1)
+            card.edit_requested.connect(self._handle_edit_request)
+            card.delete_requested.connect(self._handle_delete_request)
+            card.move_up_requested.connect(self._handle_move_up_request)
+            card.move_down_requested.connect(self._handle_move_down_request)
+            card.save_as_template_requested.connect(self._handle_save_as_template_request)
+            card.execute_this_requested.connect(self._handle_execute_this_request)
+            tree_item.setSizeHint(0, card.sizeHint())
+            self.execution_tree.setItemWidget(tree_item, 0, card)
+
+            if item_to_focus_data and step_data_dict == item_to_focus_data:
+                item_to_focus = tree_item
+
+            # --- Stack Pushing Logic (handles entering a new block) ---
+            if step_type in ["loop_start", "IF_START", "ELSE", "group_start"]:
+                current_parent_stack.append(tree_item)
+
+        # --- Focus Logic (runs after the tree is fully built) ---
+        if item_to_focus:
+            # Select the item and scroll to it, but do NOT expand its parents.
+            self.execution_tree.setCurrentItem(item_to_focus)
+            self.execution_tree.scrollToItem(item_to_focus, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
+
+        self.update_status_column_for_all_items()
+
+    def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
+        item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
+        if item_to_edit:
+            self.edit_step_in_execution_tree(item_to_edit, 0)
+        else:
+            QMessageBox.critical(self, "Error", "Could not find the step to edit.")
+
+    def _handle_delete_request(self, step_to_delete: Dict[str, Any]):
+        step_type = step_to_delete.get("type")
+        start_index = -1
+        try:
+            start_index = self.added_steps_data.index(step_to_delete)
+        except ValueError:
+            QMessageBox.critical(self, "Error", "Could not find step to delete in data list.")
+            return
+
+        if step_type in ["loop_start", "IF_START", "group_start"]:
+            start_idx, end_idx = self._find_block_indices(start_index)
+            if start_idx != end_idx: 
+                items_to_remove_data = self.added_steps_data[start_idx : end_idx + 1]
+            else: 
+                items_to_remove_data = [step_to_delete]
+        else:
+            items_to_remove_data = [step_to_delete]
+
+        if QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete {len(items_to_remove_data)} selected step(s)?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self.added_steps_data = [s for s in self.added_steps_data if s not in items_to_remove_data]
+            self._rebuild_execution_tree()
+            
+    def _find_block_indices(self, start_index: int) -> Tuple[int, int]:
+        start_step = self.added_steps_data[start_index]
+        step_type = start_step.get("type")
+
+        if step_type not in ["loop_start", "IF_START", "group_start"]:
+            return start_index, start_index
+
+        if step_type == "group_start":
+            block_id = start_step.get("group_id")
+            end_type = "group_end"
+        elif step_type == "loop_start":
+            block_id = start_step.get("loop_id")
+            end_type = "loop_end"
+        else:
+            block_id = start_step.get("if_id")
+            end_type = "IF_END"
+
+        nesting_level = 0
+        for i in range(start_index + 1, len(self.added_steps_data)):
+            current_step = self.added_steps_data[i]
+            current_type = current_step.get("type")
+
+            if current_type in ["loop_start", "IF_START", "group_start"]:
+                nesting_level += 1
+            elif current_type == end_type and (current_step.get("group_id") or current_step.get("loop_id") or current_step.get("if_id")) == block_id:
+                if nesting_level == 0:
+                    return start_index, i
+                else:
+                    nesting_level -= 1
+            elif current_type in ["loop_end", "IF_END", "group_end"]:
+                nesting_level -= 1
+        return start_index, start_index
+
+    def _handle_move_up_request(self, step_data: Dict[str, Any]):
+        try:
+            current_pos = self.added_steps_data.index(step_data)
+        except ValueError:
+            return
+        if current_pos == 0:
+            return
+        start_idx, end_idx = self._find_block_indices(current_pos)
+        block_to_move = self.added_steps_data[start_idx : end_idx + 1]
+        
+        prev_start_idx, prev_end_idx = self._find_block_indices(start_idx - 1) if (start_idx -1) >= 0 else (start_idx-1, start_idx-1)
+        if prev_start_idx == -1:
+            return
+        
+        part_before = self.added_steps_data[0:prev_start_idx]
+        part_middle = self.added_steps_data[prev_start_idx : start_idx]
+        part_after = self.added_steps_data[end_idx+1:]
+        
+        self.added_steps_data = part_before + block_to_move + part_middle + part_after
+        self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
+
+    def _handle_move_down_request(self, step_data: Dict[str, Any]):
+        try:
+            current_pos = self.added_steps_data.index(step_data)
+        except ValueError:
+            return
+        start_idx, end_idx = self._find_block_indices(current_pos)
+        if end_idx >= len(self.added_steps_data) - 1:
+            return
+        
+        block_to_move = self.added_steps_data[start_idx : end_idx + 1]
+        
+        next_start_idx, next_end_idx = self._find_block_indices(end_idx+1)
+
+        part_before = self.added_steps_data[0:start_idx]
+        part_middle = self.added_steps_data[end_idx + 1 : next_end_idx + 1]
+        part_after = self.added_steps_data[next_end_idx+1:]
+        
+        self.added_steps_data = part_before + part_middle + block_to_move + part_after
+        self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
+
+    # --- NEW HELPER METHOD ---
+    def _get_template_names(self) -> List[str]:
+        """Returns a sorted list of template names without extensions."""
+        os.makedirs(self.steps_template_directory, exist_ok=True)
+        return sorted([os.path.splitext(f)[0] for f in os.listdir(self.steps_template_directory) if f.endswith(".json")])
+
+    # --- MODIFIED METHOD ---
+    def _handle_save_as_template_request(self, step_data_to_save: Dict[str, Any]):
+        try:
+            start_index = self.added_steps_data.index(step_data_to_save)
+        except ValueError:
+            QMessageBox.critical(self, "Error", "Could not find the step to save as a template.")
+            return
+
+        start_idx, end_idx = self._find_block_indices(start_index)
+        if start_idx == end_idx:
+            QMessageBox.warning(self, "Save Error", "Cannot save a single step as a block template. The block is incomplete.")
+            return
+            
+        block_to_save = self.added_steps_data[start_idx : end_idx + 1]
+
+        existing_templates = self._get_template_names()
+        dialog = SaveTemplateDialog(existing_templates, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            template_name = dialog.get_template_name()
+            if not template_name:
+                return # Dialog already showed an error message
+
+            # Check for overwrite
+            if template_name in existing_templates:
+                reply = QMessageBox.question(self, "Confirm Overwrite", 
+                                             f"A template named '{template_name}' already exists. Do you want to overwrite it?",
+                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
+                    return
+
+            file_path = os.path.join(self.steps_template_directory, f"{template_name}.json")
+            
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(block_to_save, f, indent=4)
+                QMessageBox.information(self, "Success", f"Template '{template_name}' saved successfully.")
+                self.load_all_modules_to_tree() # Refresh the tree to show the new/updated template
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save the template:\n{e}")
+
+    def _handle_execute_this_request(self, step_data: Dict[str, Any]):
+        """Executes a single step requested from an ExecutionStepCard button."""
+        if not (step_data and isinstance(step_data, dict)):
+            return
+        try:
+            current_row = self.added_steps_data.index(step_data)
+        except ValueError:
+            QMessageBox.critical(self, "Error", "Could not find the selected step in the internal data model.")
+            return
+
+        self.set_ui_enabled_state(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.update_status_column_for_all_items()
+        
+        self.worker = ExecutionWorker(
+            self.added_steps_data, 
+            self.module_directory, 
+            self.gui_communicator, 
+            self.global_variables, 
+            single_step_mode=True, 
+            selected_start_index=current_row
+        )
+        self._connect_worker_signals()
+        self.worker.start()
+
+    def update_status_column_for_all_items(self):
+        self._clear_status_recursive(self.execution_tree.invisibleRootItem())
+
+    def _clear_status_recursive(self, parent_item: QTreeWidgetItem):
+        for i in range(parent_item.childCount()):
+            child = parent_item.child(i)
+            card = self.execution_tree.itemWidget(child, 0)
+            if card:
+                card.set_status("#D3D3D3")
+                card.clear_result()
+            self._clear_status_recursive(child)
+
+    def toggle_always_on_top(self) -> None:
+        if self.always_on_top_button.isChecked():
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            self.always_on_top_button.setText("Always On Top: On")
+        else:
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
+            self.always_on_top_button.setText("Always On Top: Off")
+        self.show()
+
+    def open_screenshot_tool(self, initial_image_name: str = "") -> None:
+        self.hide()
+        current_image_name_for_tool = self.label_info3.text() if self.label_info3.text() != "Image Name" else ""
+        self.screenshot_window = SecondWindow(current_image_name_for_tool, parent=self)
+        self.screenshot_window.screenshot_saved.connect(self._handle_screenshot_tool_closed)
+        self.screenshot_window.show()
+
+    def _handle_screenshot_tool_closed(self, saved_filename: str) -> None:
+        self.show()
+        self._log_to_console(f"Screenshot tool closed. Saved filename: '{saved_filename}'")
+        if self.active_param_input_dialog and not self.active_param_input_dialog.isHidden():
+            new_filenames = self._get_image_filenames()
+            self.active_param_input_dialog.update_image_filenames.emit(new_filenames, saved_filename)
+        elif self.active_param_input_dialog:
+             self.active_param_input_dialog.show()
+             new_filenames = self._get_image_filenames()
+             self.active_param_input_dialog.update_image_filenames.emit(new_filenames, saved_filename)
+    
+    # --- MODIFIED METHOD ---
+    def load_all_modules_to_tree(self) -> None:
+        self.module_tree.clear()
+        self.module_filter_dropdown.clear()
+        self.module_filter_dropdown.addItem("-- Show All Modules --")
+        self.label_info1.setText("Module Info: Loading modules...")
+        self.all_parsed_method_data.clear()
+        dummy_context = ExecutionContext()
+        dummy_communicator = GuiCommunicator()
+        dummy_context.set_gui_communicator(dummy_communicator)
+        try:
+            if self.module_directory not in sys.path:
+                sys.path.insert(0, self.module_directory)
+            if not os.path.exists(self.module_directory):
+                QMessageBox.warning(self, "Module Folder Not Found", f"The '{self.module_subfolder}' folder was not found at: {self.module_directory}\nPlease create it and place your Python modules inside.")
+                self.label_info1.setText("Error: Bot_module folder not found.")
+                return
+            module_files: List[str] = [filename[:-3] for filename in os.listdir(self.module_directory) if filename.endswith(".py") and filename != "__init__.py"]
+            module_files.sort()
+            if not module_files:
+                self.label_info1.setText(f"No Python modules found in '{self.module_subfolder}' folder.")
+                
+            for module_name in module_files:
+                self.all_parsed_method_data[module_name] = {}
+                self.module_filter_dropdown.addItem(module_name)
+                try:
+                    module = importlib.import_module(module_name)
+                    importlib.reload(module)
+                    module_item = QTreeWidgetItem(self.module_tree)
+                    module_item.setText(0, module_name)
+                    module_item.setFlags(module_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                    module_item.setToolTip(0, f"Module: {module_name}")
+            
+                    for name, obj in inspect.getmembers(module):
+                        if inspect.isclass(obj) and obj.__module__ == module.__name__:
+                            class_name = name
+                            self.all_parsed_method_data[module_name][class_name] = []
+                            class_item = QTreeWidgetItem(module_item)
+                            class_item.setText(0, class_name)
+                            class_item.setFlags(class_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                            class_item.setToolTip(0, f"Class: {class_name} in {module_name}")
+                            init_kwargs_for_inspection: Dict[str, Any] = {}
+                            try:
+                                init_signature = inspect.signature(obj.__init__)
+                                if 'context' in init_signature.parameters:
+                                    init_kwargs_for_inspection['context'] = dummy_context
+                                temp_instance = obj(**init_kwargs_for_inspection)
+                            except Exception as e:
+                                self._log_to_console(f"Warning: Could not instantiate class '{class_name}' for inspection: {e}")
+                                class_item.addChild(QTreeWidgetItem(["(Init error, cannot inspect methods)"]))
+                                continue
+                            for method_name, method_obj in inspect.getmembers(temp_instance):
+                                if (not method_name.startswith('_') and callable(method_obj) and not inspect.isclass(method_obj) and not isinstance(method_obj, staticmethod) and not isinstance(method_obj, classmethod)):
+                                    func_obj = method_obj.__func__ if inspect.ismethod(method_obj) else method_obj
+                                    try:
+                                        sig = inspect.signature(func_obj)
+                                        params_for_dialog: Dict[str, Tuple[Any, Any]] = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
+                                        display_text = method_name
+                                        
+                                        method_info_tuple = (display_text, class_name, method_name, module_name, params_for_dialog)
+                                        self.all_parsed_method_data[module_name][class_name].append(method_info_tuple)
+                                        method_item = QTreeWidgetItem(class_item)
+                                        method_item.setText(0, display_text)
+                                        method_item.setToolTip(0, f"Method: {class_name}.{method_name}")
+                                        method_item.setData(0, Qt.ItemDataRole.UserRole, QVariant(method_info_tuple))
+                                    except Exception as e:
+                                        self._log_to_console(f"Warning: Error inspecting '{class_name}.{method_name}': {e}")
+                except Exception as e:
+                    self._log_to_console(f"Error loading module '{module_name}': {e}")
+
+            # --- NEW: Load templates into the tree ---
+            template_root_item = QTreeWidgetItem(self.module_tree)
+            template_root_item.setText(0, "Bot Templates")
+            template_root_item.setFlags(template_root_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+            template_root_item.setToolTip(0, "Saved step templates")
+            try:
+                for template_name in self._get_template_names():
+                    template_item = QTreeWidgetItem(template_root_item)
+                    template_item.setText(0, template_name)
+                    template_item.setToolTip(0, f"Template: {template_name}")
+                    template_item.setData(0, Qt.ItemDataRole.UserRole, QVariant({'type': 'template', 'name': template_name}))
+            except Exception as e:
+                self._log_to_console(f"Error loading templates into tree: {e}")
+                error_item = QTreeWidgetItem(template_root_item)
+                error_item.setText(0, "(Error loading templates)")
+
+            # --- MODIFIED: Collapse all items by default ---
+            self.module_tree.collapseAll()
+            self.label_info1.setText("Module Info: All modules loaded.")
+
+        finally:
+            if self.module_directory in sys.path:
+                sys.path.remove(self.module_directory)
+        self.module_tree.itemClicked.connect(self.update_selected_method_info)
+
+    def filter_module_tree(self, index: int) -> None:
+        selected_module_name = self.module_filter_dropdown.currentText()
+        root = self.module_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            module_item = root.child(i)
+            # Also hide/show the templates root item based on filter
+            is_template_item = module_item.text(0) == "Bot Templates"
+            if is_template_item:
+                module_item.setHidden(not (selected_module_name == "-- Show All Modules --"))
+            else:
+                module_item.setHidden(not (selected_module_name == "-- Show All Modules --" or module_item.text(0) == selected_module_name))
+        
+        # --- MODIFIED: Collapse all instead of expanding all ---
+        self.module_tree.collapseAll()
+
+    # --- NEW METHOD: search_module_tree ---
+    def search_module_tree(self, text: str) -> None:
+        """Filters the module tree based on the search text."""
+        search_text = text.lower()
+        root = self.module_tree.invisibleRootItem()
+
+        def filter_recursive(item: QTreeWidgetItem) -> bool:
+            # Check if any child matches
+            child_matches = False
+            for i in range(item.childCount()):
+                if filter_recursive(item.child(i)):
+                    child_matches = True
+            
+            # Check if the item itself matches
+            item_text = item.text(0).lower()
+            item_matches = search_text in item_text
+            
+            # The item should be visible if it matches OR if any of its children match
+            should_be_visible = item_matches or child_matches
+            item.setHidden(not should_be_visible)
+
+            # Expand parents of matching items, but not the matching item itself unless it has children
+            if should_be_visible and not item_matches and child_matches:
+                 item.setExpanded(True)
+            elif not search_text: # Collapse all when search is cleared
+                item.setExpanded(False)
+
+            return should_be_visible
+
+        # Iterate over top-level items (modules and templates category)
+        for i in range(root.childCount()):
+            filter_recursive(root.child(i))
+
+    def load_saved_steps_to_dropdown(self) -> None:
+        try:
+            self.dropdown2.currentIndexChanged.disconnect(self.saved_steps_selection_changed)
+        except TypeError:
+            pass
+        self.dropdown2.clear()
+        self.dropdown2.addItem("-- Select Step File --")
+        try:
+            os.makedirs(self.bot_steps_directory, exist_ok=True)
+            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
+            self.dropdown2.addItems(step_files)
+            if not step_files:
+                self.dropdown2.addItem("No saved steps found.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Saved Steps", f"Could not load step files: {e}")
+        finally:
+            self.dropdown2.currentIndexChanged.connect(self.saved_steps_selection_changed)
+
+    def saved_steps_selection_changed(self, index: int) -> None:
+        if index <= 0:
+            return
+        selected_file_name = self.dropdown2.currentText()
+        if not selected_file_name.endswith(".csv"):
+            return
+        file_path = os.path.join(self.bot_steps_directory, selected_file_name)
+        if os.path.exists(file_path):
+            self.load_steps_from_file(file_path)
+        else:
+            QMessageBox.warning(self, "File Not Found", f"The selected step file was not found:\n{file_path}")
+        self.load_saved_steps_to_dropdown()
+
+    # --- NEW HELPER: _extract_variables_from_steps ---
+    def _extract_variables_from_steps(self, steps: List[Dict[str, Any]]) -> set:
+        """Recursively finds all variable names used in a list of steps."""
+        found_variables = set()
+
+        def search_dict(d: Dict[str, Any]):
+            # Check for variable assignment
+            if "assign_to_variable_name" in d and d["assign_to_variable_name"]:
+                found_variables.add(d["assign_to_variable_name"])
+            if "assign_iteration_to_variable" in d and d.get("assign_iteration_to_variable"):
+                 found_variables.add(d["assign_iteration_to_variable"])
+            
+            # Check for variable usage in standard structures
+            if d.get("type") == "variable" and "value" in d:
+                found_variables.add(d["value"])
+
+            # Recurse into nested structures
+            for key, value in d.items():
+                if isinstance(value, dict):
+                    search_dict(value)
+                elif isinstance(value, list):
+                    search_list(value)
+
+        def search_list(lst: List[Any]):
+            for item in lst:
+                if isinstance(item, dict):
+                    search_dict(item)
+                elif isinstance(item, list):
+                    search_list(item)
+        
+        search_list(steps)
+        return found_variables
+    
+    # --- NEW HELPER: _apply_variable_mapping ---
+    def _apply_variable_mapping(self, steps: List[Dict[str, Any]], mapping: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Recursively replaces variable names in steps based on the provided mapping."""
+        
+        # Create a deep copy to avoid modifying the original template data
+        steps_copy = json.loads(json.dumps(steps))
+
+        def replace_in_dict(d: Dict[str, Any]):
+            # Replace assigned variables
+            if "assign_to_variable_name" in d and d["assign_to_variable_name"] in mapping:
+                d["assign_to_variable_name"] = mapping[d["assign_to_variable_name"]]
+            if "assign_iteration_to_variable" in d and d.get("assign_iteration_to_variable") in mapping:
+                d["assign_iteration_to_variable"] = mapping[d["assign_iteration_to_variable"]]
+
+            # Replace used variables
+            if d.get("type") == "variable" and d.get("value") in mapping:
+                d["value"] = mapping[d["value"]]
+
+            # Recurse
+            for key, value in d.items():
+                if isinstance(value, dict):
+                    replace_in_dict(value)
+                elif isinstance(value, list):
+                    replace_in_list(value)
+        
+        def replace_in_list(lst: List[Any]):
+            for item in lst:
+                if isinstance(item, dict):
+                    replace_in_dict(item)
+                elif isinstance(item, list):
+                    replace_in_list(item)
+        
+        replace_in_list(steps_copy)
+        return steps_copy
+
+    # --- REFACTORED/RENAMED METHOD ---
+    def _load_template_by_name(self, template_name: str) -> None:
+        """Loads a template file, handles variable mapping, and inserts it into the execution tree."""
+        file_path = os.path.join(self.steps_template_directory, f"{template_name}.json")
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                template_steps = json.load(f)
+
+            if not template_steps:
+                QMessageBox.warning(self, "Empty Template", "The selected template is empty.")
+                return
+
+            # --- Variable Mapping Logic ---
+            template_variables = self._extract_variables_from_steps(template_steps)
+            mapped_steps = template_steps
+
+            if template_variables:
+                self._log_to_console(f"Template '{template_name}' contains variables: {template_variables}")
+                var_dialog = TemplateVariableMappingDialog(template_variables, list(self.global_variables.keys()), self)
+                if var_dialog.exec() == QDialog.DialogCode.Accepted:
+                    mapping_result = var_dialog.get_mapping()
+                    if mapping_result is None: # User error in dialog
+                        return 
+                
+                    variable_map, new_vars = mapping_result
+                    
+                    # Apply the mapping to the steps
+                    mapped_steps = self._apply_variable_mapping(template_steps, variable_map)
+                    
+                    # Add new variables to global context
+                    if new_vars:
+                        self.global_variables.update(new_vars)
+                        self._update_variables_list_display()
+                        self._log_to_console(f"Added new global variables: {list(new_vars.keys())}")
+                else: # User cancelled the mapping
+                    self._log_to_console("Template loading cancelled by user at variable mapping stage.")
+                    return
+            # --- END: Variable Logic ---
+
+            re_id_d_steps = self._re_id_template_blocks(mapped_steps)
+
+            insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+            if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
+                insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
+                
+                self.added_steps_data[insert_data_index:insert_data_index] = re_id_d_steps
+                
+                self._rebuild_execution_tree(item_to_focus_data=re_id_d_steps[0])
+                self._log_to_console(f"Loaded template '{template_name}' with {len(re_id_d_steps)} steps.")
+
+        except FileNotFoundError:
+            QMessageBox.critical(self, "Load Error", f"Template file not found:\n{file_path}")
+        except json.JSONDecodeError:
+            QMessageBox.critical(self, "Load Error", f"The template file '{template_name}.json' is corrupted.")
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the template:\n{e}")
+            
+    def _re_id_template_blocks(self, template_steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        id_map = {}
+        
+        for step in template_steps:
+            step_type = step.get("type")
+            if step_type == "loop_start":
+                old_id = step.get("loop_id")
+                if old_id and old_id not in id_map:
+                    self.loop_id_counter += 1
+                    id_map[old_id] = f"loop_{self.loop_id_counter}"
+            elif step_type == "IF_START":
+                old_id = step.get("if_id")
+                if old_id and old_id not in id_map:
+                    self.if_id_counter += 1
+                    id_map[old_id] = f"if_{self.if_id_counter}"
+            elif step_type == "group_start":
+                old_id = step.get("group_id")
+                if old_id and old_id not in id_map:
+                    self.group_id_counter += 1
+                    id_map[old_id] = f"group_{self.group_id_counter}"
+        
+        for step in template_steps:
+            if "loop_id" in step and step["loop_id"] in id_map:
+                step["loop_id"] = id_map[step["loop_id"]]
+            if "if_id" in step and step["if_id"] in id_map:
+                step["if_id"] = id_map[step["if_id"]]
+            if "group_id" in step and step["group_id"] in id_map:
+                step["group_id"] = id_map[step["group_id"]]
+                
+        return template_steps
+
+    def update_selected_method_info(self, item: QTreeWidgetItem, column: int) -> None:
+        method_info_tuple = self._get_item_data(item)
+        self.label_info2.clear()
+        if method_info_tuple and isinstance(method_info_tuple, tuple) and len(method_info_tuple) == 5:
+            display_text, class_name, method_name, module_name, params_for_dialog = method_info_tuple
+            self._log_to_console(f"Selected Method: {class_name}.{method_name} (from {module_name})")
+            self.gui_communicator.update_module_info_signal.emit("")
+        else:
+            self._log_to_console("Selected item is not a method or template.")
+            self.gui_communicator.update_module_info_signal.emit("")
+
+    # --- MODIFIED METHOD ---
+    def add_item_to_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
+        item_data = self._get_item_data(item)
+
+        # --- Handle template loading ---
+        if isinstance(item_data, dict) and item_data.get('type') == 'template':
+            template_name = item_data.get('name')
+            if template_name:
+                self._load_template_by_name(template_name)
+            return
+
+        # --- Handle method adding ---
+        if not (item_data and isinstance(item_data, tuple) and len(item_data) == 5):
+            return # Not a clickable method or template
+            
+        display_text, class_name, method_name, module_name, params_for_dialog = item_data
+        
+        self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, list(self.global_variables.keys()), self._get_image_filenames(), self.gui_communicator, parent=self)
+        self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
+        if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
+            parameters_config = self.active_param_input_dialog.get_parameters_config()
+            if parameters_config is None:
+                self.gui_communicator.update_module_info_signal.emit("")
+                return
+            assign_to_variable_name = self.active_param_input_dialog.get_assignment_variable()
+        else:
+            self.gui_communicator.update_module_info_signal.emit("")
+            return
+        
+        new_step_data_dict: Dict[str, Any] = {"type": "step", "class_name": class_name, "method_name": method_name, "module_name": module_name, "parameters_config": parameters_config, "assign_to_variable_name": assign_to_variable_name}
+        insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+        if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+            selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
+            insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
+            self.added_steps_data.insert(insert_data_index, new_step_data_dict)
+            self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
+        
+        self.gui_communicator.update_module_info_signal.emit("")
+        self.active_param_input_dialog = None
+
+    def _calculate_flat_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
+        if selected_tree_item is None:
+            return len(self.added_steps_data)
+        selected_item_data_in_dialog = self._get_item_data(selected_tree_item)
+        if not selected_item_data_in_dialog:
+            return len(self.added_steps_data)
+        try:
+            selected_flat_index = self.added_steps_data.index(selected_item_data_in_dialog)
+        except ValueError:
+            return len(self.added_steps_data)
+        
+        if insert_mode == "before":
+            return selected_flat_index
+        elif insert_mode == "after":
+            _, end_idx = self._find_block_indices(selected_flat_index)
+            return end_idx + 1
+        elif insert_mode == "child":
+            block_type = selected_item_data_in_dialog.get("type")
+            if block_type in ["group_start", "loop_start", "IF_START", "ELSE"]:
+                return selected_flat_index + 1
+            else:
+                return selected_flat_index + 1
+        return len(self.added_steps_data)
+
+    def add_loop_block(self) -> None:
+        dialog = LoopConfigDialog(self.global_variables, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            loop_config = dialog.get_config()
+            if loop_config is None:
+                return
+            self.loop_id_counter += 1
+            loop_id = f"loop_{self.loop_id_counter}"
+            new_loop_start_data: Dict[str, Any] = {"type": "loop_start", "loop_id": loop_id, "loop_config": loop_config}
+            insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+            if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
+                insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
+                self.added_steps_data.insert(insert_data_index, new_loop_start_data)
+                loop_end_data_dict = {"type": "loop_end", "loop_id": loop_id, "loop_config": loop_config}
+                self.added_steps_data.insert(insert_data_index + 1, loop_end_data_dict)
+                self._update_original_listbox_row_indices()
+                self._rebuild_execution_tree(item_to_focus_data=new_loop_start_data)
+
+    def add_conditional_block(self) -> None:
+        dialog = ConditionalConfigDialog(self.global_variables, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            conditional_config = dialog.get_config()
+            if conditional_config is None:
+                return
+            self.if_id_counter += 1
+            if_id = f"if_{self.if_id_counter}"
+            new_if_start_data: Dict[str, Any] = {"type": "IF_START", "if_id": if_id, "condition_config": conditional_config}
+            new_else_data: Dict[str, Any] = {"type": "ELSE", "if_id": if_id, "condition_config": conditional_config}
+            new_if_end_data: Dict[str, Any] = {"type": "IF_END", "if_id": if_id, "condition_config": conditional_config}
+            insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+            if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
+                insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
+                self.added_steps_data.insert(insert_data_index, new_if_start_data)
+                self.added_steps_data.insert(insert_data_index + 1, new_else_data)
+                self.added_steps_data.insert(insert_data_index + 2, new_if_end_data)
+                self._update_original_listbox_row_indices()
+                self._rebuild_execution_tree(item_to_focus_data=new_if_start_data)
+
+    def group_selected_steps(self) -> None:
+        selected_items = self.execution_tree.selectedItems()
+        if not selected_items:
+            QMessageBox.information(self, "No Selection", "Please select one or more steps to group.")
+            return
+
+        group_name, ok = QInputDialog.getText(self, "Create Group", "Enter a name for the group:")
+        if ok and group_name:
+            selected_data = [self._get_item_data(item) for item in selected_items]
+            
+            first_item_data = selected_data[0]
+            try:
+                start_index = self.added_steps_data.index(first_item_data)
+            except ValueError:
+                QMessageBox.critical(self, "Error", "Could not find the start of the selection.")
+                return
+
+            last_item_data = selected_data[-1]
+            try:
+                last_item_start_idx_in_flat_list = self.added_steps_data.index(last_item_data)
+                _, end_index = self._find_block_indices(last_item_start_idx_in_flat_list)
+            except ValueError:
+                QMessageBox.critical(self, "Error", "Could not find the end of the selection.")
+                return
+
+            self.group_id_counter += 1
+            group_id = f"group_{self.group_id_counter}"
+            
+            group_start_data = {"type": "group_start", "group_id": group_id, "group_name": group_name}
+            group_end_data = {"type": "group_end", "group_id": group_id}
+
+            self.added_steps_data.insert(start_index, group_start_data)
+            self.added_steps_data.insert(end_index + 2, group_end_data)
+
+            self._rebuild_execution_tree(item_to_focus_data=group_start_data)
+
+    def edit_step_in_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
+        step_data_dict = self._get_item_data(item)
+        if not step_data_dict or not isinstance(step_data_dict, dict):
+            QMessageBox.warning(self, "Invalid Item", "Cannot edit this item type or no data found.")
+            return
+        step_type = step_data_dict["type"]
+        current_row = -1
+        try:
+            current_row = self.added_steps_data.index(step_data_dict)
+        except ValueError:
+            QMessageBox.critical(self, "Error", "Could not find selected item in internal data model for editing.")
+            return
+        if step_type == "step":
+            class_name, method_name, module_name = step_data_dict["class_name"], step_data_dict["method_name"], step_data_dict["module_name"]
+            parameters_config_with_index = step_data_dict["parameters_config"]
+            assign_to_variable_name = step_data_dict["assign_to_variable_name"]
+            dialog_parameters_config = {k: v for k, v in parameters_config_with_index.items() if k != "original_listbox_row_index"}
+            try:
+                if self.module_directory not in sys.path:
+                    sys.path.insert(0, self.module_directory)
+                module = importlib.import_module(module_name)
+                importlib.reload(module)
+                class_obj = getattr(module, class_name)
+                init_kwargs_for_inspection: Dict[str, Any] = {}
+                if 'context' in inspect.signature(class_obj.__init__).parameters:
+                    init_kwargs_for_inspection['context'] = ExecutionContext()
+                temp_instance = class_obj(**init_kwargs_for_inspection)
+                method_func_obj = getattr(temp_instance, method_name)
+                func_to_inspect = method_func_obj.__func__ if inspect.ismethod(method_func_obj) else method_func_obj
+                sig = inspect.signature(func_to_inspect)
+                params_for_dialog: Dict[str, Tuple[Any, Any]] = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
+            except Exception as e:
+                QMessageBox.critical(self, "Error Editing Step", f"Could not re-inspect method for editing:\n{e}")
+                return
+            finally:
+                if self.module_directory in sys.path:
+                    sys.path.remove(self.module_directory)
+            self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, list(self.global_variables.keys()), self._get_image_filenames(), self.gui_communicator, initial_parameters_config=dialog_parameters_config, initial_assign_to_variable_name=assign_to_variable_name, parent=self)
+            self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
+            if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
+                new_parameters_config = self.active_param_input_dialog.get_parameters_config()
+                if new_parameters_config is None:
+                    self.gui_communicator.update_module_info_signal.emit("")
+                    return
+                new_assign_to_variable_name = self.active_param_input_dialog.get_assignment_variable()
+                self.added_steps_data[current_row].update({"parameters_config": new_parameters_config, "assign_to_variable_name": new_assign_to_variable_name})
+                self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+            self.gui_communicator.update_module_info_signal.emit("")
+            self.active_param_input_dialog = None
+        elif step_type == "loop_start":
+            loop_config = step_data_dict["loop_config"]
+            dialog = LoopConfigDialog(self.global_variables, parent=self, initial_config=loop_config)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_loop_config = dialog.get_config()
+                if new_loop_config is None:
+                    return
+                self.added_steps_data[current_row]["loop_config"] = new_loop_config
+                loop_id, nesting_level = step_data_dict["loop_id"], 0
+                for idx in range(current_row + 1, len(self.added_steps_data)):
+                    step = self.added_steps_data[idx]
+                    if step.get("type") in ["loop_start", "IF_START"]:
+                        nesting_level += 1
+                    elif step.get("type") == "loop_end" and nesting_level == 0 and step.get("loop_id") == loop_id:
+                        self.added_steps_data[idx]["loop_config"] = new_loop_config
+                        break
+                    elif step.get("type") in ["loop_end", "IF_END"]:
+                        nesting_level -= 1
+                self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+        elif step_type == "IF_START":
+            condition_config = step_data_dict["condition_config"]
+            dialog = ConditionalConfigDialog(self.global_variables, parent=self, initial_config=condition_config)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_conditional_config = dialog.get_config()
+                if new_conditional_config is None:
+                    return
+                self.added_steps_data[current_row]["condition_config"] = new_conditional_config
+                if_id, nesting_level = step_data_dict["if_id"], 0
+                for idx in range(current_row + 1, len(self.added_steps_data)):
+                    step = self.added_steps_data[idx]
+                    if step.get("type") in ["loop_start", "IF_START"]:
+                        nesting_level += 1
+                    elif nesting_level == 0 and step.get("if_id") == if_id:
+                        if step.get("type") == "ELSE":
+                            self.added_steps_data[idx]["condition_config"] = new_conditional_config
+                        elif step.get("type") == "IF_END":
+                            self.added_steps_data[idx]["condition_config"] = new_conditional_config
+                            break
+                    elif step.get("type") in ["loop_end", "IF_END"]:
+                        nesting_level -= 1
+                self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+        elif step_type == "group_start":
+            group_name = step_data_dict.get("group_name", "")
+            new_name, ok = QInputDialog.getText(self, "Rename Group", "Enter new group name:", text=group_name)
+            if ok and new_name:
+                self.added_steps_data[current_row]["group_name"] = new_name
+                self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+        elif step_type in ["loop_end", "ELSE", "IF_END", "group_end"]:
+            QMessageBox.information(self, "Edit Block Marker", "To change parameters, edit the corresponding 'Start' block.")
+
+    def clear_selected_steps(self) -> None:
+        selected_items = self.execution_tree.selectedItems()
+        if not selected_items:
+            QMessageBox.information(self, "No Selection", "Please select steps to clear.")
+            return
+        if QMessageBox.question(self, "Confirm Clear", f"Are you sure you want to remove {len(selected_items)} selected step(s)? This may break block structures.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            selected_step_data = [self._get_item_data(item) for item in selected_items]
+            self.added_steps_data = [s for s in self.added_steps_data if s not in selected_step_data]
+            self._rebuild_execution_tree()
+
+    def _internal_clear_all_steps(self):
+        self.execution_tree.clear()
+        self.added_steps_data.clear()
+        self.global_variables.clear()
+        self._update_variables_list_display()
+        self.progress_bar.setValue(0)
+        self.progress_bar.hide()
+        self.set_ui_enabled_state(True)
+        self.loop_id_counter = 0
+        self.if_id_counter = 0
+        self.group_id_counter = 0
+        self._log_to_console("Internal clear all steps executed.")
+
+    def clear_all_steps(self) -> None:
+        if not self.added_steps_data and not self.global_variables:
+            QMessageBox.information(self, "Info", "The execution queue and variables are already empty.")
+            return
+        if QMessageBox.question(self, "Confirm Remove All", "Are you sure you want to remove ALL steps and variables?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            self._internal_clear_all_steps()
+            self._log_to_console("All steps cleared by user.")
+
+    def execute_all_steps(self) -> None:
+        if not self.added_steps_data:
+            QMessageBox.information(self, "No Steps", "No steps have been added.")
+            return
+        if not self._validate_block_structure_on_execution():
+            return
+        
+        if self.always_on_top_button.isChecked():
+            self._toggle_minimized_view(True)
+
+        self.set_ui_enabled_state(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.update_status_column_for_all_items()
+        self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables)
+        self._connect_worker_signals()
+        self.worker.start()
+
+    def _validate_block_structure_on_execution(self) -> bool:
+        open_blocks = []
+        for step_data in self.added_steps_data:
+            step_type = step_data["type"]
+            if step_type == "group_start":
+                open_blocks.append(("group", step_data["group_id"]))
+            elif step_type == "loop_start":
+                open_blocks.append(("loop", step_data["loop_id"]))
+            elif step_type == "IF_START":
+                open_blocks.append(("if", step_data["if_id"]))
+            elif step_type == "ELSE":
+                if not open_blocks or open_blocks[-1][0] != "if":
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched ELSE block.")
+                    return False
+                if_id = open_blocks.pop()[1]
+                open_blocks.append(("else", if_id))
+            elif step_type == "group_end":
+                if not open_blocks or open_blocks.pop() != ("group", step_data["group_id"]):
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched GROUP block.")
+                    return False
+            elif step_type == "loop_end":
+                if not open_blocks or open_blocks.pop() != ("loop", step_data["loop_id"]):
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched LOOP block.")
+                    return False
+            elif step_type == "IF_END":
+                if not open_blocks or open_blocks[-1][0] not in ["if", "else"] or open_blocks.pop()[1] != step_data["if_id"]:
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched IF_END block.")
+                    return False
+        
+        if open_blocks:
+            QMessageBox.warning(self, "Invalid Block Structure", f"Unclosed blocks remain: {open_blocks}.")
+            return False
+        return True
+
+    def execute_one_step(self) -> None:
+        selected_items = self.execution_tree.selectedItems()
+        if len(selected_items) != 1:
+            QMessageBox.information(self, "Selection Error", "Please select exactly ONE step to execute.")
+            return
+        selected_step_data = self._get_item_data(selected_items[0])
+        if not (selected_step_data and isinstance(selected_step_data, dict)):
+            return
+        try:
+            current_row = self.added_steps_data.index(selected_step_data)
+        except ValueError:
+            QMessageBox.critical(self, "Error", "Could not find selected step in internal data model.")
+            return
+        self.set_ui_enabled_state(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.update_status_column_for_all_items()
+        self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables, single_step_mode=True, selected_start_index=current_row)
+        self._connect_worker_signals()
+        self.worker.start()
+
+    def _connect_worker_signals(self) -> None:
+        try:
+            self.worker.execution_started.disconnect()
+            self.worker.execution_progress.disconnect()
+            self.worker.execution_item_started.disconnect()
+            self.worker.execution_item_finished.disconnect()
+            self.worker.execution_error.disconnect()
+            self.worker.execution_finished_all.disconnect()
+        except TypeError:
+            pass
+        self.worker.execution_started.connect(lambda msg: self._log_to_console(f"GUI: {msg}"))
+        self.worker.execution_progress.connect(self.progress_bar.setValue)
+        self.worker.execution_item_started.connect(self.update_execution_tree_item_status_started)
+        self.worker.execution_item_finished.connect(self.update_execution_tree_item_status_finished)
+        self.worker.execution_error.connect(self.update_execution_tree_item_status_error)
+        self.worker.execution_finished_all.connect(self.on_execution_finished)
+        self.worker.execution_finished_all.connect(lambda: self._update_variables_list_display())
+
+    def _find_qtreewidget_item(self, target_step_data_dict: Dict[str, Any], parent_item: Optional[QTreeWidgetItem] = None) -> Optional[QTreeWidgetItem]:
+        if parent_item is None:
+            parent_item = self.execution_tree.invisibleRootItem()
+        for i in range(parent_item.childCount()):
+            child_item = parent_item.child(i)
+            item_data = self._get_item_data(child_item)
+            if item_data == target_step_data_dict:
+                return child_item
+            found_in_children = self._find_qtreewidget_item(target_step_data_dict, child_item)
+            if found_in_children:
+                return found_in_children
+        return None
+
+    def update_execution_tree_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int) -> None:
+        item_widget = self._find_qtreewidget_item(step_data_dict)
+        if item_widget:
+            card = self.execution_tree.itemWidget(item_widget, 0)
+            if card:
+                card.set_status("blue", is_running=True)
+                self._log_to_console(f"Executing: {card._get_formatted_title()}")
+            self.execution_tree.setCurrentItem(item_widget)
+            self.execution_tree.scrollToItem(item_widget, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def update_execution_tree_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int) -> None:
+        item_widget = self._find_qtreewidget_item(step_data_dict)
+        if item_widget:
+            card = self.execution_tree.itemWidget(item_widget, 0)
+            if card:
+                card.set_status("darkGreen", is_running=False)
+                card.set_result_text(message)
+            self._log_to_console(f"Finished: {card._get_formatted_title()} | {message}")
+            self._update_variables_list_display()
+
+    def update_execution_tree_item_status_error(self, step_data_dict: Dict[str, Any], error_message: str, original_listbox_row_index: int) -> None:
+        item_widget = self._find_qtreewidget_item(step_data_dict)
+        if item_widget:
+            card = self.execution_tree.itemWidget(item_widget, 0)
+            if card:
+                card.set_status("red", is_running=False)
+            self._log_to_console(f"ERROR on {card._get_formatted_title()}: {error_message}")
+            self._update_variables_list_display()
+
+    def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
+        self.progress_bar.setValue(100)
+        self.set_ui_enabled_state(True)
+        self.last_executed_context = context
+        
+        if self.minimized_for_execution:
+            self._toggle_minimized_view(False)
+
+        if stopped_by_error:
+            QMessageBox.critical(self, "Execution Halted", "Execution stopped due to an error.")
+            self._log_to_console("Execution STOPPED due to an error.")
+        else:
+            QMessageBox.information(self, "Execution Complete", "All steps processed.")
+            self._log_to_console("Execution finished successfully.")
+        
+        if next_step_index_to_select != -1 and 0 <= next_step_index_to_select < len(self.added_steps_data):
+            target_item = self._find_qtreewidget_item(self.added_steps_data[next_step_index_to_select])
+            if target_item:
+                self.execution_tree.setCurrentItem(target_item)
+                self.execution_tree.scrollToItem(target_item)
+
+    def update_label_info_from_module(self, message: str) -> None:
+        if message and not message.startswith("Module Info:") and not message.startswith("Last Module Log:"):
+            image_filepath = os.path.join(self.click_image_dir, f"{message}.txt")
+            if os.path.exists(image_filepath):
+                self.label_info3.setText(message)
+                try:
+                    with open(image_filepath, 'r') as json_file:
+                        img_data = json.load(json_file)
+                        base64_string = next(iter(img_data.values()), None)
+                    if base64_string:
+                        pic_png = self.base64_pgn(base64_string)
+                        qimage = ImageQt(pic_png)
+                        pixmap = self.resize_qimage_and_create_qpixmap(qimage)
+                        self.label_info2.setPixmap(pixmap)
+                    else:
+                        self.label_info1.setText(f"No image data found for '{message}'.")
+                except Exception as e:
+                    self.label_info1.setText(f"Error loading image '{message}': {e}")
+            else:
+                self.label_info1.setText(f"Image file '{message}.txt' not found.")
+        elif message == "":
+            self.label_info2.clear()
+        else:
+            self.label_info1.setText(f"Last Module Log: {message}")
+            if not self.module_filter_dropdown.currentText() or self.module_filter_dropdown.currentText() == "-- Show All Modules --":
+                self.label_info2.clear()
+            self.label_info2.setText("Image Preview")
+
+    def base64_pgn(self,text):
+        return PIL.Image.open(io.BytesIO(base64.b64decode(text)))
+
+    def resize_qimage_and_create_qpixmap(self,qimage_input, percentage=98):
+        if qimage_input.isNull():
+            return QPixmap()
+        new_width = int(qimage_input.width() * (percentage / 100))
+        new_height = int(qimage_input.height() * (percentage / 100))
+        return QPixmap.fromImage(qimage_input.scaled(QSize(new_width, new_height), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
+    def set_ui_enabled_state(self, enabled: bool) -> None:
+        widgets_to_toggle = [
+            self.execute_all_button, self.add_loop_button, self.add_conditional_button, 
+            self.save_steps_button, self.clear_selected_button, self.remove_all_steps_button,
+            self.module_filter_dropdown, self.dropdown2, self.module_tree, 
+            self.add_var_button, self.edit_var_button, self.delete_var_button, 
+            self.clear_vars_button, self.open_screenshot_tool_button, 
+            self.group_steps_button
+        ]
+        for widget in widgets_to_toggle:
+            widget.setEnabled(enabled)
+        self.execute_one_step_button.setEnabled(enabled and len(self.execution_tree.selectedItems()) > 0)
+        
+    def _update_variables_list_display(self) -> None:
+        self.variables_list.clear()
+        if not self.global_variables:
+            self.variables_list.addItem("No global variables defined.")
+            return
+        for name, value in self.global_variables.items():
+            value_str = repr(value)
+            if len(value_str) > 60:
+                value_str = value_str[:57] + "..."
+            self.variables_list.addItem(f"{name} = {value_str}")
+
+    def add_variable(self) -> None:
+        dialog = GlobalVariableDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            name, value = dialog.get_variable_data()
+            if name:
+                if name in self.global_variables:
+                    QMessageBox.warning(self, "Duplicate Variable", f"Variable '{name}' already exists.")
+                    return
+                self.global_variables[name] = value
+                self._update_variables_list_display()
+
+    def edit_variable(self) -> None:
+        selected_item = self.variables_list.currentItem()
+        if not selected_item or selected_item.text() == "No global variables defined.":
+            QMessageBox.information(self, "No Selection", "Please select a variable to edit.")
+            return
+        var_name = selected_item.text().split(' = ')[0]
+        if var_name not in self.global_variables:
+            self._update_variables_list_display()
+            return
+        dialog = GlobalVariableDialog(variable_name=var_name, variable_value=self.global_variables[var_name], parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_name, new_value = dialog.get_variable_data()
+            if new_name:
+                self.global_variables[new_name] = new_value
+            self._update_variables_list_display()
+
+    def delete_variable(self) -> None:
+        selected_item = self.variables_list.currentItem()
+        if not selected_item or selected_item.text() == "No global variables defined.":
+            QMessageBox.information(self, "No Selection", "Please select a variable to delete.")
+            return
+        var_name = selected_item.text().split(' = ')[0]
+        if QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete variable '{var_name}'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            if var_name in self.global_variables:
+                del self.global_variables[var_name]
+            self._update_variables_list_display()
+
+    def reset_all_variable_values(self) -> None:
+        if not self.global_variables:
+            QMessageBox.information(self, "Info", "No global variables to reset.")
+            return
+        if QMessageBox.question(self, "Confirm Reset", "Reset all global variable values to 'None'?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            for var_name in self.global_variables:
+                self.global_variables[var_name] = None
+            self._update_variables_list_display()
+
+    def save_bot_steps_dialog(self) -> None:
+        if not self.added_steps_data and not self.global_variables:
+            QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
+            return
+        os.makedirs(self.bot_steps_directory, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"bot_steps_{timestamp}.csv"
+        initial_path = os.path.join(self.bot_steps_directory, default_filename)
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Bot Steps", initial_path, "CSV Files (*.csv);;All Files (*)")
+        if file_path:
+            try:
+                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    writer.writerow(["__GLOBAL_VARIABLES__"])
+                    for var_name, var_value in self.global_variables.items():
+                        writer.writerow([var_name, json.dumps(var_value)])
+                    writer.writerow(["__BOT_STEPS__"])
+                    writer.writerow(["StepType", "DataJSON"])
+                    for step_data_dict in self.added_steps_data:
+                        step_data_to_save = json.loads(json.dumps(step_data_dict))
+                        step_data_to_save.pop("original_listbox_row_index", None)
+                        if step_data_to_save["type"] == "step" and step_data_to_save.get("parameters_config"):
+                            step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
+                        writer.writerow([step_data_to_save["type"], json.dumps(step_data_to_save)])
+                QMessageBox.information(self, "Save Successful", f"Bot steps saved to:\n{file_path}")
+                self.load_saved_steps_to_dropdown()
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
+
+    def load_steps_from_file(self, file_path: str) -> None:
+        self._internal_clear_all_steps()
+        try:
+            section, loaded_variables, loaded_steps = None, {}, []
+            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                for row_num, row in enumerate(reader):
+                    if not row:
+                        continue
+                    if row[0] == "__GLOBAL_VARIABLES__":
+                        section = "VARIABLES"
+                        continue
+                    elif row[0] == "__BOT_STEPS__":
+                        section = "STEPS"
+                        next(reader, None)
+                        continue
+                    if section == "VARIABLES":
+                        if len(row) == 2:
+                            loaded_variables[row[0]] = json.loads(row[1])
+                        else:
+                            self._log_to_console(f"Warning: Malformed variable row {row_num+1} in {file_path}")
+                    elif section == "STEPS":
+                        if len(row) == 2:
+                            step_data_json = json.loads(row[1])
+                            if step_data_json.get("type") == "group_start":
+                                try:
+                                    self.group_id_counter = max(self.group_id_counter, int(step_data_json.get("group_id", "group_0").split('_')[-1]))
+                                except (ValueError, IndexError):
+                                    pass
+                            elif step_data_json.get("type") == "loop_start":
+                                try:
+                                    self.loop_id_counter = max(self.loop_id_counter, int(step_data_json.get("loop_id", "loop_0").split('_')[-1]))
+                                except (ValueError, IndexError):
+                                    pass
+                            elif step_data_json.get("type") == "IF_START":
+                                try:
+                                    self.if_id_counter = max(self.if_id_counter, int(step_data_json.get("if_id", "if_0").split('_')[-1]))
+                                except (ValueError, IndexError):
+                                    pass
+                            loaded_steps.append(step_data_json)
+                        else:
+                            self._log_to_console(f"Warning: Malformed step row {row_num+1} in {file_path}")
+            self.global_variables = loaded_variables
+            self._update_variables_list_display()
+            if not loaded_steps and not loaded_variables:
+                QMessageBox.warning(self, "Load Warning", "No valid steps or variables were found in the file.")
+                return
+            self.added_steps_data = loaded_steps
+            self._rebuild_execution_tree()
+            QMessageBox.information(self, "Load Successful", f"{len(loaded_steps)} steps and {len(loaded_variables)} variables loaded.")
+        except FileNotFoundError:
+            QMessageBox.critical(self, "Load Error", f"The file was not found:\n{file_path}")
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(self, "Load Error", f"The file is corrupted or not a valid step file.\nError parsing data: {e}")
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
+            self._log_to_console(f"Load Error: {e}")
+            
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
