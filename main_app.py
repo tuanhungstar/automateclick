@@ -1869,7 +1869,7 @@ class CodeEditorDialog(QDialog):
 class MainWindow(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setWindowTitle("PyQt6 Module, Class, and Method Loader")
+        self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
         self.setGeometry(100, 100, 1200, 800)
         self.gui_communicator = GuiCommunicator()
         self.gui_communicator.log_message_signal.connect(self._log_to_console)
@@ -1933,6 +1933,19 @@ class MainWindow(QWidget):
         self.open_screenshot_tool()
 
     # In main_app.py, REPLACE your entire init_ui method with this one:
+    # Add this new method to the MainWindow class
+    
+    def select_bot_steps_folder(self):
+        """Opens a dialog to allow the user to select a different folder for saved bots."""
+        current_dir = self.bot_steps_directory
+        new_dir = QFileDialog.getExistingDirectory(self, "Select Bot Steps Folder", current_dir)
+        
+        if new_dir and new_dir != current_dir:
+            self.bot_steps_directory = new_dir
+            self.load_saved_steps_to_tree() # Refresh the tree from the new location    
+    # In main_app.py, REPLACE your entire init_ui method with this one:
+    
+    # In main_app.py, REPLACE your entire init_ui method with this one:
     
     def init_ui(self) -> None:
         os.makedirs(self.steps_template_directory, exist_ok=True)
@@ -1943,39 +1956,35 @@ class MainWindow(QWidget):
         
         self.full_view_container = QWidget()
         main_layout = QVBoxLayout(self.full_view_container)
-    
-        # --- TOP LAYOUT (Dropdown is removed from here) ---
-        top_layout = QHBoxLayout()
-        self.filter_label = QLabel("Filter Module:")
-        font_height = self.filter_label.fontMetrics().height()
-        self.filter_label.setMinimumHeight(int(font_height * 1.5))
-        self.filter_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        self.module_filter_dropdown = QComboBox()
-        self.module_filter_dropdown.addItem("-- Show All Modules --")
-        self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
-        top_layout.addWidget(self.filter_label)
-        top_layout.addWidget(self.module_filter_dropdown, 1)
-        top_layout.addStretch(2) # Adjusted stretch
-        main_layout.addLayout(top_layout)
         
         bottom_layout = QHBoxLayout()
         
-        # --- LEFT PANEL (Completely Reorganized) ---
+        # --- LEFT PANEL ---
         self.left_panel_widget = QWidget()
         left_panel_layout = QVBoxLayout(self.left_panel_widget)
         
-        # NEW: Saved Bots Tree (Added correctly here)
         self.saved_bots_group = QGroupBox("Saved Bots")
         saved_bots_layout = QVBoxLayout()
         self.saved_steps_tree = QTreeWidget()
         self.saved_steps_tree.setHeaderLabels(["Bot Name", "Schedule", "Status"])
         self.saved_steps_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected)
+        self.change_bot_folder_button = QPushButton("Change Folder...")
+        self.change_bot_folder_button.clicked.connect(self.select_bot_steps_folder)
         saved_bots_layout.addWidget(self.saved_steps_tree)
+        saved_bots_layout.addWidget(self.change_bot_folder_button)
         self.saved_bots_group.setLayout(saved_bots_layout)
-        left_panel_layout.addWidget(self.saved_bots_group, 1) # Use addWidget and stretch factor
+        left_panel_layout.addWidget(self.saved_bots_group, 1)
+    
+        filter_layout = QHBoxLayout()
+        self.filter_label = QLabel("Filter Module:")
+        self.module_filter_dropdown = QComboBox()
+        self.module_filter_dropdown.addItem("-- Show All Modules --")
+        self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
+        filter_layout.addWidget(self.filter_label)
+        filter_layout.addWidget(self.module_filter_dropdown)
+        left_panel_layout.addLayout(filter_layout)
         
-        # Available Modules Tree
         self.tree_section_layout = QVBoxLayout()
         self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
         self.search_box = QLineEdit()
@@ -2000,10 +2009,9 @@ class MainWindow(QWidget):
         self.label_info3 = QLabel("Image Name")
         self.label_info3.setStyleSheet("font-style: italic; color: blue;")
         self.tree_section_layout.addWidget(self.label_info3)
-        left_panel_layout.addLayout(self.tree_section_layout, 1) # Use addLayout and stretch factor
+        left_panel_layout.addLayout(self.tree_section_layout, 1)
         left_panel_layout.addSpacing(10)
     
-        # Global Variables Section
         self.variables_group_box = QGroupBox("Global Variables")
         variables_layout = QVBoxLayout()
         self.variables_list = QListWidget()
@@ -2027,7 +2035,6 @@ class MainWindow(QWidget):
         left_panel_layout.addWidget(self.variables_group_box)
         left_panel_layout.addSpacing(10)
         
-        # Execution Buttons
         execute_buttons_layout = QVBoxLayout()
         execute_row_layout = QHBoxLayout()
         self.execute_all_button = QPushButton("Execute All Steps")
@@ -2048,7 +2055,6 @@ class MainWindow(QWidget):
         execute_buttons_layout.addLayout(block_buttons_layout)
         left_panel_layout.addLayout(execute_buttons_layout)
         
-        # Step Management Buttons
         button_row_layout_1 = QHBoxLayout()
         self.save_steps_button = QPushButton("Save Bot Steps")
         self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
@@ -2064,7 +2070,6 @@ class MainWindow(QWidget):
         button_row_layout_1.addWidget(self.remove_all_steps_button)
         left_panel_layout.addLayout(button_row_layout_1)
         
-        # Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(True)
@@ -2072,7 +2077,6 @@ class MainWindow(QWidget):
         left_panel_layout.addWidget(self.progress_bar)
         left_panel_layout.addSpacing(10)
         
-        # Utility Buttons
         utility_buttons_layout = QHBoxLayout()
         self.utility_buttons_layout_2 = QHBoxLayout()
         self.always_on_top_button = QPushButton("Always On Top: Off")
@@ -2083,7 +2087,7 @@ class MainWindow(QWidget):
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
         utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
         self.toggle_log_checkbox = QCheckBox("Show Execution Log")
-        self.toggle_log_checkbox.setChecked(False) # Ensure log is hidden by default
+        self.toggle_log_checkbox.setChecked(False)
         self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
         self.exit_button = QPushButton("Exit GUI")
         self.exit_button.clicked.connect(QApplication.instance().quit)
@@ -2091,16 +2095,28 @@ class MainWindow(QWidget):
         left_panel_layout.addLayout(utility_buttons_layout)
         left_panel_layout.addLayout(self.utility_buttons_layout_2)
     
-        # --- RIGHT PANEL ---
+        # --- RIGHT PANEL (Updated) ---
         self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.execution_tree_widget = QWidget()
         self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
+        
+        # --- THIS IS THE NEW WEBSITE LINK WIDGET ---
+        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: blue; text-decoration: none;">www.AutomateTask.Click</a>')
+        self.website_label.setOpenExternalLinks(True)
+        self.website_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # ---------------------------------------------
+        
         self.listbox_label2 = QLabel("Execution Flow:")
-        self.execution_tree = GroupedTreeWidget(self) # Changed to custom widget
+        self.execution_tree = GroupedTreeWidget(self)
         self.execution_tree.setHeaderLabels(["Execution Flow"])
         self.execution_tree.setDragDropMode(QTreeWidget.DragDropMode.NoDragDrop)
         self.execution_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
         self.execution_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        
+        # --- ADD THE NEW WIDGET TO THE LAYOUT ---
+        self.execution_tree_layout.addWidget(self.website_label)
+        # ----------------------------------------
+        
         self.execution_tree_layout.addWidget(self.listbox_label2)
         self.execution_tree_layout.addWidget(self.execution_tree)
     
@@ -2119,15 +2135,15 @@ class MainWindow(QWidget):
         log_layout.addWidget(log_group_box)
         
         self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
-        self.log_widget.setVisible(False) # Ensure log is hidden by default
+        self.log_widget.setVisible(False)
         
         self.right_splitter.addWidget(self.execution_tree_widget)
         self.right_splitter.addWidget(self.log_widget)
         self.right_splitter.setSizes([600, 400])
-    
+        
+        main_layout.addLayout(bottom_layout)
         bottom_layout.addWidget(self.left_panel_widget, 1)
         bottom_layout.addWidget(self.right_splitter, 2)
-        main_layout.addLayout(bottom_layout)
         
         # --- MINI VIEW ---
         self.mini_view_container = QWidget()
@@ -2141,9 +2157,9 @@ class MainWindow(QWidget):
         self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
     
         self.widget_homes = {
-            self.execution_tree: (self.execution_tree_layout, 1),
-            self.label_info2: (self.tree_section_layout, 5), # Index updated
-            self.progress_bar: (left_panel_layout, 5),
+            self.execution_tree: (self.execution_tree_layout, 2), # Index updated to 2
+            self.label_info2: (self.tree_section_layout, 5),
+            self.progress_bar: (left_panel_layout, 6),
             self.exit_button: (self.utility_buttons_layout_2, 1)
         }
 
