@@ -2138,34 +2138,78 @@ class MainWindow(QWidget):
             if step_data["type"] == "step" and "parameters_config" in step_data and step_data["parameters_config"] is not None:
                 step_data["parameters_config"]["original_listbox_row_index"] = i
 
+# Add these two new methods inside the MainWindow class
+
+# In the MainWindow class, replace your existing method with this one
+
+    def _get_expansion_state(self) -> set:
+        """Recursively finds all expanded block items and returns their unique IDs."""
+        expanded_ids = set()
+        
+        def traverse(parent_item):
+            for i in range(parent_item.childCount()):
+                child_item = parent_item.child(i)
+                # --- THIS IS THE CORRECTED LINE ---
+                if child_item.isExpanded():
+                    item_data = self._get_item_data(child_item)
+                    if item_data:
+                        item_id = item_data.get("group_id") or item_data.get("loop_id") or item_data.get("if_id")
+                        if item_id:
+                            expanded_ids.add(item_id)
+                # Recurse into children
+                if child_item.childCount() > 0:
+                    traverse(child_item)
+    
+        traverse(self.execution_tree.invisibleRootItem())
+        return expanded_ids
+
+    def _restore_expansion_state(self, expanded_ids: set):
+        """Recursively traverses the tree and expands any items whose ID is in the provided set."""
+        def traverse(parent_item):
+            for i in range(parent_item.childCount()):
+                child_item = parent_item.child(i)
+                item_data = self._get_item_data(child_item)
+                if item_data:
+                    item_id = item_data.get("group_id") or item_data.get("loop_id") or item_data.get("if_id")
+                    if item_id and item_id in expanded_ids:
+                        self.execution_tree.expandItem(child_item)
+                
+                if child_item.childCount() > 0:
+                    traverse(child_item)
+        
+        traverse(self.execution_tree.invisibleRootItem())
+    
     def _rebuild_execution_tree(self, item_to_focus_data: Optional[Dict[str, Any]] = None) -> None:
         """
         Rebuilds the entire execution tree from the flat `added_steps_data` list.
         - Handles nesting of blocks correctly.
         - Selects and scrolls to a specified item.
-        - Does NOT auto-expand parent groups.
+        - PRESERVES the expansion state of blocks.
         """
+        # 1. Remember which items are currently expanded before clearing the tree.
+        expanded_state = self._get_expansion_state()
+    
         self.execution_tree.clear()
         current_parent_stack: List[QTreeWidgetItem] = [self.execution_tree.invisibleRootItem()]
         item_to_focus: Optional[QTreeWidgetItem] = None
-
+    
         for i, step_data_dict in enumerate(self.added_steps_data):
             step_data_dict["original_listbox_row_index"] = i
             step_type = step_data_dict.get("type")
-
-            # --- Stack Popping Logic (handles leaving a block) ---
+    
+            # Stack Popping Logic (handles leaving a block)
             if step_type == "group_end":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
                     if last_parent_data and last_parent_data.get("type") == "group_start" and last_parent_data.get("group_id") == step_data_dict.get("group_id"):
                         current_parent_stack.pop()
-
+    
             elif step_type == "loop_end":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
                     if last_parent_data and last_parent_data.get("type") == "loop_start" and last_parent_data.get("loop_id") == step_data_dict.get("loop_id"):
                         current_parent_stack.pop()
-
+    
             elif step_type == "IF_END":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
@@ -2177,8 +2221,8 @@ class MainWindow(QWidget):
                                  current_parent_stack.pop()
                     elif last_parent_data and last_parent_data.get("type") == "IF_START" and last_parent_data.get("if_id") == step_data_dict.get("if_id"):
                         current_parent_stack.pop()
-
-            # --- Item Creation (for ALL items) ---
+    
+            # Item Creation (for ALL items)
             parent_for_current_item = current_parent_stack[-1]
             tree_item = QTreeWidgetItem(parent_for_current_item)
             tree_item.setData(0, Qt.ItemDataRole.UserRole, QVariant(step_data_dict))
@@ -2191,21 +2235,24 @@ class MainWindow(QWidget):
             card.execute_this_requested.connect(self._handle_execute_this_request)
             tree_item.setSizeHint(0, card.sizeHint())
             self.execution_tree.setItemWidget(tree_item, 0, card)
-
+    
             if item_to_focus_data and step_data_dict == item_to_focus_data:
                 item_to_focus = tree_item
-
-            # --- Stack Pushing Logic (handles entering a new block) ---
+    
+            # Stack Pushing Logic (handles entering a new block)
             if step_type in ["loop_start", "IF_START", "ELSE", "group_start"]:
                 current_parent_stack.append(tree_item)
-
-        # --- Focus Logic (runs after the tree is fully built) ---
+    
+        # Focus Logic (runs after the tree is fully built)
         if item_to_focus:
-            # Select the item and scroll to it, but do NOT expand its parents.
             self.execution_tree.setCurrentItem(item_to_focus)
             self.execution_tree.scrollToItem(item_to_focus, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
-
+    
         self.update_status_column_for_all_items()
+        
+        # 2. Restore the saved expansion state after the tree is rebuilt.
+        self._restore_expansion_state(expanded_state)
+    
 
     def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
         item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
