@@ -8,6 +8,8 @@ import io
 from datetime import datetime
 import json
 import base64
+import re # <--- ADD THIS LINE
+import ast # <--- ADD THIS LINE
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
@@ -29,10 +31,11 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
-    QStackedLayout, QBoxLayout
+    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect
 from PyQt6.QtGui import QIntValidator
+from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QPainter, QPen, QTextCursor,QTextFormat,QKeyEvent,QTextDocument
 
 # Use the actual libraries from the my_lib folder
 from my_lib.shared_context import ExecutionContext, GuiCommunicator
@@ -1112,7 +1115,7 @@ class StepInsertionDialog(QDialog):
         else: self.insert_mode = "child"
         return self.selected_parent_item, self.insert_mode
 
-# --- NEW CLASS: TemplateVariableMappingDialog ---
+# --- REPLACEMENT CLASS: TemplateVariableMappingDialog (with intelligent default) ---
 class TemplateVariableMappingDialog(QDialog):
     """A dialog to map variables from a template to global variables."""
     def __init__(self, template_variables: set, global_variables: list, parent: Optional[QWidget] = None):
@@ -1127,19 +1130,25 @@ class TemplateVariableMappingDialog(QDialog):
         form_layout = QFormLayout()
 
         for var_name in self.template_variables:
-            # Layout for each row
             row_layout = QHBoxLayout()
             
-            # Action selection (Map, Create, Keep)
             action_combo = QComboBox()
             action_combo.addItems(["Map to Existing", "Create New", "Keep Original Name"])
             
-            # Input for existing variable selection
             existing_var_combo = QComboBox()
             existing_var_combo.addItem("-- Select Existing --")
             existing_var_combo.addItems(self.global_variables)
             
-            # Input for new/kept variable name
+            # --- INTELLIGENT DEFAULT LOGIC ---
+            # If a global variable already exists with the same name as the template variable,
+            # default to "Map to Existing" and select that variable.
+            if var_name in self.global_variables:
+                action_combo.setCurrentText("Map to Existing")
+                existing_var_combo.setCurrentText(var_name)
+            else:
+                # Otherwise, default to "Keep Original Name"
+                action_combo.setCurrentText("Keep Original Name")
+
             new_var_editor = QLineEdit(var_name)
 
             row_layout.addWidget(action_combo, 1)
@@ -1148,18 +1157,16 @@ class TemplateVariableMappingDialog(QDialog):
             
             form_layout.addRow(QLabel(f"'{var_name}':"), row_layout)
 
-            # Store widgets for later retrieval
             self.mapping_widgets[var_name] = {
                 'action': action_combo,
                 'existing': existing_var_combo,
                 'new': new_var_editor
             }
             
-            # Connect signal to toggle visibility
             action_combo.currentIndexChanged.connect(
                 lambda index, v=var_name: self._toggle_inputs(v, index)
             )
-            self._toggle_inputs(var_name, 0) # Set initial state
+            self._toggle_inputs(var_name, action_combo.currentIndex())
 
         main_layout.addLayout(form_layout)
         
@@ -1318,7 +1325,493 @@ class GroupedTreeWidget(QTreeWidget):
             # Recurse into the children of the current item to draw nested block lines.
             if self.isItemExpanded(child_item):
                 self._draw_group_lines_recursive(child_item, painter)
-                
+
+# --- NEW WIDGET: FindReplaceWidget ---
+class FindReplaceWidget(QWidget):
+    """A widget for find and replace functionality."""
+    def __init__(self, editor):
+        super().__init__()
+        self.editor = editor
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 5, 0, 5)
+
+        find_layout = QHBoxLayout()
+        self.find_input = QLineEdit()
+        self.find_input.setPlaceholderText("Find")
+        self.find_input.textChanged.connect(self.update_editor_selection)
+        
+        self.next_button = QPushButton("Next")
+        self.prev_button = QPushButton("Previous")
+        
+        find_layout.addWidget(QLabel("Find:"))
+        find_layout.addWidget(self.find_input)
+        find_layout.addWidget(self.next_button)
+        find_layout.addWidget(self.prev_button)
+        
+        replace_layout = QHBoxLayout()
+        self.replace_input = QLineEdit()
+        self.replace_input.setPlaceholderText("Replace with")
+        
+        self.replace_button = QPushButton("Replace")
+        self.replace_all_button = QPushButton("Replace All")
+
+        replace_layout.addWidget(QLabel("Replace:"))
+        replace_layout.addWidget(self.replace_input)
+        replace_layout.addWidget(self.replace_button)
+        replace_layout.addWidget(self.replace_all_button)
+
+        options_layout = QHBoxLayout()
+        self.case_sensitive_check = QCheckBox("Case Sensitive")
+        options_layout.addWidget(self.case_sensitive_check)
+        options_layout.addStretch()
+
+        main_layout.addLayout(find_layout)
+        main_layout.addLayout(replace_layout)
+        main_layout.addLayout(options_layout)
+
+    def update_editor_selection(self):
+        """Highlights all occurrences of the find text in the editor."""
+        text = self.find_input.text()
+        if not text:
+            self.editor.setExtraSelections([])
+            return
+
+        selections = []
+        cursor = self.editor.document().find(text, 0, self.get_find_flags())
+        while not cursor.isNull():
+            selection = QTextEdit.ExtraSelection()
+            selection.format.setBackground(QColor("cyan"))
+            selection.cursor = cursor
+            selections.append(selection)
+            cursor = self.editor.document().find(text, cursor, self.get_find_flags())
+        
+        self.editor.setExtraSelections(selections)
+
+    def get_find_flags(self):
+        """Returns the appropriate find flags based on UI options."""
+        flags = QTextDocument.FindFlag(0)
+        if self.case_sensitive_check.isChecked():
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        return flags
+
+# --- NEW CLASS: HtmlViewerDialog ---
+class HtmlViewerDialog(QDialog):
+    """A dialog to display HTML content."""
+    def __init__(self, file_path: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Documentation: {os.path.basename(file_path)}")
+        self.setGeometry(200, 200, 800, 600)
+
+        main_layout = QVBoxLayout(self)
+
+        self.text_browser = QTextBrowser()
+        self.text_browser.setOpenExternalLinks(True) # Allow opening links in a web browser
+        main_layout.addWidget(self.text_browser)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self.load_html(file_path)
+
+    def load_html(self, file_path: str):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+                self.text_browser.setHtml(html_content)
+        except Exception as e:
+            self.text_browser.setPlainText(f"Error loading documentation file:\n{e}")
+            
+# --- NEW CLASS: PythonHighlighter (No changes from before) ---
+class PythonHighlighter(QSyntaxHighlighter):
+    """A syntax highlighter for Python code."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.highlighting_rules = []
+
+        # Keywords
+        keyword_format = QTextCharFormat()
+        keyword_format.setForeground(QColor("#B57627")) # Orange-brown
+        keyword_format.setFontWeight(QFont.Weight.Bold)
+        keywords = ["and", "as", "assert", "break", "class", "continue",
+                    "def", "del", "elif", "else", "except", "False",
+                    "finally", "for", "from", "global", "if", "import",
+                    "in", "is", "lambda", "None", "nonlocal", "not",
+                    "or", "pass", "raise", "return", "True", "try",
+                    "while", "with", "yield"]
+        for word in keywords:
+            pattern = QRegularExpression(rf"\b{word}\b")
+            self.highlighting_rules.append((pattern, keyword_format))
+
+        # self
+        self_format = QTextCharFormat()
+        self_format.setForeground(QColor("#AF609F")) # Purple
+        self.highlighting_rules.append((QRegularExpression(r"\bself\b"), self_format))
+
+        # Decorators
+        decorator_format = QTextCharFormat()
+        decorator_format.setForeground(QColor("#7E9F43")) # Green
+        self.highlighting_rules.append((QRegularExpression(r"@[A-Za-z0-9_]+"), decorator_format))
+
+        # Strings
+        string_format = QTextCharFormat()
+        string_format.setForeground(QColor("#5D9248")) # Dark Green
+        self.highlighting_rules.append((QRegularExpression(r"\"[^\"\\]*(\\.[^\"\\]*)*\""), string_format))
+        self.highlighting_rules.append((QRegularExpression(r"'[^'\\]*(\\.[^'\\]*)*'"), string_format))
+
+        # Comments
+        comment_format = QTextCharFormat()
+        comment_format.setForeground(QColor("#A0A0A0")) # Gray
+        comment_format.setFontItalic(True)
+        self.highlighting_rules.append((QRegularExpression(r"#[^\n]*"), comment_format))
+
+    def highlightBlock(self, text):
+        for pattern, format in self.highlighting_rules:
+            match_iterator = pattern.globalMatch(text)
+            while match_iterator.hasNext():
+                match = match_iterator.next()
+                self.setFormat(match.capturedStart(), match.capturedLength(), format)
+
+# --- NEW WIDGET: CodeEditorWithLineNumbers ---
+# --- REPLACEMENT CLASS: CodeEditorWithLineNumbers (Complete Version) ---
+# This version includes all features: line numbers, zoom, tab handling,
+# indentation guides, and syntax error highlighting.
+# --- REPLACEMENT CLASS: CodeEditorWithLineNumbers (Final Corrected Version) ---
+
+class CodeEditorWithLineNumbers(QPlainTextEdit):
+    class LineNumberArea(QWidget):
+        def __init__(self, editor):
+            super().__init__(editor)
+            self.codeEditor = editor
+
+        def sizeHint(self):
+            return QSize(self.codeEditor.lineNumberAreaWidth(), 0)
+
+        def paintEvent(self, event):
+            self.codeEditor.lineNumberAreaPaintEvent(event)
+
+    def __init__(self):
+        super().__init__()
+        self.lineNumberArea = self.LineNumberArea(self)
+        self.blockCountChanged.connect(self.updateLineNumberAreaWidth)
+        self.updateRequest.connect(self.updateLineNumberArea)
+        self.cursorPositionChanged.connect(self.highlightCurrentLine)
+        
+        self.font_metrics = self.fontMetrics()
+        self.setTabStopDistance(self.font_metrics.horizontalAdvance(' ') * 4)
+
+        self.updateLineNumberAreaWidth(0)
+        self.highlightCurrentLine()
+
+    def lineNumberAreaWidth(self):
+        digits = 1
+        max_num = max(1, self.blockCount())
+        while max_num >= 10:
+            max_num //= 10
+            digits += 1
+        space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + 15
+        return space
+
+    def updateLineNumberAreaWidth(self, _):
+        self.setViewportMargins(self.lineNumberAreaWidth(), 0, 0, 0)
+
+    def updateLineNumberArea(self, rect, dy):
+        if dy:
+            self.lineNumberArea.scroll(0, dy)
+        else:
+            self.lineNumberArea.update(0, rect.y(), self.lineNumberArea.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self.updateLineNumberAreaWidth(0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self.lineNumberArea.setGeometry(QRect(cr.left(), cr.top(), self.lineNumberAreaWidth(), cr.height()))
+
+    def lineNumberAreaPaintEvent(self, event):
+        painter = QPainter(self.lineNumberArea)
+        painter.fillRect(event.rect(), QColor("#F0F0F0"))
+        block = self.firstVisibleBlock()
+        blockNumber = block.blockNumber()
+        top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
+        bottom = top + self.blockBoundingRect(block).height()
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                number = f"- {blockNumber + 1}"
+                painter.setPen(QColor("#A0A0A0"))
+                painter.drawText(0, int(top), self.lineNumberArea.width() - 5, self.fontMetrics().height(),
+                                 Qt.AlignmentFlag.AlignRight, number)
+            block = block.next()
+            top = bottom
+            bottom = top + self.blockBoundingRect(block).height()
+            blockNumber += 1
+
+    # --- CORRECTED METHOD ---
+    def highlightCurrentLine(self):
+        extraSelections = []
+        if not self.isReadOnly():
+            selection = QTextEdit.ExtraSelection()
+            lineColor = QColor(Qt.GlobalColor.yellow).lighter(160)
+            selection.format.setBackground(lineColor)
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            selection.cursor = self.textCursor()
+            selection.cursor.clearSelection()
+            extraSelections.append(selection)
+        
+        # Keep existing error highlights when updating the current line highlight
+        current_selections = self.extraSelections()
+        for sel in current_selections:
+            # FIX IS HERE: .color().name()
+            if sel.format.background().color().name() == "#ffcccc":
+                extraSelections.append(sel)
+        
+        self.setExtraSelections(extraSelections)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Tab:
+            cursor = self.textCursor()
+            cursor.insertText(" " * 4)
+            return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event: QtGui.QPaintEvent):
+        super().paintEvent(event)
+        painter = QPainter(self.viewport())
+        color = QColor("#D3D3D3")
+        pen = QPen(color)
+        pen.setStyle(Qt.PenStyle.DotLine)
+        painter.setPen(pen)
+        tab_width = self.tabStopDistance()
+        left_margin = self.contentsRect().left()
+        block = self.firstVisibleBlock()
+        while block.isValid() and block.isVisible():
+            geom = self.blockBoundingGeometry(block).translated(self.contentOffset())
+            text = block.text()
+            leading_spaces = len(text) - len(text.lstrip(' '))
+            for i in range(1, (leading_spaces // 4) + 2):
+                x = left_margin + (i * tab_width)
+                if x > self.viewport().width(): break
+                painter.drawLine(int(x), int(geom.top()), int(x), int(geom.bottom()))
+            block = block.next()
+
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            font = self.font()
+            current_size = font.pointSize()
+            if delta > 0 and current_size < 30:
+                font.setPointSize(current_size + 1)
+            elif delta < 0 and current_size > 6:
+                font.setPointSize(current_size - 1)
+            self.setFont(font)
+        else:
+            super().wheelEvent(event)
+
+    def highlight_error_line(self, line_number):
+        self.clear_error_highlight()
+        selection = QTextEdit.ExtraSelection()
+        lineColor = QColor("#FFCCCC")
+        selection.format.setBackground(lineColor)
+        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+        block = self.document().findBlockByNumber(line_number - 1)
+        if block.isValid():
+            cursor = self.textCursor()
+            cursor.setPosition(block.position())
+            selection.cursor = cursor
+            self.setExtraSelections(self.extraSelections() + [selection])
+            self.setTextCursor(cursor)
+
+    # --- CORRECTED METHOD ---
+    def clear_error_highlight(self):
+        current_selections = self.extraSelections()
+        # FIX IS HERE: .color().name()
+        new_selections = [sel for sel in current_selections if sel.format.background().color().name() != "#ffcccc"]
+        self.setExtraSelections(new_selections)
+
+# --- REPLACEMENT CLASS: CodeEditorDialog (with Syntax Checking) ---
+class CodeEditorDialog(QDialog):
+    def __init__(self, module_path: str, class_name: str, method_name: str,
+                 all_method_data: dict, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.module_path = module_path
+        self.class_name = class_name
+        self.method_name = method_name
+        self.all_method_data = all_method_data
+        self.uses_tabs = False
+
+        self.setWindowTitle(f"Editing: {class_name} in {os.path.basename(module_path)}")
+        self.setWindowState(Qt.WindowState.WindowMaximized)
+
+        main_layout = QHBoxLayout(self)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        self.nav_tree = QTreeWidget()
+        self.nav_tree.setHeaderLabels(["Available Modules"])
+        self.nav_tree.itemDoubleClicked.connect(self.insert_method_call)
+        left_layout.addWidget(self.nav_tree)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        
+        self.code_editor = CodeEditorWithLineNumbers()
+        self.code_editor.setFont(QFont("Courier New", 10))
+        # Clear error highlight whenever the user types
+        self.code_editor.textChanged.connect(self.code_editor.clear_error_highlight)
+        self.highlighter = PythonHighlighter(self.code_editor.document())
+
+        self.find_replace_widget = FindReplaceWidget(self.code_editor)
+        right_layout.addWidget(self.find_replace_widget)
+        right_layout.addWidget(self.code_editor)
+
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setSizes([300, 700])
+        main_layout.addWidget(splitter)
+        
+        button_box = QDialogButtonBox()
+        # --- ADD NEW SYNTAX CHECK BUTTON ---
+        self.check_syntax_button = button_box.addButton("Check Syntax", QDialogButtonBox.ButtonRole.ActionRole)
+        self.save_button = button_box.addButton("Save Changes", QDialogButtonBox.ButtonRole.AcceptRole)
+        cancel_button = button_box.addButton(QDialogButtonBox.StandardButton.Cancel)
+        right_layout.addWidget(button_box)
+        
+        self.check_syntax_button.clicked.connect(self.check_syntax)
+        self.save_button.clicked.connect(self.save_changes)
+        cancel_button.clicked.connect(self.reject)
+        self.find_replace_widget.next_button.clicked.connect(self.find_next)
+        self.find_replace_widget.prev_button.clicked.connect(self.find_previous)
+        self.find_replace_widget.replace_button.clicked.connect(self.replace_one)
+        self.find_replace_widget.replace_all_button.clicked.connect(self.replace_all)
+        
+        self.load_and_display_code()
+
+    # --- NEW METHOD: Checks Python syntax ---
+    def check_syntax(self):
+        """Validates the Python syntax of the code in the editor."""
+        code_to_check = self.code_editor.toPlainText()
+        
+        try:
+            ast.parse(code_to_check)
+            self.code_editor.clear_error_highlight()
+            QMessageBox.information(self, "Syntax OK", "The Python syntax is valid.")
+            return True
+        except SyntaxError as e:
+            # Highlight the line with the error
+            self.code_editor.highlight_error_line(e.lineno)
+            QMessageBox.critical(self, "Syntax Error", f"Error on line {e.lineno}:\n{e.msg}")
+            return False
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred during syntax check:\n{e}")
+            return False
+
+    def insert_method_call(self, item: QTreeWidgetItem, column: int):
+        method_data = item.data(0, Qt.ItemDataRole.UserRole)
+        if not (method_data and isinstance(method_data, tuple)): return
+        _, clicked_class_name, clicked_method_name, clicked_module_name, params_dict = method_data
+        param_names = [name for name, (_, kind) in params_dict.items() if kind != inspect.Parameter.VAR_KEYWORD and kind != inspect.Parameter.VAR_POSITIONAL]
+        param_string = ", ".join(param_names)
+        if clicked_class_name == self.class_name:
+            text_to_insert = f"self.{clicked_method_name}({param_string})"
+        else:
+            text_to_insert = f"{clicked_module_name}.{clicked_class_name}(self.context).{clicked_method_name}({param_string})"
+        self.code_editor.textCursor().insertText(text_to_insert)
+
+    def populate_nav_tree(self):
+        self.nav_tree.clear()
+        for module_name, classes in self.all_method_data.items():
+            module_item = QTreeWidgetItem(self.nav_tree, [module_name])
+            for class_name, methods in classes.items():
+                class_item = QTreeWidgetItem(module_item, [class_name])
+                for method_info in methods:
+                    display_text, _, _, _, _ = method_info
+                    method_item = QTreeWidgetItem(class_item, [display_text])
+                    method_item.setData(0, Qt.ItemDataRole.UserRole, method_info)
+        self.nav_tree.expandToDepth(0)
+    
+    def detect_indentation(self, code_lines):
+        for line in code_lines[:20]:
+            if len(line) > 0 and line[0] == '\t':
+                self.uses_tabs = True; return
+        self.uses_tabs = False
+    
+    def load_and_display_code(self):
+        try:
+            with open(self.module_path, 'r', encoding='utf-8') as f: original_code_lines = f.readlines()
+            self.detect_indentation(original_code_lines)
+            code_with_spaces = [line.replace('\t', ' ' * 4) for line in original_code_lines]
+            self.code_editor.setPlainText("".join(code_with_spaces))
+            self.populate_nav_tree()
+            self.find_and_highlight_method()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not load source file:\n{e}")
+
+    def find_and_highlight_method(self):
+        cursor = self.code_editor.textCursor()
+        regex = QRegularExpression(rf"^\s*def\s+{self.method_name}\s*\(")
+        found_cursor = self.code_editor.document().find(regex, cursor)
+        if not found_cursor.isNull():
+            self.code_editor.setTextCursor(found_cursor)
+            self.code_editor.ensureCursorVisible()
+        else:
+            QMessageBox.warning(self, "Warning", f"Could not find method '{self.method_name}'.")
+
+    # --- UPDATED METHOD: Now checks syntax before saving ---
+    def save_changes(self):
+        # First, validate the syntax. If it's not valid, stop the save process.
+        if not self.check_syntax():
+            return
+
+        reply = QMessageBox.question(self, "Confirm Save", "Syntax is OK. Overwrite the file?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                code_to_save = self.code_editor.toPlainText()
+                if self.uses_tabs: code_to_save = code_to_save.replace(' ' * 4, '\t')
+                with open(self.module_path, 'w', encoding='utf-8') as f: f.write(code_to_save)
+                QMessageBox.information(self, "Success", "File saved.")
+                self.accept()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not save file:\n{e}")
+
+    def find_next(self):
+        query = self.find_replace_widget.find_input.text()
+        flags = self.find_replace_widget.get_find_flags()
+        if not self.code_editor.find(query, flags):
+            self.code_editor.moveCursor(QTextCursor.MoveOperation.Start)
+            self.code_editor.find(query, flags)
+
+    def find_previous(self):
+        query = self.find_replace_widget.find_input.text()
+        flags = self.find_replace_widget.get_find_flags()
+        flags |= QTextDocument.FindFlag.FindBackward
+        if not self.code_editor.find(query, flags):
+            self.code_editor.moveCursor(QTextCursor.MoveOperation.End)
+            self.code_editor.find(query, flags)
+            
+    def replace_one(self):
+        if self.code_editor.textCursor().hasSelection():
+            replace_text = self.find_replace_widget.replace_input.text()
+            self.code_editor.textCursor().insertText(replace_text)
+        self.find_next()
+
+    def replace_all(self):
+        find_text = self.find_replace_widget.find_input.text()
+        replace_text = self.find_replace_widget.replace_input.text()
+        if not find_text: return
+        cursor = self.code_editor.textCursor()
+        cursor.setPosition(0)
+        self.code_editor.setTextCursor(cursor)
+        count = 0
+        while self.find_next() and self.code_editor.textCursor().hasSelection():
+            self.code_editor.textCursor().insertText(replace_text)
+            count += 1
+        QMessageBox.information(self, "Finished", f"Replaced {count} occurrence(s).")
+
+        
 class MainWindow(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -1353,7 +1846,11 @@ class MainWindow(QWidget):
         self.load_all_modules_to_tree()
         self.load_saved_steps_to_dropdown()
         self._update_variables_list_display()
-        
+        # In MainWindow.__init__ method
+        self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
+        self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
+        self.template_document_directory = os.path.join(self.base_directory, "template_document") # <--- ADD THIS LINE
+        self.added_steps_data: List[Dict[str, Any]] = []        
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1413,6 +1910,7 @@ class MainWindow(QWidget):
         
         self.tree_section_layout = QVBoxLayout()
         self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
+        # --- NEW: Search box ---
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search for methods or templates...")
         self.search_box.textChanged.connect(self.search_module_tree)
@@ -1422,6 +1920,11 @@ class MainWindow(QWidget):
         self.module_tree.setHeaderLabels(["Module/Class/Method"])
         self.module_tree.itemDoubleClicked.connect(self.add_item_to_execution_tree)
         self.module_tree.itemClicked.connect(self.update_selected_method_info)
+        # --- ADD THESE TWO LINES HERE ---
+        self.module_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.module_tree.customContextMenuRequested.connect(self.show_context_menu)
+
+        
         self.tree_section_layout.addWidget(self.module_tree)
         self.label_info1 = QLabel("Module Info: None")
         self.label_info1.setStyleSheet("max-width: 180px; font-style: italic; color: gray;")
@@ -1435,6 +1938,7 @@ class MainWindow(QWidget):
         self.tree_section_layout.addWidget(self.label_info3)
         left_panel_layout.addLayout(self.tree_section_layout, 1)
         left_panel_layout.addSpacing(10)
+        
 
         self.variables_group_box = QGroupBox("Global Variables")
         variables_layout = QVBoxLayout()
@@ -1513,8 +2017,7 @@ class MainWindow(QWidget):
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
         utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
         self.toggle_log_checkbox = QCheckBox("Show Execution Log")
-        # --- MODIFIED: Set checkbox to be unchecked by default ---
-        self.toggle_log_checkbox.setChecked(False)
+        self.toggle_log_checkbox.setChecked(True)
         self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
         self.exit_button = QPushButton("Exit GUI")
         self.exit_button.clicked.connect(QApplication.instance().quit)
@@ -1549,8 +2052,6 @@ class MainWindow(QWidget):
         log_layout.addWidget(log_group_box)
         
         self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
-        # --- NEW: Hide log widget initially ---
-        self.log_widget.setVisible(False)
         self.right_splitter.addWidget(self.execution_tree_widget)
         self.right_splitter.addWidget(self.log_widget)
         self.right_splitter.setSizes([600, 400])
@@ -2258,11 +2759,12 @@ class MainWindow(QWidget):
         self.label_info2.clear()
         if method_info_tuple and isinstance(method_info_tuple, tuple) and len(method_info_tuple) == 5:
             display_text, class_name, method_name, module_name, params_for_dialog = method_info_tuple
-            self._log_to_console(f"Selected Method: {class_name}.{method_name} (from {module_name})")
+            #self._log_to_console(f"Selected Method: {class_name}.{method_name} (from {module_name})")
             self.gui_communicator.update_module_info_signal.emit("")
         else:
-            self._log_to_console("Selected item is not a method or template.")
-            self.gui_communicator.update_module_info_signal.emit("")
+            pass
+            #self._log_to_console("Selected item is not a method or template.")
+            #self.gui_communicator.update_module_info_signal.emit("")
 
     # --- MODIFIED METHOD ---
     def add_item_to_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
@@ -2883,7 +3385,101 @@ class MainWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
             self._log_to_console(f"Load Error: {e}")
+    # REPLACE your old show_method_context_menu with this one
+    def show_context_menu(self, position: QPoint):
+        item = self.module_tree.itemAt(position)
+        if not item:
+            return
+    
+        item_data = self._get_item_data(item)
+    
+        # --- Handle Methods ---
+        if isinstance(item_data, tuple) and len(item_data) == 5:
+            _, class_name, method_name, module_name, _ = item_data
+    
+            context_menu = QMenu(self)
+            read_doc_action = context_menu.addAction("Read Documentation")
+            modify_action = context_menu.addAction("Modify Method")
+            delete_action = context_menu.addAction("Delete Method")
+    
+            action = context_menu.exec(self.module_tree.mapToGlobal(position))
+    
+            if action == read_doc_action:
+                self.read_method_documentation(module_name, class_name, method_name)
+            elif action == modify_action:
+                self.modify_method(module_name, class_name, method_name)
+            elif action == delete_action:
+                self.delete_method(module_name, class_name, method_name)
+    
+        # --- Handle Templates ---
+        elif isinstance(item_data, dict) and item_data.get('type') == 'template':
+            template_name = item_data.get('name')
+            if not template_name:
+                return
+    
+            context_menu = QMenu(self)
+            doc_action = context_menu.addAction("View Documentation")
+    
+            # Check if a doc file exists for this template
+            doc_path = os.path.join(self.template_document_directory, f"{template_name}.html")
+            doc_action.setEnabled(os.path.exists(doc_path))
+    
+            action = context_menu.exec(self.module_tree.mapToGlobal(position))
+    
+            if action == doc_action:
+                self.view_template_documentation(template_name)
+
+    # Add this new method to the MainWindow class
+    def view_template_documentation(self, template_name: str):
+        """Finds and displays the HTML documentation for a given template."""
+        os.makedirs(self.template_document_directory, exist_ok=True) # Ensure folder exists
+    
+        doc_path = os.path.join(self.template_document_directory, f"{template_name}.html")
+    
+        if os.path.exists(doc_path):
+            dialog = HtmlViewerDialog(doc_path, self)
+            dialog.exec()
+        else:
+            QMessageBox.information(self, "Documentation Not Found",
+                                      f"No documentation file found at:\n{doc_path}")
+    # Add this method to the MainWindow class
+    def read_method_documentation(self, module_name: str, class_name: str, method_name: str):
+        try:
+            if self.module_directory not in sys.path:
+                sys.path.insert(0, self.module_directory)
+            module = importlib.import_module(module_name)
+            importlib.reload(module)
+            class_obj = getattr(module, class_name)
+            method_obj = getattr(class_obj, method_name)
+            docstring = inspect.getdoc(method_obj)
+            if not docstring:
+                docstring = "No documentation found for this method."
+            QMessageBox.information(self, f"Documentation for {class_name}.{method_name}", docstring)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not read documentation: {e}")
+        finally:
+            if self.module_directory in sys.path:
+                sys.path.remove(self.module_directory)
+
+    # Add this method to the MainWindow class
+    # In MainWindow class, REPLACE the old modify_method with this:
+    def modify_method(self, module_name: str, class_name: str, method_name: str):
+        try:
+            # We need the full path to the module file
+            module_path = os.path.join(self.module_directory, f"{module_name}.py")
+            if not os.path.exists(module_path):
+                QMessageBox.critical(self, "File Not Found", f"The source file for module '{module_name}' could not be found.")
+                return
+    
+            # Create and show the editor dialog
+            editor_dialog = CodeEditorDialog(module_path, class_name, method_name, self.all_parsed_method_data, self)
+            editor_dialog.exec()
             
+            # After saving, reload the modules to reflect any changes
+            self.load_all_modules_to_tree()
+    
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not open the code editor: {e}")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
