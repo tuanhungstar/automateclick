@@ -13,7 +13,7 @@ import ast # <--- ADD THIS LINE
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
-from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon
 from PyQt6 import QtWidgets, QtGui
 from typing import Optional, List, Dict, Any, Tuple, Union
 
@@ -47,9 +47,15 @@ class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer 
 
     screenshot_saved = pyqtSignal(str)
 
-    def __init__(self, image: str, parent: Optional[QWidget] = None):
+    def __init__(self, image: str, base_dir: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Take and Manage Screenshots")
+
+        # Use the 'base_dir' argument directly
+        icon_path = os.path.join(base_dir, "app_icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+                
         self.setMinimumSize(679, 248) # Set a minimum size to match the original GUI
 
         self.bot_take_image_ui = BotTakeImageWindow(image)
@@ -1915,6 +1921,10 @@ class MainWindow(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
+        
+
+
+        
         # Get the geometry of the primary screen
         screen = QApplication.primaryScreen().geometry()
         # Calculate 90% of the screen's width and height
@@ -1940,6 +1950,10 @@ class MainWindow(QWidget):
         self.schedules = {}
         # --- END OF ADDED LINES ---
         
+        icon_path = os.path.join(self.base_directory, "app_icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
         self.bot_steps_subfolder = "Bot_steps"
         self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
         self.steps_template_subfolder = "Steps_template"
@@ -2711,7 +2725,8 @@ class MainWindow(QWidget):
     def open_screenshot_tool(self, initial_image_name: str = "") -> None:
         self.hide()
         current_image_name_for_tool = self.label_info3.text() if self.label_info3.text() != "Image Name" else ""
-        self.screenshot_window = SecondWindow(current_image_name_for_tool, parent=self)
+        # Pass the base_directory when creating the window
+        self.screenshot_window = SecondWindow(current_image_name_for_tool, base_dir=self.base_directory, parent=self)
         self.screenshot_window.screenshot_saved.connect(self._handle_screenshot_tool_closed)
         self.screenshot_window.show()
 
