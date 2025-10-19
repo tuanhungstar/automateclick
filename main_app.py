@@ -1915,9 +1915,9 @@ class MainWindow(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
-        # No longer setting geometry here, as we will maximize it.
+        # Do not set geometry or showMaximized() here
 
-        # --- 1. Initialize attributes that don't depend on the UI ---
+        # --- Initialize attributes ---
         self.gui_communicator = GuiCommunicator()
         self.base_directory = os.path.dirname(os.path.abspath(__file__))
         self.module_subfolder = "Bot_module"
@@ -1941,29 +1941,26 @@ class MainWindow(QWidget):
         self.minimized_for_execution = False
         self.original_geometry = None
         self.widget_homes = {}
-        self.is_bot_running = False # Flag to prevent concurrent executions
+        self.is_bot_running = False
 
-        # --- 2. Create all the UI elements ---
-        self.init_ui() # This method creates self.log_console
+        # --- Create UI ---
+        self.init_ui()
 
-        # --- 3. Now that UI exists, connect signals and start logic that might use it ---
+        # --- Connect signals and start logic ---
         self.gui_communicator.log_message_signal.connect(self._log_to_console)
         self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
 
-        # --- SCHEDULER SETUP ---
+        # --- Scheduler Setup ---
         self.schedule_timer = QTimer(self)
         self.schedule_timer.timeout.connect(self.check_schedules)
-        self.schedule_timer.start(60000) # 60,000 milliseconds = 1 minute
+        self.schedule_timer.start(60000)
         self._log_to_console("Scheduler started. Will check for due tasks every minute.")
-        # --- END SCHEDULER SETUP ---
-
-        # --- 4. Load data and finish the setup ---
+        
+        # --- Load initial data ---
         self.load_all_modules_to_tree()
         self.load_saved_steps_to_tree()
         self._update_variables_list_display()
-
-        # --- 5. Maximize the window on startup ---
-        self.showMaximized()
+    
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -2019,55 +2016,56 @@ class MainWindow(QWidget):
 # In main_app.py, inside the MainWindow class
 
     # REPLACE your existing init_ui method with this one
+# In main_app.py, inside the MainWindow class
+
+    # REPLACE your existing init_ui method with this one
     def init_ui(self) -> None:
         os.makedirs(self.steps_template_directory, exist_ok=True)
         
         master_layout = QVBoxLayout(self)
-        master_layout.setContentsMargins(5, 5, 5, 5) # Add some margin to the main window
+        master_layout.setContentsMargins(0, 0, 0, 0)
         self.stacked_layout = QStackedLayout()
         
         self.full_view_container = QWidget()
-        main_layout = QVBoxLayout(self.full_view_container)
+        main_grid_layout = QGridLayout(self.full_view_container)
+        main_grid_layout.setContentsMargins(5, 5, 5, 5)
         
-        # 3. Use a QGridLayout for precise horizontal alignment of top-level items
-        bottom_grid_layout = QGridLayout()
-        bottom_grid_layout.setContentsMargins(0,0,0,0)
-
-        # --- LEFT PANEL ---
-        self.left_panel_widget = QWidget()
-        left_panel_layout = QVBoxLayout(self.left_panel_widget)
-        left_panel_layout.setContentsMargins(0,0,0,0) # Remove margins to align with grid
-
-        # --- RIGHT PANEL ---
-        self.right_panel_widget = QWidget()
-        right_panel_layout = QVBoxLayout(self.right_panel_widget)
-        right_panel_layout.setContentsMargins(0,0,0,0) # Remove margins to align with grid
-
-        # --- Add Labels for alignment to the top of the grid (Row 0) ---
+        # --- Create Top Row Widgets ---
         saved_bots_label = QLabel("Saved Bots")
-        saved_bots_label.setStyleSheet("font-weight: bold; margin-bottom: 2px;")
-        execution_flow_label = QLabel("Execution Flow")
-        execution_flow_label.setStyleSheet("font-weight: bold; margin-bottom: 2px;")
+        saved_bots_label.setStyleSheet("font-weight: bold;")
         
-        bottom_grid_layout.addWidget(saved_bots_label, 0, 0)
-        bottom_grid_layout.addWidget(execution_flow_label, 0, 1)
+        self.execution_flow_label = QLabel("Execution Flow")
+        self.execution_flow_label.setStyleSheet("font-weight: bold;")
+        
+        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: blue; text-decoration: none; font-size: 14pt;">www.AutomateTask.Click</a>')
+        self.website_label.setOpenExternalLinks(True)
+        self.website_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        
+        main_grid_layout.addWidget(saved_bots_label, 0, 0)
+        main_grid_layout.addWidget(self.execution_flow_label, 0, 1)
+        main_grid_layout.addWidget(self.website_label, 0, 2)
 
-        # --- LEFT PANEL CONTENT (goes under its label in the grid) ---
-        left_splitter = QSplitter(Qt.Orientation.Vertical)
-        # 1. Visualize the splitter handle
-        left_splitter.setStyleSheet("""
-            QSplitter::handle:vertical {
-                background-color: #B0BEC5;
-                height: 5px;
-                border-top: 1px solid #90A4AE;
-                border-bottom: 1px solid #90A4AE;
-                margin: 1px 0;
-            }
-        """)
+        # --- LEFT PANEL CONTENT ---
+        left_panel_container = QWidget()
+        left_panel_layout = QVBoxLayout(left_panel_container)
+        left_panel_layout.setContentsMargins(0,0,0,0)
 
-        # -- Saved Bots Widget (Top of splitter, no more QGroupBox) --
-        saved_bots_container = QWidget()
-        saved_bots_layout = QVBoxLayout(saved_bots_container)
+        # --- Main Left Splitter (for resizing Global Variables) ---
+        main_left_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_left_splitter.setStyleSheet("QSplitter::handle:vertical { background-color: #B0BEC5; height: 5px; }")
+
+        # Container for the top part of the left panel
+        top_left_container = QWidget()
+        top_left_layout = QVBoxLayout(top_left_container)
+        top_left_layout.setContentsMargins(0,0,0,0)
+
+        # -- Nested Splitter (for Saved Bots vs Modules) --
+        nested_left_splitter = QSplitter(Qt.Orientation.Vertical)
+        nested_left_splitter.setStyleSheet("QSplitter::handle:vertical { background-color: #E0E0E0; height: 4px; }")
+
+        saved_bots_widget = QWidget()
+        # ... (setup for saved_bots_widget is the same)
+        saved_bots_layout = QVBoxLayout(saved_bots_widget)
         saved_bots_layout.setContentsMargins(0,0,0,0)
         self.saved_steps_tree = QTreeWidget()
         self.saved_steps_tree.setHeaderLabels(["Bot Name", "Schedule", "Status"])
@@ -2079,13 +2077,12 @@ class MainWindow(QWidget):
         self.change_bot_folder_button.clicked.connect(self.select_bot_steps_folder)
         saved_bots_layout.addWidget(self.saved_steps_tree)
         saved_bots_layout.addWidget(self.change_bot_folder_button)
-        left_splitter.addWidget(saved_bots_container)
+        nested_left_splitter.addWidget(saved_bots_widget)
 
-        # -- Module Browser container (Bottom of splitter) --
         module_browser_container = QWidget()
+        # ... (setup for module_browser_container is the same)
         module_browser_layout = QVBoxLayout(module_browser_container)
-        module_browser_layout.setContentsMargins(0,5,0,0) # Add a little space above the filter
-        
+        module_browser_layout.setContentsMargins(0,5,0,0)
         filter_layout = QHBoxLayout()
         self.filter_label = QLabel("Filter Module:")
         self.module_filter_dropdown = QComboBox()
@@ -2094,7 +2091,6 @@ class MainWindow(QWidget):
         filter_layout.addWidget(self.filter_label)
         filter_layout.addWidget(self.module_filter_dropdown)
         module_browser_layout.addLayout(filter_layout)
-        
         self.tree_section_layout = QVBoxLayout()
         self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
         self.search_box = QLineEdit()
@@ -2110,182 +2106,107 @@ class MainWindow(QWidget):
         self.module_tree.customContextMenuRequested.connect(self.show_context_menu)
         self.tree_section_layout.addWidget(self.module_tree)
         module_browser_layout.addLayout(self.tree_section_layout)
-        left_splitter.addWidget(module_browser_container)
+        nested_left_splitter.addWidget(module_browser_container)
+        nested_left_splitter.setSizes([150, 300]) # Initial sizes for top/bottom trees
+        top_left_layout.addWidget(nested_left_splitter)
         
-        left_splitter.setSizes([200, 400])
-        left_panel_layout.addWidget(left_splitter) # This now contains both top and bottom sections
-
-        # Add the rest of the left panel widgets below the splitter
+        # Add the top part to the main left splitter
+        main_left_splitter.addWidget(top_left_container)
+        
+        # -- Global Variables Group (now inside the main splitter) --
         self.variables_group_box = QGroupBox("Global Variables")
-        # ... (rest of the left panel setup remains the same, no changes needed here)
         variables_layout = QVBoxLayout()
         self.variables_list = QListWidget()
-        self.variables_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         variables_layout.addWidget(self.variables_list)
         var_buttons_layout = QHBoxLayout()
-        self.add_var_button = QPushButton("Add Variable")
-        self.add_var_button.clicked.connect(self.add_variable)
-        var_buttons_layout.addWidget(self.add_var_button)
-        self.edit_var_button = QPushButton("Edit Variable")
-        self.edit_var_button.clicked.connect(self.edit_variable)
-        var_buttons_layout.addWidget(self.edit_var_button)
-        self.delete_var_button = QPushButton("Delete Variable")
-        self.delete_var_button.clicked.connect(self.delete_variable)
-        var_buttons_layout.addWidget(self.delete_var_button)
-        self.clear_vars_button = QPushButton("Reset All Values to None")
-        self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
-        var_buttons_layout.addWidget(self.clear_vars_button)
+        self.add_var_button = QPushButton("Add"); var_buttons_layout.addWidget(self.add_var_button)
+        self.edit_var_button = QPushButton("Edit"); var_buttons_layout.addWidget(self.edit_var_button)
+        self.delete_var_button = QPushButton("Delete"); var_buttons_layout.addWidget(self.delete_var_button)
+        self.clear_vars_button = QPushButton("Reset Values"); var_buttons_layout.addWidget(self.clear_vars_button)
         variables_layout.addLayout(var_buttons_layout)
         self.variables_group_box.setLayout(variables_layout)
-        left_panel_layout.addWidget(self.variables_group_box)
-        left_panel_layout.addSpacing(10)
-        
+        main_left_splitter.addWidget(self.variables_group_box)
+        main_left_splitter.setSizes([400, 200]) # Set initial sizes for the main splitter
+
+        left_panel_layout.addWidget(main_left_splitter)
+
+        # --- Rest of the left panel controls ---
+        # ... (This part remains the same)
         execute_buttons_layout = QVBoxLayout()
         execute_row_layout = QHBoxLayout()
-        self.execute_all_button = QPushButton("Execute All Steps")
-        self.execute_all_button.clicked.connect(self.execute_all_steps)
-        execute_row_layout.addWidget(self.execute_all_button)
-        self.execute_one_step_button = QPushButton("Execute 1 Step")
-        self.execute_one_step_button.clicked.connect(self.execute_one_step)
-        self.execute_one_step_button.setEnabled(False)
-        execute_row_layout.addWidget(self.execute_one_step_button)
+        self.execute_all_button = QPushButton("Execute All Steps"); execute_row_layout.addWidget(self.execute_all_button)
+        self.execute_one_step_button = QPushButton("Execute 1 Step"); self.execute_one_step_button.setEnabled(False); execute_row_layout.addWidget(self.execute_one_step_button)
         execute_buttons_layout.addLayout(execute_row_layout)
         block_buttons_layout = QHBoxLayout()
-        self.add_loop_button = QPushButton("Add Loop")
-        self.add_loop_button.clicked.connect(self.add_loop_block)
-        block_buttons_layout.addWidget(self.add_loop_button)
-        self.add_conditional_button = QPushButton("Add Conditional Block")
-        self.add_conditional_button.clicked.connect(self.add_conditional_block)
-        block_buttons_layout.addWidget(self.add_conditional_button)
+        self.add_loop_button = QPushButton("Add Loop"); block_buttons_layout.addWidget(self.add_loop_button)
+        self.add_conditional_button = QPushButton("Add Conditional"); block_buttons_layout.addWidget(self.add_conditional_button)
         execute_buttons_layout.addLayout(block_buttons_layout)
         left_panel_layout.addLayout(execute_buttons_layout)
-        
         button_row_layout_1 = QHBoxLayout()
-        self.save_steps_button = QPushButton("Save Bot Steps")
-        self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
-        button_row_layout_1.addWidget(self.save_steps_button)
-        self.group_steps_button = QPushButton("Group Selected")
-        self.group_steps_button.clicked.connect(self.group_selected_steps)
-        button_row_layout_1.addWidget(self.group_steps_button)
-        self.clear_selected_button = QPushButton("Clear Selected Steps")
-        self.clear_selected_button.clicked.connect(self.clear_selected_steps)
-        button_row_layout_1.addWidget(self.clear_selected_button)
-        self.remove_all_steps_button = QPushButton("Remove All Steps")
-        self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
-        button_row_layout_1.addWidget(self.remove_all_steps_button)
+        self.save_steps_button = QPushButton("Save Bot"); button_row_layout_1.addWidget(self.save_steps_button)
+        self.group_steps_button = QPushButton("Group Selected"); button_row_layout_1.addWidget(self.group_steps_button)
+        self.clear_selected_button = QPushButton("Clear Selected"); button_row_layout_1.addWidget(self.clear_selected_button)
+        self.remove_all_steps_button = QPushButton("Remove All"); button_row_layout_1.addWidget(self.remove_all_steps_button)
         left_panel_layout.addLayout(button_row_layout_1)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.hide()
-        left_panel_layout.addWidget(self.progress_bar)
-        left_panel_layout.addSpacing(10)
-        
+        self.progress_bar = QProgressBar(); self.progress_bar.hide(); left_panel_layout.addWidget(self.progress_bar)
         utility_buttons_layout = QHBoxLayout()
         self.utility_buttons_layout_2 = QHBoxLayout()
-        self.always_on_top_button = QPushButton("Always On Top: Off")
-        self.always_on_top_button.setCheckable(True)
-        self.always_on_top_button.clicked.connect(self.toggle_always_on_top)
-        utility_buttons_layout.addWidget(self.always_on_top_button)
-        self.open_screenshot_tool_button = QPushButton("Open Screenshot Tool")
-        self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
-        utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
-        self.toggle_log_checkbox = QCheckBox("Show Execution Log")
-        self.toggle_log_checkbox.setChecked(False)
-        self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
-        self.exit_button = QPushButton("Exit GUI")
-        self.exit_button.clicked.connect(QApplication.instance().quit)
-        self.utility_buttons_layout_2.addWidget(self.exit_button)
+        self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setCheckable(True); utility_buttons_layout.addWidget(self.always_on_top_button)
+        self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
+        self.toggle_log_checkbox = QCheckBox("Show Log"); self.toggle_log_checkbox.setChecked(False); self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
+        self.exit_button = QPushButton("Exit GUI"); self.utility_buttons_layout_2.addWidget(self.exit_button)
         left_panel_layout.addLayout(utility_buttons_layout)
         left_panel_layout.addLayout(self.utility_buttons_layout_2)
+        self.add_var_button.clicked.connect(self.add_variable); self.edit_var_button.clicked.connect(self.edit_variable); self.delete_var_button.clicked.connect(self.delete_variable); self.clear_vars_button.clicked.connect(self.reset_all_variable_values); self.execute_all_button.clicked.connect(self.execute_all_steps); self.execute_one_step_button.clicked.connect(self.execute_one_step); self.add_loop_button.clicked.connect(self.add_loop_block); self.add_conditional_button.clicked.connect(self.add_conditional_block); self.save_steps_button.clicked.connect(self.save_bot_steps_dialog); self.group_steps_button.clicked.connect(self.group_selected_steps); self.clear_selected_button.clicked.connect(self.clear_selected_steps); self.remove_all_steps_button.clicked.connect(self.clear_all_steps); self.always_on_top_button.clicked.connect(self.toggle_always_on_top); self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool); self.exit_button.clicked.connect(QApplication.instance().quit)
 
-        # --- RIGHT PANEL CONTENT (goes under its label in the grid) ---
+        # --- RIGHT SIDE CONTENT ---
+        right_panel_container = QWidget()
+        right_panel_layout = QVBoxLayout(right_panel_container)
+        right_panel_layout.setContentsMargins(0,0,0,0)
+        # ... (The rest of the right panel setup is the same)
         self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.execution_tree_widget = QWidget()
         self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
         self.execution_tree_layout.setContentsMargins(0,0,0,0)
-        
-        # 2. Reduce space around the website link
-        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: blue; text-decoration: none; font-size: 14pt;">www.AutomateTask.Click</a>')
-        self.website_label.setOpenExternalLinks(True)
-        self.website_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.website_label.setContentsMargins(0, 2, 0, 2) # top, left, bottom, right margins
-        
         self.execution_tree = GroupedTreeWidget(self)
-        self.execution_tree.setHeaderHidden(True) # Hiding the header to align content
-        self.execution_tree.setDragDropMode(QTreeWidget.DragDropMode.NoDragDrop)
-        self.execution_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
-        
-        self.execution_tree_layout.addWidget(self.website_label)
+        self.execution_tree.setHeaderHidden(True)
         self.execution_tree_layout.addWidget(self.execution_tree)
-
         self.info_labels_layout = QHBoxLayout()
-        self.label_info1 = QLabel("Module Info: None")
-        # ... (rest of the info labels setup is fine)
-        self.label_info1.setStyleSheet("font-style: italic; color: gray;")
-        self.label_info2 = QLabel("Image Preview")
-        self.label_info2.setStyleSheet("font-style: italic; color: gray;")
-        self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label_info3 = QLabel("Image Name")
-        self.label_info3.setStyleSheet("font-style: italic; color: blue;")
-        self.info_labels_layout.addWidget(self.label_info1, 1, Qt.AlignmentFlag.AlignLeft)
-        self.info_labels_layout.addWidget(self.label_info2, 1, Qt.AlignmentFlag.AlignCenter)
-        self.info_labels_layout.addWidget(self.label_info3, 1, Qt.AlignmentFlag.AlignRight)
+        self.label_info1 = QLabel("Module Info:"); self.info_labels_layout.addWidget(self.label_info1)
+        self.label_info2 = QLabel("Image Preview"); self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter); self.info_labels_layout.addWidget(self.label_info2)
+        self.label_info3 = QLabel("Image Name"); self.label_info3.setAlignment(Qt.AlignmentFlag.AlignRight); self.info_labels_layout.addWidget(self.label_info3)
         self.execution_tree_layout.addLayout(self.info_labels_layout)
-    
         self.log_widget = QWidget()
-        # ... (log widget setup is fine)
         log_layout = QVBoxLayout(self.log_widget)
-        log_group_box = QGroupBox("Execution Log")
-        log_group_layout = QVBoxLayout()
-        self.log_console = QTextEdit()
-        self.log_console.setReadOnly(True)
-        self.log_console.setStyleSheet("background-color: #2E2E2E; color: #E0E0E0; font-family: 'Consolas', 'Courier New', monospace;")
-        log_group_layout.addWidget(self.log_console)
-        self.clear_log_button = QPushButton("Clear Log")
-        self.clear_log_button.clicked.connect(self.log_console.clear)
-        log_group_layout.addWidget(self.clear_log_button)
-        log_group_box.setLayout(log_group_layout)
-        log_layout.addWidget(log_group_box)
-        
+        log_group_box = QGroupBox("Execution Log"); log_layout.addWidget(log_group_box)
+        log_group_layout = QVBoxLayout(log_group_box)
+        self.log_console = QTextEdit(); self.log_console.setReadOnly(True); log_group_layout.addWidget(self.log_console)
+        self.clear_log_button = QPushButton("Clear Log"); self.clear_log_button.clicked.connect(self.log_console.clear); log_group_layout.addWidget(self.clear_log_button)
         self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
         self.log_widget.setVisible(False)
-        
         self.right_splitter.addWidget(self.execution_tree_widget)
         self.right_splitter.addWidget(self.log_widget)
-        self.right_splitter.setSizes([600, 400])
-        
-        # --- Add the main content widgets to the grid (Row 1) ---
-        self.left_panel_widget.setLayout(left_panel_layout)
-        self.right_panel_widget.setLayout(right_panel_layout)
+        self.right_splitter.setSizes([700, 300])
         right_panel_layout.addWidget(self.right_splitter)
 
-        bottom_grid_layout.addWidget(self.left_panel_widget, 1, 0)
-        bottom_grid_layout.addWidget(self.right_panel_widget, 1, 1)
+        # --- Add main panel containers to the grid ---
+        main_grid_layout.addWidget(left_panel_container, 1, 0)
+        main_grid_layout.addWidget(right_panel_container, 1, 1, 1, 2)
+        main_grid_layout.setColumnStretch(0, 1)
+        main_grid_layout.setColumnStretch(1, 2)
 
-        # Set column stretch factors
-        bottom_grid_layout.setColumnStretch(0, 1)
-        bottom_grid_layout.setColumnStretch(1, 2)
-
-        main_layout.addLayout(bottom_grid_layout)
-        
-        # --- MINI VIEW (no changes needed) ---
+        # --- MINI VIEW ---
         self.mini_view_container = QWidget()
-        # ...
         self.mini_view_layout = QVBoxLayout(self.mini_view_container)
         self.mini_view_layout.setContentsMargins(5,5,5,5)
-    
         self.stacked_layout.addWidget(self.full_view_container)
         self.stacked_layout.addWidget(self.mini_view_container)
         master_layout.addLayout(self.stacked_layout)
-        
         self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
-    
         self.widget_homes = {
-            self.execution_tree: (self.execution_tree_layout, 1),
+            self.execution_tree: (self.execution_tree_layout, 0),
             self.label_info2: (self.info_labels_layout, 1),
-            self.progress_bar: (left_panel_layout, 4),
+            self.progress_bar: (left_panel_layout, 2), # Adjusted index
             self.exit_button: (self.utility_buttons_layout_2, 1)
         }
     def show_saved_bot_context_menu(self, position: QPoint):
@@ -2933,17 +2854,18 @@ class MainWindow(QWidget):
             filter_recursive(root.child(i))
 
     def saved_step_tree_item_selected(self, item: QTreeWidgetItem, column: int):
-        """Loads a bot's steps when its item is double-clicked in the tree."""
-        bot_name = item.text(0)
-        if bot_name == "No saved bots found.":
-            return
-    
-        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
-        if os.path.exists(file_path):
-            self.load_steps_from_file(file_path)
-        else:
-            QMessageBox.warning(self, "File Not Found", f"The selected bot file was not found:\n{file_path}")
-            self.load_saved_steps_to_tree() # Refresh the tree if a file is missing
+            """Loads a bot's steps when its item is double-clicked in the tree."""
+            bot_name = item.text(0)
+            if bot_name == "No saved bots found.":
+                return
+        
+            file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+            if os.path.exists(file_path):
+                # Pass the bot_name to the loading function
+                self.load_steps_from_file(file_path, bot_name)
+            else:
+                QMessageBox.warning(self, "File Not Found", f"The selected bot file was not found:\n{file_path}")
+                self.load_saved_steps_to_tree() # Refresh the tree if a file is missing
 
 
     # --- NEW HELPER: _extract_variables_from_steps ---
@@ -3366,17 +3288,21 @@ class MainWindow(QWidget):
             self._rebuild_execution_tree()
 
     def _internal_clear_all_steps(self):
-        self.execution_tree.clear()
-        self.added_steps_data.clear()
-        self.global_variables.clear()
-        self._update_variables_list_display()
-        self.progress_bar.setValue(0)
-        self.progress_bar.hide()
-        self.set_ui_enabled_state(True)
-        self.loop_id_counter = 0
-        self.if_id_counter = 0
-        self.group_id_counter = 0
-        self._log_to_console("Internal clear all steps executed.")
+            self.execution_tree.clear()
+            self.added_steps_data.clear()
+            self.global_variables.clear()
+            self._update_variables_list_display()
+            self.progress_bar.setValue(0)
+            self.progress_bar.hide()
+            self.set_ui_enabled_state(True)
+            self.loop_id_counter = 0
+            self.if_id_counter = 0
+            self.group_id_counter = 0
+            
+            # RESET the label
+            self.execution_flow_label.setText("Execution Flow")
+            
+            self._log_to_console("Internal clear all steps executed.")
 
     def clear_all_steps(self) -> None:
         if not self.added_steps_data and not self.global_variables:
@@ -4027,47 +3953,52 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
 
     # --- REPLACE load_steps_from_file ---
-    def load_steps_from_file(self, file_path: str) -> None:
-        self._internal_clear_all_steps()
-        try:
-            section = None
-            loaded_variables, loaded_steps = {}, []
-            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                reader = csv.reader(csvfile)
-                for row_num, row in enumerate(reader):
-                    if not row: continue
-                    
-                    header = row[0]
-                    if header == "__SCHEDULE_INFO__":
-                        section = "SCHEDULE"
-                        continue
-                    elif header == "__GLOBAL_VARIABLES__":
-                        section = "VARIABLES"
-                        continue
-                    elif header == "__BOT_STEPS__":
-                        section = "STEPS"
-                        next(reader, None)  # Skip the "StepType,DataJSON" header row
-                        continue
-                    
-                    if section == "SCHEDULE":
-                        # Schedule is handled separately, so we just skip these rows here
-                        pass
-                    elif section == "VARIABLES":
-                        if len(row) == 2:
-                            loaded_variables[row[0]] = json.loads(row[1])
-                    elif section == "STEPS":
-                        if len(row) == 2:
-                            loaded_steps.append(json.loads(row[1]))
-
-            self.global_variables = loaded_variables
-            self._update_variables_list_display()
-            self.added_steps_data = loaded_steps
-            self._rebuild_execution_tree()
-            self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
-            self._log_to_console(f"Load Error: {e}")
+    def load_steps_from_file(self, file_path: str, bot_name: str = "") -> None:
+            self._internal_clear_all_steps()
+            try:
+                section = None
+                loaded_variables, loaded_steps = {}, []
+                with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                    reader = csv.reader(csvfile)
+                    for row_num, row in enumerate(reader):
+                        if not row: continue
+                        
+                        header = row[0]
+                        if header == "__SCHEDULE_INFO__":
+                            section = "SCHEDULE"
+                            continue
+                        elif header == "__GLOBAL_VARIABLES__":
+                            section = "VARIABLES"
+                            continue
+                        elif header == "__BOT_STEPS__":
+                            section = "STEPS"
+                            next(reader, None)  # Skip the "StepType,DataJSON" header row
+                            continue
+                        
+                        if section == "SCHEDULE":
+                            # Schedule is handled separately, so we just skip these rows here
+                            pass
+                        elif section == "VARIABLES":
+                            if len(row) == 2:
+                                loaded_variables[row[0]] = json.loads(row[1])
+                        elif section == "STEPS":
+                            if len(row) == 2:
+                                loaded_steps.append(json.loads(row[1]))
+    
+                self.global_variables = loaded_variables
+                self._update_variables_list_display()
+                self.added_steps_data = loaded_steps
+                self._rebuild_execution_tree()
+                
+                # UPDATE the label using the passed bot_name
+                if bot_name:
+                    self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
+    
+                self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
+    
+            except Exception as e:
+                QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
+                self._log_to_console(f"Load Error: {e}")
 
 
     # --- REPLACE save_bot_steps_dialog ---
@@ -4170,8 +4101,10 @@ class MainWindow(QWidget):
         except Exception as e:
             self._log_to_console(f"Error writing schedule to {file_path}: {e}")
             return False
+# At the VERY END of main_app.py
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.show()
+    window.showMaximized()  # This is the correct place to maximize the window
     sys.exit(app.exec())
