@@ -1915,8 +1915,19 @@ class MainWindow(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
-        # Do not set geometry or showMaximized() here
-
+        # Get the geometry of the primary screen
+        screen = QApplication.primaryScreen().geometry()
+        # Calculate 90% of the screen's width and height
+        width = int(screen.width() * 0.9)
+        height = int(screen.height() * 0.9)
+        
+        # Calculate the top-left position to center the window
+        x = int((screen.width() - width) / 2)
+        y = int((screen.height() - height) / 2)
+        
+        # Set the window's geometry
+        self.setGeometry(x, y, width, height)
+        # --- END NEW CODE ---
         # --- Initialize attributes ---
         self.gui_communicator = GuiCommunicator()
         self.base_directory = os.path.dirname(os.path.abspath(__file__))
@@ -1924,6 +1935,11 @@ class MainWindow(QWidget):
         self.module_directory = os.path.join(self.base_directory, self.module_subfolder)
         self.click_image_dir = os.path.join(self.base_directory, "Click_image")
         os.makedirs(self.click_image_dir, exist_ok=True)
+        # --- ADD THESE TWO LINES ---
+        self.schedules_directory = os.path.join(self.base_directory, "Schedules")
+        self.schedules = {}
+        # --- END OF ADDED LINES ---
+        
         self.bot_steps_subfolder = "Bot_steps"
         self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
         self.steps_template_subfolder = "Steps_template"
@@ -4106,5 +4122,5 @@ class MainWindow(QWidget):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.showMaximized()  # This is the correct place to maximize the window
+    window.show() # <-- CHANGE IS HERE
     sys.exit(app.exec())
