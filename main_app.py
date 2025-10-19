@@ -22,7 +22,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 my_lib_dir = os.path.join(script_dir, "my_lib")
 if my_lib_dir not in sys.path:
     sys.path.insert(0, my_lib_dir)
-
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QLabel, QPushButton, QListWidgetItem,
@@ -31,9 +31,9 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
-    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser
+    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect
+
 from PyQt6.QtGui import QIntValidator
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QPainter, QPen, QTextCursor,QTextFormat,QKeyEvent,QTextDocument
 
@@ -1865,15 +1865,60 @@ class CodeEditorDialog(QDialog):
             count += 1
         QMessageBox.information(self, "Finished", f"Replaced {count} occurrence(s).")
 
+class ScheduleTaskDialog(QDialog):
+    """A dialog for scheduling bot execution."""
+    def __init__(self, bot_name: str, schedule_data: Optional[Dict[str, Any]] = None, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Schedule Task for '{bot_name}'")
+        self.setMinimumWidth(400)
+
+        self.layout = QFormLayout(self)
+
+        self.enable_checkbox = QCheckBox("Enable Schedule")
+        self.layout.addRow(self.enable_checkbox)
+
+        self.date_edit = QDateTimeEdit(QDateTime.currentDateTime())
+        self.date_edit.setCalendarPopup(True)
+        self.layout.addRow("Start Date and Time:", self.date_edit)
+
+        self.repeat_combo = QComboBox()
+        self.repeat_combo.addItems(["Do not repeat", "Hourly", "Daily", "Monthly"])
+        self.layout.addRow("Repeat:", self.repeat_combo)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addRow(self.buttons)
+
+        if schedule_data:
+            self.enable_checkbox.setChecked(schedule_data.get("enabled", False))
+            start_datetime_str = schedule_data.get("start_datetime")
+            if start_datetime_str:
+                self.date_edit.setDateTime(QDateTime.fromString(start_datetime_str, Qt.DateFormat.ISODate))
+            repeat_str = schedule_data.get("repeat")
+            if repeat_str:
+                index = self.repeat_combo.findText(repeat_str, Qt.MatchFlag.MatchFixedString)
+                if index >= 0:
+                    self.repeat_combo.setCurrentIndex(index)
+
+    def get_schedule_data(self) -> Dict[str, Any]:
+        """Returns the schedule data from the dialog."""
+        return {
+            "enabled": self.enable_checkbox.isChecked(),
+            "start_datetime": self.date_edit.dateTime().toString(Qt.DateFormat.ISODate),
+            "repeat": self.repeat_combo.currentText()
+        }
         
 class MainWindow(QWidget):
+# In main_app.py, replace the __init__ method in the MainWindow class
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
         self.setGeometry(100, 100, 1200, 800)
+    
+        # --- 1. Initialize attributes that don't depend on the UI ---
         self.gui_communicator = GuiCommunicator()
-        self.gui_communicator.log_message_signal.connect(self._log_to_console)
-        self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
         self.base_directory = os.path.dirname(os.path.abspath(__file__))
         self.module_subfolder = "Bot_module"
         self.module_directory = os.path.join(self.base_directory, self.module_subfolder)
@@ -1883,6 +1928,7 @@ class MainWindow(QWidget):
         self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
         self.steps_template_subfolder = "Steps_template"
         self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
+        self.template_document_directory = os.path.join(self.base_directory, "template_document")
         self.added_steps_data: List[Dict[str, Any]] = []
         self.last_executed_context: Optional[ExecutionContext] = None
         self.global_variables: Dict[str, Any] = {}
@@ -1891,24 +1937,32 @@ class MainWindow(QWidget):
         self.group_id_counter: int = 0
         self.active_param_input_dialog: Optional[ParameterInputDialog] = None
         self.all_parsed_method_data: Dict[str, Dict[str, List[Tuple[str, str, str, str, Dict[str, Any]]]]] = {}
-        
+        self.data_to_item_map: Dict[int, QTreeWidgetItem] = {}
         self.minimized_for_execution = False
         self.original_geometry = None
         self.widget_homes = {}
-
-        self.init_ui()
+        # --- ADD THIS STATE FLAG ---
+        self.is_bot_running = False # Flag to prevent concurrent executions
+        # --- END ---
+        
+        # --- 2. Create all the UI elements ---
+        self.init_ui() # This method creates self.log_console
+    
+        # --- 3. Now that UI exists, connect signals and start logic that might use it ---
+        self.gui_communicator.log_message_signal.connect(self._log_to_console)
+        self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
+    
+        # --- SCHEDULER SETUP ---
+        self.schedule_timer = QTimer(self)
+        self.schedule_timer.timeout.connect(self.check_schedules)
+        self.schedule_timer.start(60000) # 60,000 milliseconds = 1 minute
+        self._log_to_console("Scheduler started. Will check for due tasks every minute.")
+        # --- END SCHEDULER SETUP ---
+    
+        # --- 4. Load data and finish the setup ---
         self.load_all_modules_to_tree()
         self.load_saved_steps_to_tree()
-        
         self._update_variables_list_display()
-        # In MainWindow.__init__ method
-        self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
-        self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
-        self.template_document_directory = os.path.join(self.base_directory, "template_document") # <--- ADD THIS LINE
-        self.added_steps_data: List[Dict[str, Any]] = []       
-        # In MainWindow.__init__
-        self.all_parsed_method_data: Dict[str, Dict[str, List[Tuple[str, str, str, str, Dict[str, Any]]]]] = {}
-        self.data_to_item_map: Dict[int, QTreeWidgetItem] = {} # <--- ADD THIS LINE
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1969,7 +2023,7 @@ class MainWindow(QWidget):
         self.saved_steps_tree.setHeaderLabels(["Bot Name", "Schedule", "Status"])
         self.saved_steps_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected)
-        self.change_bot_folder_button = QPushButton("Change Folder...")
+        self.change_bot_folder_button = QPushButton("Change your working folder")
         self.change_bot_folder_button.clicked.connect(self.select_bot_steps_folder)
         saved_bots_layout.addWidget(self.saved_steps_tree)
         saved_bots_layout.addWidget(self.change_bot_folder_button)
@@ -2162,7 +2216,115 @@ class MainWindow(QWidget):
             self.progress_bar: (left_panel_layout, 6),
             self.exit_button: (self.utility_buttons_layout_2, 1)
         }
+        # ...
+        self.saved_steps_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.saved_steps_tree.customContextMenuRequested.connect(self.show_saved_bot_context_menu)
+        # ...
+    def show_saved_bot_context_menu(self, position: QPoint):
+        item = self.saved_steps_tree.itemAt(position)
+        if not item or item.text(0) == "No saved bots found.":
+            return
 
+        bot_name = item.text(0)
+        context_menu = QMenu(self)
+        open_action = context_menu.addAction("Open Bot")
+        schedule_action = context_menu.addAction("Schedule Task")
+        delete_action = context_menu.addAction("Delete Bot")
+
+        action = context_menu.exec(self.saved_steps_tree.mapToGlobal(position))
+
+        if action == open_action:
+            self.open_saved_bot(bot_name)
+        elif action == schedule_action:
+            self.schedule_bot(bot_name)
+        elif action == delete_action:
+            self.delete_saved_bot(bot_name)
+
+    def open_saved_bot(self, bot_name: str):
+        """Loads the selected bot into the Execution Flow."""
+        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+        if os.path.exists(file_path):
+            self.load_steps_from_file(file_path)
+        else:
+            QMessageBox.warning(self, "File Not Found", f"The bot file '{bot_name}.csv' was not found.")
+            self.load_saved_steps_to_tree()
+
+    def schedule_bot(self, bot_name: str):
+        """Opens the scheduling dialog for the selected bot."""
+        schedule_data = self.schedules.get(bot_name)
+        dialog = ScheduleTaskDialog(bot_name, schedule_data, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.schedules[bot_name] = dialog.get_schedule_data()
+            self.save_schedules()
+            self.load_saved_steps_to_tree()
+
+    def delete_saved_bot(self, bot_name: str):
+        """Deletes the selected bot and its schedule."""
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     f"Are you sure you want to permanently delete the bot '{bot_name}' and its schedule?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                bot_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+                if os.path.exists(bot_path):
+                    os.remove(bot_path)
+
+                if bot_name in self.schedules:
+                    del self.schedules[bot_name]
+                    self.save_schedules()
+
+                QMessageBox.information(self, "Success", f"Bot '{bot_name}' has been deleted.")
+                self.load_saved_steps_to_tree()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"An error occurred while deleting the bot:\n{e}")
+
+    def save_schedules(self):
+        """Saves the current schedules to a JSON file."""
+        os.makedirs(self.schedules_directory, exist_ok=True)
+        schedule_file_path = os.path.join(self.schedules_directory, "schedules.json")
+        try:
+            with open(schedule_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.schedules, f, indent=4)
+        except Exception as e:
+            self._log_to_console(f"Error saving schedules: {e}")
+
+
+    def load_saved_steps_to_tree(self) -> None:
+        """Loads saved bot step files and their schedules into the QTreeWidget."""
+        self.saved_steps_tree.clear()
+        self.load_schedules()
+        try:
+            os.makedirs(self.bot_steps_directory, exist_ok=True)
+            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
+            for file_name in step_files:
+                bot_name = os.path.splitext(file_name)[0]
+                schedule_info = self.schedules.get(bot_name)
+                schedule_str = "Not Set"
+                status_str = "Idle"
+                if schedule_info:
+                    schedule_str = f"{schedule_info.get('repeat', 'Once')} at {QDateTime.fromString(schedule_info.get('start_datetime'), Qt.DateFormat.ISODate).toString('yyyy-MM-dd hh:mm')}"
+                    status_str = "Scheduled" if schedule_info.get("enabled") else "Disabled"
+
+                tree_item = QTreeWidgetItem(self.saved_steps_tree, [bot_name, schedule_str, status_str])
+            if not step_files:
+                self.saved_steps_tree.addTopLevelItem(QTreeWidgetItem(["No saved bots found."]))
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
+
+    def load_schedules(self):
+        """Loads schedules from the JSON file."""
+        schedule_file_path = os.path.join(self.schedules_directory, "schedules.json")
+        if os.path.exists(schedule_file_path):
+            try:
+                with open(schedule_file_path, 'r', encoding='utf-8') as f:
+                    self.schedules = json.load(f)
+            except (json.JSONDecodeError, Exception) as e:
+                self._log_to_console(f"Could not load schedules file: {e}")
+                self.schedules = {}
+        else:
+            self.schedules = {}
     def _toggle_minimized_view(self, minimize: bool):
         if minimize:
             self.minimized_for_execution = True
@@ -3156,12 +3318,22 @@ class MainWindow(QWidget):
             self._internal_clear_all_steps()
             self._log_to_console("All steps cleared by user.")
 
+# --- MODIFY execute_all_steps ---
     def execute_all_steps(self) -> None:
+        # --- ADD THIS CHECK AT THE BEGINNING ---
+        if self.is_bot_running:
+            QMessageBox.warning(self, "Execution in Progress", "A bot is already running. Please wait for it to complete.")
+            return
+        # --- END ---
+
         if not self.added_steps_data:
             QMessageBox.information(self, "No Steps", "No steps have been added.")
             return
         if not self._validate_block_structure_on_execution():
             return
+        
+        # --- SET THE FLAG TO TRUE ---
+        self.is_bot_running = True
         
         if self.always_on_top_button.isChecked():
             self._toggle_minimized_view(True)
@@ -3289,7 +3461,12 @@ class MainWindow(QWidget):
             self._log_to_console(f"ERROR on {card._get_formatted_title()}: {error_message}")
             self._update_variables_list_display()
 
+# --- MODIFY on_execution_finished ---
     def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
+        # --- SET THE FLAG BACK TO FALSE ---
+        self.is_bot_running = False
+        # --- END ---
+
         self.progress_bar.setValue(100)
         self.set_ui_enabled_state(True)
         self.last_executed_context = context
@@ -3301,7 +3478,9 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Execution Halted", "Execution stopped due to an error.")
             self._log_to_console("Execution STOPPED due to an error.")
         else:
-            QMessageBox.information(self, "Execution Complete", "All steps processed.")
+            # Making this message less intrusive for scheduled tasks
+            if not self.minimized_for_execution:
+                 QMessageBox.information(self, "Execution Complete", "All steps processed.")
             self._log_to_console("Execution finished successfully.")
         
         if next_step_index_to_select != -1 and 0 <= next_step_index_to_select < len(self.added_steps_data):
@@ -3309,6 +3488,11 @@ class MainWindow(QWidget):
             if target_item:
                 self.execution_tree.setCurrentItem(target_item)
                 self.execution_tree.scrollToItem(target_item)
+        
+        # --- REFRESH THE TREE VIEW ---
+        # This ensures schedule status is updated after a run
+        self.load_saved_steps_to_tree()
+        # --- END ---
 
     def update_label_info_from_module(self, message: str) -> None:
         if message and not message.startswith("Module Info:") and not message.startswith("Last Module Log:"):
@@ -3674,6 +3858,250 @@ class MainWindow(QWidget):
                 self.saved_steps_tree.addTopLevelItem(QTreeWidgetItem(["No saved bots found."]))
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
+
+# --- MODIFY check_schedules ---
+    def check_schedules(self):
+        """Timer-triggered function to check for and run scheduled bots."""
+        # --- ADD THIS CHECK AT THE BEGINNING ---
+        if self.is_bot_running:
+            self._log_to_console("Scheduler check skipped: A bot is currently running.")
+            return
+        # --- END ---
+
+        self._log_to_console("Scheduler checking for due bots...")
+        now = QDateTime.currentDateTime()
+        
+        bot_files = [f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
+
+        for bot_file in bot_files:
+            # --- ADD ANOTHER CHECK INSIDE THE LOOP ---
+            if self.is_bot_running:
+                self._log_to_console("Scheduler check halted: A bot started execution during the check.")
+                break # Exit the loop if a bot has started
+            # --- END ---
+
+            bot_name = os.path.splitext(bot_file)[0]
+            file_path = os.path.join(self.bot_steps_directory, bot_file)
+            schedule_data = self._read_schedule_from_csv(file_path)
+
+            if schedule_data and schedule_data.get("enabled"):
+                start_datetime = QDateTime.fromString(schedule_data.get("start_datetime"), Qt.DateFormat.ISODate)
+
+                if now >= start_datetime:
+                    self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
+                    
+                    self.load_steps_from_file(file_path)
+                    self.execute_all_steps() # This will now set the is_bot_running flag
+
+                    # The rest of the logic for rescheduling remains the same...
+                    repeat_mode = schedule_data.get("repeat")
+                    if repeat_mode != "Do not repeat":
+                        new_start_time = start_datetime
+                        if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
+                        elif repeat_mode == "Daily": new_start_time = new_start_time.addDays(1)
+                        elif repeat_mode == "Monthly": new_start_time = new_start_time.addMonths(1)
+                        
+                        while new_start_time < now:
+                            if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
+                            elif repeat_mode == "Daily": new_start_time = new_start_time.addDays(1)
+                            elif repeat_mode == "Monthly": new_start_time = new_start_time.addMonths(1)
+
+                        schedule_data["start_datetime"] = new_start_time.toString(Qt.DateFormat.ISODate)
+                        self._write_schedule_to_csv(file_path, schedule_data)
+                        self._log_to_console(f"Rescheduled '{bot_name}' to run next at {schedule_data['start_datetime']}")
+                    else:
+                        schedule_data["enabled"] = False
+                        self._write_schedule_to_csv(file_path, schedule_data)
+                        self._log_to_console(f"Disabled non-repeating schedule for '{bot_name}'.")
+
+
+    def schedule_bot(self, bot_name: str):
+        """Opens the scheduling dialog and saves the result to the bot's CSV file."""
+        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+        if not os.path.exists(file_path):
+            QMessageBox.warning(self, "File Not Found", f"The bot file '{bot_name}.csv' could not be found to save the schedule.")
+            return
+
+        schedule_data = self._read_schedule_from_csv(file_path)
+        dialog = ScheduleTaskDialog(bot_name, schedule_data, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_schedule_data = dialog.get_schedule_data()
+            if self._write_schedule_to_csv(file_path, new_schedule_data):
+                self._log_to_console(f"Schedule for '{bot_name}' has been updated.")
+                self.load_saved_steps_to_tree() # Refresh the view
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to save schedule for '{bot_name}'.")
+
+    # --- REPLACE load_saved_steps_to_tree ---
+    def load_saved_steps_to_tree(self) -> None:
+        """Loads saved bot step files and their schedules into the QTreeWidget."""
+        self.saved_steps_tree.clear()
+        try:
+            os.makedirs(self.bot_steps_directory, exist_ok=True)
+            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
+            for file_name in step_files:
+                bot_name = os.path.splitext(file_name)[0]
+                file_path = os.path.join(self.bot_steps_directory, file_name)
+                schedule_info = self._read_schedule_from_csv(file_path)
+
+                schedule_str = "Not Set"
+                status_str = "Idle"
+                if schedule_info:
+                    start_datetime_obj = QDateTime.fromString(schedule_info.get('start_datetime'), Qt.DateFormat.ISODate)
+                    schedule_str = f"{schedule_info.get('repeat', 'Once')} at {start_datetime_obj.toString('yyyy-MM-dd hh:mm')}"
+                    status_str = "Scheduled" if schedule_info.get("enabled") else "Disabled"
+
+                tree_item = QTreeWidgetItem(self.saved_steps_tree, [bot_name, schedule_str, status_str])
+            if not step_files:
+                self.saved_steps_tree.addTopLevelItem(QTreeWidgetItem(["No saved bots found."]))
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
+
+    # --- REPLACE load_steps_from_file ---
+    def load_steps_from_file(self, file_path: str) -> None:
+        self._internal_clear_all_steps()
+        try:
+            section = None
+            loaded_variables, loaded_steps = {}, []
+            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                for row_num, row in enumerate(reader):
+                    if not row: continue
+                    
+                    header = row[0]
+                    if header == "__SCHEDULE_INFO__":
+                        section = "SCHEDULE"
+                        continue
+                    elif header == "__GLOBAL_VARIABLES__":
+                        section = "VARIABLES"
+                        continue
+                    elif header == "__BOT_STEPS__":
+                        section = "STEPS"
+                        next(reader, None)  # Skip the "StepType,DataJSON" header row
+                        continue
+                    
+                    if section == "SCHEDULE":
+                        # Schedule is handled separately, so we just skip these rows here
+                        pass
+                    elif section == "VARIABLES":
+                        if len(row) == 2:
+                            loaded_variables[row[0]] = json.loads(row[1])
+                    elif section == "STEPS":
+                        if len(row) == 2:
+                            loaded_steps.append(json.loads(row[1]))
+
+            self.global_variables = loaded_variables
+            self._update_variables_list_display()
+            self.added_steps_data = loaded_steps
+            self._rebuild_execution_tree()
+            self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
+            self._log_to_console(f"Load Error: {e}")
+
+
+    # --- REPLACE save_bot_steps_dialog ---
+    def save_bot_steps_dialog(self) -> None:
+        if not self.added_steps_data and not self.global_variables:
+            QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
+            return
+        
+        os.makedirs(self.bot_steps_directory, exist_ok=True)
+        existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
+        
+        dialog = SaveBotDialog(existing_bots, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            bot_name = dialog.get_bot_name()
+            if not bot_name: return
+    
+            file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+            
+            # Preserve existing schedule if overwriting
+            existing_schedule = self._read_schedule_from_csv(file_path) if os.path.exists(file_path) else None
+
+            try:
+                variables_to_save = {k: v for k, v in self.global_variables.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+
+                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    
+                    # Write schedule first
+                    if existing_schedule:
+                        writer.writerow(["__SCHEDULE_INFO__"])
+                        writer.writerow([json.dumps(existing_schedule)])
+
+                    # Write variables
+                    writer.writerow(["__GLOBAL_VARIABLES__"])
+                    for var_name, var_value in variables_to_save.items():
+                        writer.writerow([var_name, json.dumps(var_value)])
+                    
+                    # Write steps
+                    writer.writerow(["__BOT_STEPS__"])
+                    writer.writerow(["StepType", "DataJSON"])
+                    for step_data_dict in self.added_steps_data:
+                        writer.writerow([step_data_dict["type"], json.dumps(step_data_dict)])
+                
+                QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{file_path}")
+                self.load_saved_steps_to_tree()
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
+
+
+    # --- HELPER METHODS for CSV schedule handling ---
+    def _read_schedule_from_csv(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """Reads only the schedule info from a bot's CSV file."""
+        if not os.path.exists(file_path):
+            return None
+        try:
+            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                for row in reader:
+                    if row and row[0] == "__SCHEDULE_INFO__":
+                        # The next row should contain the JSON data
+                        schedule_row = next(reader, None)
+                        if schedule_row:
+                            return json.loads(schedule_row[0])
+            return None
+        except (Exception, json.JSONDecodeError):
+            return None
+
+    def _write_schedule_to_csv(self, file_path: str, schedule_data: Dict[str, Any]) -> bool:
+        """Writes or updates the schedule info in a bot's CSV file."""
+        lines = []
+        schedule_written = False
+        try:
+            # Read all existing content
+            if os.path.exists(file_path):
+                with open(file_path, 'r', newline='', encoding='utf-8') as f:
+                    lines = list(csv.reader(f))
+
+            # Find and replace schedule, or add it if not present
+            with open(file_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                
+                # Check if schedule section already exists
+                try:
+                    schedule_header_index = [i for i, row in enumerate(lines) if row and row[0] == "__SCHEDULE_INFO__"][0]
+                    lines[schedule_header_index + 1] = [json.dumps(schedule_data)]
+                    schedule_written = True
+                except IndexError:
+                    # Header not found, so we'll add it at the top
+                    pass
+                
+                if schedule_written:
+                    writer.writerows(lines)
+                else:
+                    # Write new schedule at the top
+                    writer.writerow(["__SCHEDULE_INFO__"])
+                    writer.writerow([json.dumps(schedule_data)])
+                    # Write the rest of the original content
+                    writer.writerows(lines)
+            return True
+        except Exception as e:
+            self._log_to_console(f"Error writing schedule to {file_path}: {e}")
+            return False
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
