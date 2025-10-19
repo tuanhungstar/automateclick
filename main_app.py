@@ -1915,8 +1915,8 @@ class MainWindow(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
-        self.setGeometry(100, 100, 1200, 800)
-    
+        # No longer setting geometry here, as we will maximize it.
+
         # --- 1. Initialize attributes that don't depend on the UI ---
         self.gui_communicator = GuiCommunicator()
         self.base_directory = os.path.dirname(os.path.abspath(__file__))
@@ -1941,28 +1941,29 @@ class MainWindow(QWidget):
         self.minimized_for_execution = False
         self.original_geometry = None
         self.widget_homes = {}
-        # --- ADD THIS STATE FLAG ---
         self.is_bot_running = False # Flag to prevent concurrent executions
-        # --- END ---
-        
+
         # --- 2. Create all the UI elements ---
         self.init_ui() # This method creates self.log_console
-    
+
         # --- 3. Now that UI exists, connect signals and start logic that might use it ---
         self.gui_communicator.log_message_signal.connect(self._log_to_console)
         self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
-    
+
         # --- SCHEDULER SETUP ---
         self.schedule_timer = QTimer(self)
         self.schedule_timer.timeout.connect(self.check_schedules)
         self.schedule_timer.start(60000) # 60,000 milliseconds = 1 minute
         self._log_to_console("Scheduler started. Will check for due tasks every minute.")
         # --- END SCHEDULER SETUP ---
-    
+
         # --- 4. Load data and finish the setup ---
         self.load_all_modules_to_tree()
         self.load_saved_steps_to_tree()
         self._update_variables_list_display()
+
+        # --- 5. Maximize the window on startup ---
+        self.showMaximized()
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1979,7 +1980,21 @@ class MainWindow(QWidget):
     def _log_to_console(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_console.append(f"[{timestamp}] {message}")
+# In main_app.py, inside the MainWindow class
 
+    # ... (other methods like _log_to_console)
+
+    def select_bot_steps_folder(self):
+        """Opens a dialog to allow the user to select a different folder for saved bots."""
+        current_dir = self.bot_steps_directory
+        new_dir = QFileDialog.getExistingDirectory(self, "Select Bot Steps Folder", current_dir)
+        
+        if new_dir and new_dir != current_dir:
+            self.bot_steps_directory = new_dir
+            self.load_saved_steps_to_tree() # Refresh the tree from the new location
+            self._log_to_console(f"Changed bot steps folder to: {new_dir}")
+
+    # ... (the rest of the MainWindow methods)
     def _handle_screenshot_request_from_param_dialog(self) -> None:
         if self.active_param_input_dialog:
             self.active_param_input_dialog.hide()
@@ -2001,35 +2016,76 @@ class MainWindow(QWidget):
     
     # In main_app.py, REPLACE your entire init_ui method with this one:
     
+# In main_app.py, inside the MainWindow class
+
+    # REPLACE your existing init_ui method with this one
     def init_ui(self) -> None:
         os.makedirs(self.steps_template_directory, exist_ok=True)
         
         master_layout = QVBoxLayout(self)
-        master_layout.setContentsMargins(0, 0, 0, 0)
+        master_layout.setContentsMargins(5, 5, 5, 5) # Add some margin to the main window
         self.stacked_layout = QStackedLayout()
         
         self.full_view_container = QWidget()
         main_layout = QVBoxLayout(self.full_view_container)
         
-        bottom_layout = QHBoxLayout()
-        
+        # 3. Use a QGridLayout for precise horizontal alignment of top-level items
+        bottom_grid_layout = QGridLayout()
+        bottom_grid_layout.setContentsMargins(0,0,0,0)
+
         # --- LEFT PANEL ---
         self.left_panel_widget = QWidget()
         left_panel_layout = QVBoxLayout(self.left_panel_widget)
+        left_panel_layout.setContentsMargins(0,0,0,0) # Remove margins to align with grid
+
+        # --- RIGHT PANEL ---
+        self.right_panel_widget = QWidget()
+        right_panel_layout = QVBoxLayout(self.right_panel_widget)
+        right_panel_layout.setContentsMargins(0,0,0,0) # Remove margins to align with grid
+
+        # --- Add Labels for alignment to the top of the grid (Row 0) ---
+        saved_bots_label = QLabel("Saved Bots")
+        saved_bots_label.setStyleSheet("font-weight: bold; margin-bottom: 2px;")
+        execution_flow_label = QLabel("Execution Flow")
+        execution_flow_label.setStyleSheet("font-weight: bold; margin-bottom: 2px;")
         
-        self.saved_bots_group = QGroupBox("Saved Bots")
-        saved_bots_layout = QVBoxLayout()
+        bottom_grid_layout.addWidget(saved_bots_label, 0, 0)
+        bottom_grid_layout.addWidget(execution_flow_label, 0, 1)
+
+        # --- LEFT PANEL CONTENT (goes under its label in the grid) ---
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
+        # 1. Visualize the splitter handle
+        left_splitter.setStyleSheet("""
+            QSplitter::handle:vertical {
+                background-color: #B0BEC5;
+                height: 5px;
+                border-top: 1px solid #90A4AE;
+                border-bottom: 1px solid #90A4AE;
+                margin: 1px 0;
+            }
+        """)
+
+        # -- Saved Bots Widget (Top of splitter, no more QGroupBox) --
+        saved_bots_container = QWidget()
+        saved_bots_layout = QVBoxLayout(saved_bots_container)
+        saved_bots_layout.setContentsMargins(0,0,0,0)
         self.saved_steps_tree = QTreeWidget()
         self.saved_steps_tree.setHeaderLabels(["Bot Name", "Schedule", "Status"])
         self.saved_steps_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected)
+        self.saved_steps_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.saved_steps_tree.customContextMenuRequested.connect(self.show_saved_bot_context_menu)
         self.change_bot_folder_button = QPushButton("Change your working folder")
         self.change_bot_folder_button.clicked.connect(self.select_bot_steps_folder)
         saved_bots_layout.addWidget(self.saved_steps_tree)
         saved_bots_layout.addWidget(self.change_bot_folder_button)
-        self.saved_bots_group.setLayout(saved_bots_layout)
-        left_panel_layout.addWidget(self.saved_bots_group, 1)
-    
+        left_splitter.addWidget(saved_bots_container)
+
+        # -- Module Browser container (Bottom of splitter) --
+        module_browser_container = QWidget()
+        module_browser_layout = QVBoxLayout(module_browser_container)
+        module_browser_layout.setContentsMargins(0,5,0,0) # Add a little space above the filter
+        
         filter_layout = QHBoxLayout()
         self.filter_label = QLabel("Filter Module:")
         self.module_filter_dropdown = QComboBox()
@@ -2037,7 +2093,7 @@ class MainWindow(QWidget):
         self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
         filter_layout.addWidget(self.filter_label)
         filter_layout.addWidget(self.module_filter_dropdown)
-        left_panel_layout.addLayout(filter_layout)
+        module_browser_layout.addLayout(filter_layout)
         
         self.tree_section_layout = QVBoxLayout()
         self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
@@ -2053,20 +2109,15 @@ class MainWindow(QWidget):
         self.module_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.module_tree.customContextMenuRequested.connect(self.show_context_menu)
         self.tree_section_layout.addWidget(self.module_tree)
-        self.label_info1 = QLabel("Module Info: None")
-        self.label_info1.setStyleSheet("max-width: 180px; font-style: italic; color: gray;")
-        self.tree_section_layout.addWidget(self.label_info1)
-        self.label_info2 = QLabel("Image Preview")
-        self.label_info2.setStyleSheet("font-style: italic; color: gray;")
-        self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tree_section_layout.addWidget(self.label_info2)
-        self.label_info3 = QLabel("Image Name")
-        self.label_info3.setStyleSheet("font-style: italic; color: blue;")
-        self.tree_section_layout.addWidget(self.label_info3)
-        left_panel_layout.addLayout(self.tree_section_layout, 1)
-        left_panel_layout.addSpacing(10)
-    
+        module_browser_layout.addLayout(self.tree_section_layout)
+        left_splitter.addWidget(module_browser_container)
+        
+        left_splitter.setSizes([200, 400])
+        left_panel_layout.addWidget(left_splitter) # This now contains both top and bottom sections
+
+        # Add the rest of the left panel widgets below the splitter
         self.variables_group_box = QGroupBox("Global Variables")
+        # ... (rest of the left panel setup remains the same, no changes needed here)
         variables_layout = QVBoxLayout()
         self.variables_list = QListWidget()
         self.variables_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
@@ -2148,33 +2199,43 @@ class MainWindow(QWidget):
         self.utility_buttons_layout_2.addWidget(self.exit_button)
         left_panel_layout.addLayout(utility_buttons_layout)
         left_panel_layout.addLayout(self.utility_buttons_layout_2)
-    
-        # --- RIGHT PANEL (Updated) ---
+
+        # --- RIGHT PANEL CONTENT (goes under its label in the grid) ---
         self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.execution_tree_widget = QWidget()
         self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
+        self.execution_tree_layout.setContentsMargins(0,0,0,0)
         
-        # --- THIS IS THE NEW WEBSITE LINK WIDGET ---
-        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: blue; text-decoration: none;">www.AutomateTask.Click</a>')
+        # 2. Reduce space around the website link
+        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: blue; text-decoration: none; font-size: 14pt;">www.AutomateTask.Click</a>')
         self.website_label.setOpenExternalLinks(True)
         self.website_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # ---------------------------------------------
+        self.website_label.setContentsMargins(0, 2, 0, 2) # top, left, bottom, right margins
         
-        self.listbox_label2 = QLabel("Execution Flow:")
         self.execution_tree = GroupedTreeWidget(self)
-        self.execution_tree.setHeaderLabels(["Execution Flow"])
+        self.execution_tree.setHeaderHidden(True) # Hiding the header to align content
         self.execution_tree.setDragDropMode(QTreeWidget.DragDropMode.NoDragDrop)
         self.execution_tree.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
-        self.execution_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         
-        # --- ADD THE NEW WIDGET TO THE LAYOUT ---
         self.execution_tree_layout.addWidget(self.website_label)
-        # ----------------------------------------
-        
-        self.execution_tree_layout.addWidget(self.listbox_label2)
         self.execution_tree_layout.addWidget(self.execution_tree)
+
+        self.info_labels_layout = QHBoxLayout()
+        self.label_info1 = QLabel("Module Info: None")
+        # ... (rest of the info labels setup is fine)
+        self.label_info1.setStyleSheet("font-style: italic; color: gray;")
+        self.label_info2 = QLabel("Image Preview")
+        self.label_info2.setStyleSheet("font-style: italic; color: gray;")
+        self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_info3 = QLabel("Image Name")
+        self.label_info3.setStyleSheet("font-style: italic; color: blue;")
+        self.info_labels_layout.addWidget(self.label_info1, 1, Qt.AlignmentFlag.AlignLeft)
+        self.info_labels_layout.addWidget(self.label_info2, 1, Qt.AlignmentFlag.AlignCenter)
+        self.info_labels_layout.addWidget(self.label_info3, 1, Qt.AlignmentFlag.AlignRight)
+        self.execution_tree_layout.addLayout(self.info_labels_layout)
     
         self.log_widget = QWidget()
+        # ... (log widget setup is fine)
         log_layout = QVBoxLayout(self.log_widget)
         log_group_box = QGroupBox("Execution Log")
         log_group_layout = QVBoxLayout()
@@ -2195,12 +2256,23 @@ class MainWindow(QWidget):
         self.right_splitter.addWidget(self.log_widget)
         self.right_splitter.setSizes([600, 400])
         
-        main_layout.addLayout(bottom_layout)
-        bottom_layout.addWidget(self.left_panel_widget, 1)
-        bottom_layout.addWidget(self.right_splitter, 2)
+        # --- Add the main content widgets to the grid (Row 1) ---
+        self.left_panel_widget.setLayout(left_panel_layout)
+        self.right_panel_widget.setLayout(right_panel_layout)
+        right_panel_layout.addWidget(self.right_splitter)
+
+        bottom_grid_layout.addWidget(self.left_panel_widget, 1, 0)
+        bottom_grid_layout.addWidget(self.right_panel_widget, 1, 1)
+
+        # Set column stretch factors
+        bottom_grid_layout.setColumnStretch(0, 1)
+        bottom_grid_layout.setColumnStretch(1, 2)
+
+        main_layout.addLayout(bottom_grid_layout)
         
-        # --- MINI VIEW ---
+        # --- MINI VIEW (no changes needed) ---
         self.mini_view_container = QWidget()
+        # ...
         self.mini_view_layout = QVBoxLayout(self.mini_view_container)
         self.mini_view_layout.setContentsMargins(5,5,5,5)
     
@@ -2211,15 +2283,11 @@ class MainWindow(QWidget):
         self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
     
         self.widget_homes = {
-            self.execution_tree: (self.execution_tree_layout, 2), # Index updated to 2
-            self.label_info2: (self.tree_section_layout, 5),
-            self.progress_bar: (left_panel_layout, 6),
+            self.execution_tree: (self.execution_tree_layout, 1),
+            self.label_info2: (self.info_labels_layout, 1),
+            self.progress_bar: (left_panel_layout, 4),
             self.exit_button: (self.utility_buttons_layout_2, 1)
         }
-        # ...
-        self.saved_steps_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.saved_steps_tree.customContextMenuRequested.connect(self.show_saved_bot_context_menu)
-        # ...
     def show_saved_bot_context_menu(self, position: QPoint):
         item = self.saved_steps_tree.itemAt(position)
         if not item or item.text(0) == "No saved bots found.":
