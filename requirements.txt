@@ -1,0 +1,11 @@
+clipboard
+keyboard
+numpy
+openpyxl
+pandas
+Pillow
+pyautogui
+pygetwindow
+pymsgbox
+PyQt6
+pywin32
