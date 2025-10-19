@@ -39,7 +39,6 @@ from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QPai
 
 # Use the actual libraries from the my_lib folder
 from my_lib.shared_context import ExecutionContext, GuiCommunicator
-from my_lib.BOT_take_image import MainWindow as BotTakeImageWindow
 
 
 
