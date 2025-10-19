@@ -9,3 +9,4 @@ pygetwindow
 pymsgbox
 PyQt6
 pywin32
+opencv-python
