@@ -2199,6 +2199,7 @@ class MainWindow(QWidget):
         self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
         self.execution_tree_layout.setContentsMargins(0,0,0,0)
         self.execution_tree = GroupedTreeWidget(self)
+        self.execution_tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.execution_tree.setHeaderHidden(True)
         self.execution_tree_layout.addWidget(self.execution_tree)
         self.info_labels_layout = QHBoxLayout()
