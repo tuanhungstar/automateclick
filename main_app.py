@@ -10,6 +10,7 @@ import json
 import base64
 import re # <--- ADD THIS LINE
 import ast # <--- ADD THIS LINE
+import urllib.request # <-- ADD THIS LINE
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
@@ -2182,6 +2183,7 @@ class MainWindow(QWidget):
         utility_buttons_layout = QHBoxLayout()
         self.utility_buttons_layout_2 = QHBoxLayout()
         self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setCheckable(True); utility_buttons_layout.addWidget(self.always_on_top_button)
+        self.update_app_btn = QPushButton("Update App"); utility_buttons_layout.addWidget(self.update_app_btn);self.update_app_btn.setToolTip("Update the main_app.py file from the GitHub repository");self.update_app_btn.clicked.connect(self.update_main_app_from_github)
         self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
         self.toggle_log_checkbox = QCheckBox("Show Log"); self.toggle_log_checkbox.setChecked(False); self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
         self.exit_button = QPushButton("Exit GUI"); self.utility_buttons_layout_2.addWidget(self.exit_button)
@@ -3749,18 +3751,37 @@ class MainWindow(QWidget):
             self._log_to_console(f"Load Error: {e}")
     # REPLACE your old show_method_context_menu with this one
     # In the MainWindow class, REPLACE your old show_context_menu with this one
-
     def show_context_menu(self, position: QPoint):
         item = self.module_tree.itemAt(position)
         if not item:
             return
     
+        # Use a safe way to retrieve item data (for methods/templates)
         item_data = self._get_item_data(item)
-    
+        context_menu = QMenu(self)
+
+        # --- Handle Module (Level 1 Item) ---
+        # A top-level module is identified by its parent.
+        # It's either the invisibleRootItem() or, due to a common PyQT/PySide quirk, None.
+        is_top_level = (
+            item.parent() == self.module_tree.invisibleRootItem() or 
+            item.parent() is None
+        )
+        
+        if is_top_level and item.text(0) != "Bot Templates":
+            module_name = item.text(0)
+            update_action = context_menu.addAction("Update via Github")
+            
+            action = context_menu.exec(self.module_tree.mapToGlobal(position))
+            if action == update_action:
+                self.update_module_via_github(module_name)
+                return # Exit immediately after handling module action
+
+        # If it wasn't a top-level module, check for methods or templates.
+
         # --- Handle Methods ---
         if isinstance(item_data, tuple) and len(item_data) == 5:
             _, class_name, method_name, module_name, _ = item_data
-            context_menu = QMenu(self)
             read_doc_action = context_menu.addAction("Read Documentation")
             modify_action = context_menu.addAction("Modify Method")
             delete_action = context_menu.addAction("Delete Method")
@@ -3772,13 +3793,12 @@ class MainWindow(QWidget):
             elif action == delete_action:
                 self.delete_method(module_name, class_name, method_name)
     
-        # --- Handle Templates (UPDATED) ---
+        # --- Handle Templates ---
         elif isinstance(item_data, dict) and item_data.get('type') == 'template':
             template_name = item_data.get('name')
             if not template_name:
                 return
     
-            context_menu = QMenu(self)
             add_action = context_menu.addAction("Add to Execution Flow")
             context_menu.addSeparator()
             doc_action = context_menu.addAction("View Documentation")
@@ -3796,7 +3816,6 @@ class MainWindow(QWidget):
             elif action == delete_action:
                 self.delete_template(template_name)
 
-    # Add this new method to the MainWindow class
     def view_template_documentation(self, template_name: str):
         """Finds and displays the HTML documentation for a given template."""
         os.makedirs(self.template_document_directory, exist_ok=True) # Ensure folder exists
@@ -4134,7 +4153,121 @@ class MainWindow(QWidget):
             self._log_to_console(f"Error writing schedule to {file_path}: {e}")
             return False
 # At the VERY END of main_app.py
+# In main_app.py, inside the MainWindow class, add this new method:
 
+    def update_module_via_github(self, module_name: str):
+        """
+        Downloads the latest version of a module from GitHub and overwrites the local file.
+        Assumes the module is in the 'Bot_module' directory and the repository is 
+        'tuanhungstar/automateclick' on the 'main' branch for the raw file.
+        """
+        repo_owner = "tuanhungstar"
+        repo_name = "automateclick"
+        git_branch = "main" # Assuming 'main' is the branch for updates
+        
+        filename = f"{module_name}.py"
+        remote_path = f"Bot_module/{filename}"
+        
+        github_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{git_branch}/{remote_path}"
+        local_path = os.path.join(self.module_directory, filename)
+        
+        self._log_to_console(f"Attempting to update {filename} from Github at {github_url}")
+
+        try:
+            # 1. Fetch the file content
+            with urllib.request.urlopen(github_url) as response:
+                if response.getcode() != 200:
+                    raise Exception(f"Failed to fetch. HTTP Status: {response.getcode()}")
+                
+                content = response.read().decode('utf-8')
+
+            # 2. Overwrite the local file
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            # 3. Reload modules to reflect changes
+            self.load_all_modules_to_tree()
+            
+            # 4. Success message
+            QMessageBox.information(self, "Update Successful", 
+                                    f"Successfully updated '{filename}' from Github and saved to Bot_module folder.")
+            self._log_to_console(f"Successfully updated {filename} from Github.")
+            
+        except urllib.error.HTTPError as e:
+            QMessageBox.critical(self, "Update Failed (HTTP)", 
+                                 f"Failed to download module: HTTP Error {e.code}. Please check the module name or GitHub URL.")
+            self._log_to_console(f"Update failed for {filename}: HTTP Error {e.code}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Update Failed", 
+                                 f"An unexpected error occurred during update: {e}")
+            self._log_to_console(f"Update failed for {filename}: {e}")
+# In main_app.py, inside the MainWindow class, add this new method:
+
+    def update_main_app_from_github(self):
+        """
+        Downloads the latest version of main_app.py from GitHub and overwrites the local file.
+        Requires the application to be restarted after a successful update.
+        """
+        repo_owner = "tuanhungstar"
+        repo_name = "automateclick"
+        git_branch = "main" # Assuming 'main' is the branch for updates
+        
+        filename = "main_app.py"
+        remote_path = filename
+        
+        github_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{git_branch}/{remote_path}"
+        # The local path is the script's own path
+        local_path = os.path.abspath(sys.argv[0])
+        
+        self._log_to_console(f"Attempting to update {filename} from Github at {github_url}")
+
+        # --- Proxy Handling Logic ---
+        proxy_url = getattr(self, 'proxy_url', None) 
+        opener = urllib.request.build_opener()
+
+        if proxy_url:
+            self._log_to_console(f"Using proxy: {proxy_url}")
+            proxy_handler = urllib.request.ProxyHandler({
+                'http': proxy_url,
+                'https': proxy_url
+            })
+            opener = urllib.request.build_opener(proxy_handler)
+            urllib.request.install_opener(opener)
+        # --- End Proxy Handling Logic ---
+
+        try:
+            # 1. Fetch the file content
+            with opener.open(github_url) as response:
+                if response.getcode() != 200:
+                    raise Exception(f"Failed to fetch. HTTP Status: {response.getcode()}")
+                
+                content = response.read().decode('utf-8')
+
+            # 2. Overwrite the local file
+            with open(local_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+            # 3. Success message and prompt restart
+            QMessageBox.information(self, "App Update Successful", 
+                                    f"Successfully updated '{filename}'. Please **restart the application** immediately for changes to take effect.")
+            self._log_to_console(f"Successfully updated {filename} from Github. Restart required.")
+            
+        except urllib.error.HTTPError as e:
+            QMessageBox.critical(self, "Update Failed (HTTP)", 
+                                 f"Failed to download app: HTTP Error {e.code}. Please check the GitHub URL.")
+            self._log_to_console(f"App update failed: HTTP Error {e.code}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Update Failed", 
+                                 f"An unexpected error occurred during app update: {e}")
+            self._log_to_console(f"App update failed: {e}")
+        
+        finally:
+            # Uninstall the proxy opener if it was installed
+            if proxy_url:
+                urllib.request.install_opener(urllib.request.build_opener())
+            
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
