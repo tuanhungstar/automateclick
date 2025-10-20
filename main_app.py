@@ -2200,13 +2200,23 @@ class MainWindow(QWidget):
         self.execution_flow_label = QLabel("Execution Flow")
         self.execution_flow_label.setStyleSheet("font-weight: bold;")
         
-        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: blue; text-decoration: none; font-size: 14pt;">www.AutomateTask.Click</a>')
+        # --- REPLACEMENT LINE ---
+        # --- REPLACEMENT CODE BLOCK ---
+        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: #4A37A5; text-decoration: none; font-size: 16pt; font-weight: bold;">AutomateTask</a>')
         self.website_label.setOpenExternalLinks(True)
-        self.website_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # The alignment is now handled by the layout, so this line can be removed or commented out.
+        # self.website_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        
+        # Create a horizontal layout for the right-most cell of the grid
+        top_right_layout = QHBoxLayout()
+        top_right_layout.setContentsMargins(0, 0, 50, 0) # left, top, right, bottom
+        top_right_layout.addStretch() # This spacer pushes the label to the left addStretch()
+
+        top_right_layout.addWidget(self.website_label)
         
         main_grid_layout.addWidget(saved_bots_label, 0, 0)
         main_grid_layout.addWidget(self.execution_flow_label, 0, 1)
-        main_grid_layout.addWidget(self.website_label, 0, 2)
+        main_grid_layout.addLayout(top_right_layout, 0, 2) # Add the new layout to the grid
 
         # --- LEFT PANEL CONTENT ---
         left_panel_container = QWidget()
@@ -3887,32 +3897,22 @@ class MainWindow(QWidget):
         item = self.module_tree.itemAt(position)
         if not item:
             return
-    
-        # Use a safe way to retrieve item data (for methods/templates)
+
         item_data = self._get_item_data(item)
         context_menu = QMenu(self)
 
-        # --- Handle Module (Level 1 Item) ---
-        # A top-level module is identified by its parent.
-        # It's either the invisibleRootItem() or, due to a common PyQT/PySide quirk, None.
         is_top_level = (
-            item.parent() == self.module_tree.invisibleRootItem() or 
+            item.parent() == self.module_tree.invisibleRootItem() or
             item.parent() is None
         )
-        
+
+        # This `if` block handles right-clicks on the main module names.
+        # By having it simply 'pass', no context menu is created for them.
         if is_top_level and item.text(0) != "Bot Templates":
-            module_name = item.text(0)
-            update_action = context_menu.addAction("Update via Github")
-            
-            action = context_menu.exec(self.module_tree.mapToGlobal(position))
-            if action == update_action:
-                self.update_module_via_github(module_name)
-                return # Exit immediately after handling module action
+            pass
 
-        # If it wasn't a top-level module, check for methods or templates.
-
-        # --- Handle Methods ---
-        if isinstance(item_data, tuple) and len(item_data) == 5:
+        # This handles right-clicks on the methods within a module.
+        elif isinstance(item_data, tuple) and len(item_data) == 5:
             _, class_name, method_name, module_name, _ = item_data
             read_doc_action = context_menu.addAction("Read Documentation")
             modify_action = context_menu.addAction("Modify Method")
@@ -3924,23 +3924,23 @@ class MainWindow(QWidget):
                 self.modify_method(module_name, class_name, method_name)
             elif action == delete_action:
                 self.delete_method(module_name, class_name, method_name)
-    
-        # --- Handle Templates ---
+
+        # This handles right-clicks on the bot templates.
         elif isinstance(item_data, dict) and item_data.get('type') == 'template':
             template_name = item_data.get('name')
             if not template_name:
                 return
-    
+
             add_action = context_menu.addAction("Add to Execution Flow")
             context_menu.addSeparator()
             doc_action = context_menu.addAction("View Documentation")
             delete_action = context_menu.addAction("Delete Template")
-            
+
             doc_path = os.path.join(self.template_document_directory, f"{template_name}.html")
             doc_action.setEnabled(os.path.exists(doc_path))
-    
+
             action = context_menu.exec(self.module_tree.mapToGlobal(position))
-    
+
             if action == add_action:
                 self._load_template_by_name(template_name)
             elif action == doc_action:
