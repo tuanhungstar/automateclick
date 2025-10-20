@@ -11,6 +11,8 @@ import base64
 import re # <--- ADD THIS LINE
 import ast # <--- ADD THIS LINE
 import urllib.request # <-- ADD THIS LINE
+import zipfile
+import shutil
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
@@ -32,7 +34,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
-    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit
+    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator
 )
 
 from PyQt6.QtGui import QIntValidator
@@ -1915,7 +1917,137 @@ class ScheduleTaskDialog(QDialog):
             "start_datetime": self.date_edit.dateTime().toString(Qt.DateFormat.ISODate),
             "repeat": self.repeat_combo.currentText()
         }
+class UpdateDialog(QDialog):
+    def __init__(self, update_folder, target_folder, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Update Application")
+        self.resize(800, 600)
+
+        self.update_folder = update_folder
+        self.target_folder = target_folder
         
+        self.layout = QVBoxLayout(self)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["File", "Status"])
+        self.tree.setColumnWidth(0, 500)
+        self.layout.addWidget(self.tree)
+
+        # Button Layout
+        button_layout = QHBoxLayout()
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.clicked.connect(self.select_all)
+        button_layout.addWidget(self.select_all_btn)
+
+        self.deselect_all_btn = QPushButton("Deselect All")
+        self.deselect_all_btn.clicked.connect(self.deselect_all)
+        button_layout.addWidget(self.deselect_all_btn)
+
+        button_layout.addStretch() # Add space between button groups
+
+        self.update_button = QPushButton("Update Selected Files")
+        self.update_button.clicked.connect(self.update_files)
+        button_layout.addWidget(self.update_button)
+
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.clicked.connect(self.reject) # Closes the dialog
+        button_layout.addWidget(self.cancel_button)
+        
+        self.layout.addLayout(button_layout)
+
+        self.populate_tree()
+
+    def _set_all_items_checked_state(self, state):
+        """Helper function to set the check state of all items."""
+        iterator = QTreeWidgetItemIterator(self.tree)
+        while iterator.value():
+            item = iterator.value()
+            item.setCheckState(0, state)
+            iterator += 1
+
+    def select_all(self):
+        self._set_all_items_checked_state(Qt.CheckState.Checked)
+
+    def deselect_all(self):
+        self._set_all_items_checked_state(Qt.CheckState.Unchecked)
+
+    def populate_tree(self):
+        for root, _, files in os.walk(self.update_folder):
+            for file in files:
+                update_path = os.path.join(root, file)
+                relative_path = os.path.relpath(update_path, self.update_folder)
+                target_path = os.path.join(self.target_folder, relative_path)
+
+                status = "New"
+                if os.path.exists(target_path):
+                    status = "Overwrite"
+
+                self.add_tree_item(relative_path, status)
+
+    def add_tree_item(self, path, status):
+        parent_item = self.tree.invisibleRootItem()
+        parts = path.split(os.sep)
+        for i, part in enumerate(parts):
+            is_file = i == len(parts) - 1
+            item = self.find_item(parent_item, part)
+            if item is None:
+                item = QTreeWidgetItem(parent_item, [part, ""])
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.CheckState.Unchecked)
+                if not is_file:
+                     item.setText(1, "Folder")
+                else:
+                    item.setText(1, status)
+            parent_item = item
+
+    def find_item(self, parent, text):
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            if child.text(0) == text:
+                return child
+        return None
+
+    def update_files(self):
+        checked_items = self.get_checked_items()
+        if not checked_items:
+            QMessageBox.information(self, "No Files Selected", "Please select files to update.")
+            return
+            
+        for item_path in checked_items:
+            source_path = os.path.join(self.update_folder, item_path)
+            dest_path = os.path.join(self.target_folder, item_path)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            shutil.copy2(source_path, dest_path)
+        QMessageBox.information(self, "Update Complete", "Selected files have been updated.")
+        self.accept()
+
+    def get_checked_items(self):
+        checked = []
+        root = self.tree.invisibleRootItem()
+        self.get_checked_recursive(root, "", checked)
+        return checked
+
+    def get_checked_recursive(self, item, base_path, checked_list):
+        for i in range(item.childCount()):
+            child = item.child(i)
+            current_path = os.path.join(base_path, child.text(0))
+            if child.checkState(0) == Qt.CheckState.Checked:
+                if child.childCount() == 0:  # It's a file
+                    checked_list.append(current_path)
+                else: # It's a folder
+                    self.get_all_children(child, current_path, checked_list)
+            else:
+                self.get_checked_recursive(child, current_path, checked_list)
+
+    def get_all_children(self, item, base_path, all_children_list):
+        for i in range(item.childCount()):
+            child = item.child(i)
+            child_path = os.path.join(base_path, child.text(0))
+            if child.childCount() == 0:
+                all_children_list.append(child_path)
+            else:
+                self.get_all_children(child, child_path, all_children_list)
+                
 class MainWindow(QWidget):
 # In main_app.py, replace the __init__ method in the MainWindow class
 
@@ -2183,7 +2315,7 @@ class MainWindow(QWidget):
         utility_buttons_layout = QHBoxLayout()
         self.utility_buttons_layout_2 = QHBoxLayout()
         self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setCheckable(True); utility_buttons_layout.addWidget(self.always_on_top_button)
-        self.update_app_btn = QPushButton("Update App"); utility_buttons_layout.addWidget(self.update_app_btn);self.update_app_btn.setToolTip("Update the main_app.py file from the GitHub repository");self.update_app_btn.clicked.connect(self.update_main_app_from_github)
+        self.update_app_btn = QPushButton("Update App"); utility_buttons_layout.addWidget(self.update_app_btn);self.update_app_btn.setToolTip("Update the main_app.py file from the GitHub repository");self.update_app_btn.clicked.connect(self.update_application)
         self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
         self.toggle_log_checkbox = QCheckBox("Show Log"); self.toggle_log_checkbox.setChecked(False); self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
         self.exit_button = QPushButton("Exit GUI"); self.utility_buttons_layout_2.addWidget(self.exit_button)
@@ -4302,7 +4434,63 @@ class MainWindow(QWidget):
         else:
             QMessageBox.critical(self, "App Update Failed", 
                                     "All file updates failed. Check your network connection, proxy settings, and GitHub repository access.")
-            
+    def update_application(self):
+        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
+        self.update_dir = os.path.join(self.base_directory, "update")
+        zip_path = os.path.join(self.update_dir, "update.zip")
+
+        os.makedirs(self.update_dir, exist_ok=True)
+
+        try:
+            with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
+                shutil.copyfileobj(response, out_file)
+            self._process_zip_file(zip_path)
+
+        except urllib.error.URLError:
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setWindowTitle("Download Failed")
+            msg_box.setTextFormat(Qt.TextFormat.RichText)
+            msg_box.setText(
+                "Could not download the update automatically.<br><br>"
+                "<b>Step 1:</b> Please download the file manually from this link:<br>"
+                f"<a href='{github_zip_url}'>{github_zip_url}</a><br><br>"
+                "<b>Step 2:</b> After the download is complete, click the <b>'Downloaded'</b> button below and select the file you just saved."
+            )
+            downloaded_button = msg_box.addButton("Downloaded", QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            msg_box.exec()
+
+            if msg_box.clickedButton() == downloaded_button:
+                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded File", "", "Zip Files (*.zip)")
+                if file_path:
+                    self._process_zip_file(file_path)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Update Error", f"An error occurred: {e}")
+
+    def _process_zip_file(self, zip_path):
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(self.update_dir)
+
+            extracted_folder_name = ""
+            for item in os.listdir(self.update_dir):
+                if os.path.isdir(os.path.join(self.update_dir, item)) and "automateclick" in item:
+                    extracted_folder_name = item
+                    break
+
+            if not extracted_folder_name:
+                raise Exception("Could not find the main folder in the downloaded zip.")
+
+            extracted_path = os.path.join(self.update_dir, extracted_folder_name)
+            dialog = UpdateDialog(extracted_path, self.base_directory, self)
+            dialog.exec()
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
+
+# ... (The rest of your MainWindow class and the main execution block)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
