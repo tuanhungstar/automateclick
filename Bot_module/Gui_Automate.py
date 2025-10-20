@@ -403,7 +403,7 @@ class Bot_SAP:
         self.context.add_log(f"{self.log_prefix} Initialized with context.")
         pass            
         
-    def log_in(self,SAP):
+    def log_in(self,SAP,saplogon_exe):
         """Handles the entire SAP logon process.
 
         Function:
@@ -417,7 +417,7 @@ class Bot_SAP:
         Returns:
             None
         """
-        win = self.bot_utility.check_win_title_exits(SAP,saplogon_exe,timeout=1)
+        win = self.bot_utility.check_win_title_exits(SAP,timeout=1)
         if win==False:
             activate_SAP_log_on = self.bot_utility.check_win_title_exits('SAP Logon',timeout=1)
             if activate_SAP_log_on==False:
