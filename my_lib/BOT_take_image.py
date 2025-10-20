@@ -4,6 +4,8 @@ import json
 import os
 import clipboard
 import io
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(script_dir)
 import base64
 import PIL.Image
 from PyQt6 import QtCore, QtGui, QtWidgets # Import everything needed from PyQt6
