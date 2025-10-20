@@ -4204,39 +4204,21 @@ class MainWindow(QWidget):
             self._log_to_console(f"Update failed for {filename}: {e}")
 # In main_app.py, inside the MainWindow class, add this new method:
 
-    def update_main_app_from_github(self):
-        """
-        Downloads the latest version of main_app.py from GitHub and overwrites the local file.
-        Requires the application to be restarted after a successful update.
-        """
+    # In main_app.py, inside the MainWindow class, replace the method:
+# In main_app.py, inside the MainWindow class, add this new method:
+
+    def _fetch_and_overwrite_file(self, remote_path: str, local_path: str, opener) -> bool:
+        """Helper to fetch a single file from GitHub and overwrite it locally."""
         repo_owner = "tuanhungstar"
         repo_name = "automateclick"
-        git_branch = "main" # Assuming 'main' is the branch for updates
-        
-        filename = "main_app.py"
-        remote_path = filename
+        git_branch = "main"
         
         github_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{git_branch}/{remote_path}"
-        # The local path is the script's own path
-        local_path = os.path.abspath(sys.argv[0])
+        filename = os.path.basename(local_path)
         
-        self._log_to_console(f"Attempting to update {filename} from Github at {github_url}")
-
-        # --- Proxy Handling Logic ---
-        proxy_url = getattr(self, 'proxy_url', None) 
-        opener = urllib.request.build_opener()
-
-        if proxy_url:
-            self._log_to_console(f"Using proxy: {proxy_url}")
-            proxy_handler = urllib.request.ProxyHandler({
-                'http': proxy_url,
-                'https': proxy_url
-            })
-            opener = urllib.request.build_opener(proxy_handler)
-            urllib.request.install_opener(opener)
-        # --- End Proxy Handling Logic ---
-
         try:
+            self._log_to_console(f"Fetching {filename} from {github_url}")
+            
             # 1. Fetch the file content
             with opener.open(github_url) as response:
                 if response.getcode() != 200:
@@ -4244,29 +4226,82 @@ class MainWindow(QWidget):
                 
                 content = response.read().decode('utf-8')
 
-            # 2. Overwrite the local file
+            # 2. Ensure the local directory exists (e.g., creates 'my_lib' if missing)
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            
+            # 3. Overwrite the local file
             with open(local_path, 'w', encoding='utf-8') as f:
                 f.write(content)
-
-            # 3. Success message and prompt restart
-            QMessageBox.information(self, "App Update Successful", 
-                                    f"Successfully updated '{filename}'. Please **restart the application** immediately for changes to take effect.")
-            self._log_to_console(f"Successfully updated {filename} from Github. Restart required.")
+                
+            self._log_to_console(f"Successfully updated {filename}.")
+            return True
             
         except urllib.error.HTTPError as e:
+            self._log_to_console(f"Update failed for {filename}: HTTP Error {e.code}")
             QMessageBox.critical(self, "Update Failed (HTTP)", 
-                                 f"Failed to download app: HTTP Error {e.code}. Please check the GitHub URL.")
-            self._log_to_console(f"App update failed: HTTP Error {e.code}")
+                                 f"Failed to download {filename}: HTTP Error {e.code}. Check the file name or GitHub path.")
+            return False
             
         except Exception as e:
+            self._log_to_console(f"Update failed for {filename}: {e}")
             QMessageBox.critical(self, "Update Failed", 
-                                 f"An unexpected error occurred during app update: {e}")
-            self._log_to_console(f"App update failed: {e}")
+                                 f"An unexpected error occurred during {filename} update: {e}")
+            return False
+    def update_main_app_from_github(self):
+        """
+        Downloads the latest versions of main_app.py and my_lib/BOT_take_image.py 
+        from GitHub and overwrites the local files.
+        """
         
+        # --- Proxy Handling Setup ---
+        proxy_url = getattr(self, 'proxy_url', None) 
+        opener = urllib.request.build_opener()
+        
+        if proxy_url:
+            self._log_to_console(f"Configuring proxy: {proxy_url}")
+            proxy_handler = urllib.request.ProxyHandler({
+                'http': proxy_url,
+                'https': proxy_url
+            })
+            opener = urllib.request.build_opener(proxy_handler)
+            # Install opener temporarily for all urllib calls
+            urllib.request.install_opener(opener) 
+        # --- End Proxy Handling Setup ---
+
+        # Define files to update: (Remote Path, Local Path)
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        files_to_update = [
+            ("main_app.py", os.path.abspath(sys.argv[0])),
+            ("my_lib/BOT_take_image.py", os.path.join(base_dir, 'my_lib', 'BOT_take_image.py'))
+        ]
+        
+        all_successful = True
+        updated_files = []
+        
+        self._log_to_console("Starting application file update from Github...")
+        
+        try:
+            for remote_path, local_path in files_to_update:
+                if self._fetch_and_overwrite_file(remote_path, local_path, opener):
+                    updated_files.append(os.path.basename(local_path))
+                else:
+                    all_successful = False
+                    # We continue attempting other files even if one fails
         finally:
-            # Uninstall the proxy opener if it was installed
+            # CRITICAL: Uninstall the proxy opener if it was installed
             if proxy_url:
                 urllib.request.install_opener(urllib.request.build_opener())
+
+        # --- Final Status Message ---
+        if all_successful:
+            QMessageBox.information(self, "App Update Successful", 
+                                    f"Successfully updated: {', '.join(updated_files)}. Please **restart the application** immediately for changes to take effect.")
+        elif updated_files:
+             QMessageBox.warning(self, "Partial App Update", 
+                                    f"Partially successful update. Updated: {', '.join(updated_files)}. Check the console for errors on failed files. Restart recommended.")
+        else:
+            QMessageBox.critical(self, "App Update Failed", 
+                                    "All file updates failed. Check your network connection, proxy settings, and GitHub repository access.")
             
 if __name__ == "__main__":
     app = QApplication(sys.argv)
