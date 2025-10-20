@@ -1,22 +1,31 @@
 import sys
+import os
+import inspect
+import importlib
+import uuid
+import json
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QWidget,
-    QInputDialog, QGraphicsPolygonItem, QGraphicsTextItem, QGraphicsLineItem,
-    QMessageBox, QPushButton, QVBoxLayout, QHBoxLayout, QFrame
+    QInputDialog, QGraphicsPolygonItem, QGraphicsTextItem,
+    QMessageBox, QPushButton, QVBoxLayout, QHBoxLayout, QFrame, QDialog,
+    QTreeWidget, QTreeWidgetItem, QDialogButtonBox, QSplitter, QGroupBox,
+    QListWidget, QTextEdit, QProgressBar, QCheckBox, QLineEdit, QFormLayout,
+    QFileDialog, QComboBox, QRadioButton, QLabel, QListWidgetItem,
+    QGridLayout, QTreeWidgetItemIterator, QGraphicsPathItem
 )
-from PyQt6.QtGui import QPolygonF, QBrush, QPen, QFont, QColor
-from PyQt6.QtCore import QPointF, Qt, QRectF
+from PyQt6.QtGui import QPolygonF, QBrush, QPen, QFont, QColor, QPainterPath
+from PyQt6.QtCore import QPointF, Qt, QRectF, QVariant, pyqtSignal
 
 # --- Configuration ---
-STEP_WIDTH = 140
-STEP_HEIGHT = 70
-DECISION_WIDTH = 160
-DECISION_HEIGHT = 80
-VERTICAL_SPACING = 50
-HORIZONTAL_SPACING = 80
+STEP_WIDTH = 250
+STEP_HEIGHT = 120
+DECISION_WIDTH = 280
+DECISION_HEIGHT = 100
+VERTICAL_SPACING = 80
+HORIZONTAL_SPACING = 300
 
-# --- NEW: Bright Mode Style Configuration ---
-BG_COLOR = "#F0F0F0"
+# --- Style Configuration ---
+BG_COLOR = "#FFFFFF"
 LEFT_PANEL_COLOR = "#E0E0E0"
 CANVAS_COLOR = "#FFFFFF"
 BUTTON_COLOR = "#DCDCDC"
@@ -24,49 +33,561 @@ BUTTON_TEXT_COLOR = "#000000"
 SHAPE_FILL_COLOR = "#FFFFFF"
 SHAPE_BORDER_COLOR = "#333333"
 LINE_COLOR = "#333333"
-HIGHLIGHT_COLOR = "#0078D7" # A bright blue for highlighting
+HIGHLIGHT_COLOR = "#0078D7"
+TRUE_BRANCH_COLOR_BOX = QColor("#E6F2FF")
+TRUE_BRANCH_COLOR_LINE = QColor("#007BFF")
+FALSE_BRANCH_COLOR_BOX = QColor("#F8D7DA")
+FALSE_BRANCH_COLOR_LINE = QColor("#DC3545")
+
+
+# --- Dummy Classes for Compatibility ---
+class GuiCommunicator:
+    update_module_info_signal = pyqtSignal(str)
+
+class ExecutionContext:
+    pass
+
+# --- Global Variable Dialog ---
+class GlobalVariableDialog(QDialog):
+    def __init__(self, variable_name="", variable_value="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add/Edit Global Variable")
+        self.layout = QFormLayout(self)
+        self.name_input = QLineEdit(variable_name)
+        self.value_input = QLineEdit(str(variable_value))
+        self.browse_button = QPushButton("Browse...")
+        self.browse_button.clicked.connect(self._open_file_dialog)
+        self.layout.addRow("Name:", self.name_input)
+        value_layout = QHBoxLayout()
+        value_layout.addWidget(self.value_input)
+        value_layout.addWidget(self.browse_button)
+        self.layout.addRow("Value:", value_layout)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.layout.addRow(self.buttons)
+        self.name_input.textChanged.connect(self._toggle_browse_button)
+        self._toggle_browse_button()
+
+    def _toggle_browse_button(self):
+        self.browse_button.setVisible("link" in self.name_input.text().lower())
+
+    def _open_file_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
+        if file_path:
+            self.value_input.setText(file_path)
+
+    def get_variable_data(self):
+        name = self.name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Input Error", "Variable name cannot be empty.")
+            return None, None
+        return name, self.value_input.text()
+
+# --- Conditional Config Dialog ---
+class ConditionalConfigDialog(QDialog):
+    def __init__(self, global_variables, parent=None, initial_config=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Conditional Block (IF-ELSE)")
+        self.setMinimumWidth(400)
+        self.global_variables = global_variables
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        self.block_name_editor = QLineEdit()
+        self.block_name_editor.setPlaceholderText("Optional: Enter a name for this conditional block")
+        form_layout.addRow("Block Name:", self.block_name_editor)
+        condition_group = QGroupBox("Condition")
+        condition_layout = QGridLayout()
+        self.left_operand_source_combo = QComboBox()
+        self.left_operand_source_combo.addItems(["Hardcoded Value", "Global Variable"])
+        self.left_operand_editor = QLineEdit()
+        self.left_operand_var_combo = QComboBox()
+        self.left_operand_var_combo.addItem("-- Select Variable --")
+        self.left_operand_var_combo.addItems(sorted(global_variables.keys()))
+        self.left_operand_source_combo.currentIndexChanged.connect(self._toggle_left_operand_input)
+        condition_layout.addWidget(QLabel("Left Operand:"), 0, 0)
+        condition_layout.addWidget(self.left_operand_source_combo, 0, 1)
+        condition_layout.addWidget(self.left_operand_editor, 0, 2)
+        condition_layout.addWidget(self.left_operand_var_combo, 0, 2)
+        self.operator_combo = QComboBox()
+        self.operator_combo.addItems(['==', '!=', '<', '>', '<=', '>=', 'in', 'not in', 'is', 'is not'])
+        condition_layout.addWidget(QLabel("Operator:"), 1, 0)
+        condition_layout.addWidget(self.operator_combo, 1, 1, 1, 2)
+        self.right_operand_source_combo = QComboBox()
+        self.right_operand_source_combo.addItems(["Hardcoded Value", "Global Variable"])
+        self.right_operand_editor = QLineEdit()
+        self.right_operand_var_combo = QComboBox()
+        self.right_operand_var_combo.addItem("-- Select Variable --")
+        self.right_operand_var_combo.addItems(sorted(global_variables.keys()))
+        self.right_operand_source_combo.currentIndexChanged.connect(self._toggle_right_operand_input)
+        condition_layout.addWidget(QLabel("Right Operand:"), 2, 0)
+        condition_layout.addWidget(self.right_operand_source_combo, 2, 1)
+        condition_layout.addWidget(self.right_operand_editor, 2, 2)
+        condition_layout.addWidget(self.right_operand_var_combo, 2, 2)
+        condition_group.setLayout(condition_layout)
+        main_layout.addWidget(condition_group)
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addLayout(form_layout)
+        main_layout.addWidget(button_box)
+        self.setLayout(main_layout)
+        self._toggle_left_operand_input()
+        self._toggle_right_operand_input()
+
+    def _toggle_left_operand_input(self):
+        is_using_var = (self.left_operand_source_combo.currentIndex() == 1)
+        self.left_operand_editor.setVisible(not is_using_var)
+        self.left_operand_var_combo.setVisible(is_using_var)
+
+    def _toggle_right_operand_input(self):
+        is_using_var = (self.right_operand_source_combo.currentIndex() == 1)
+        self.right_operand_editor.setVisible(not is_using_var)
+        self.right_operand_var_combo.setVisible(is_using_var)
+
+    def _parse_value(self, value_str):
+        try:
+            return json.loads(value_str)
+        except (json.JSONDecodeError, TypeError):
+            return value_str
+
+    def get_config(self):
+        block_name = self.block_name_editor.text().strip()
+        left_op_config = {}
+        if self.left_operand_source_combo.currentIndex() == 1:
+            var_name = self.left_operand_var_combo.currentText()
+            if var_name == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select a variable for the left operand.")
+                return None
+            left_op_config = {"type": "variable", "value": var_name}
+        else:
+            left_op_config = {"type": "hardcoded", "value": self._parse_value(self.left_operand_editor.text())}
+
+        right_op_config = {}
+        if self.right_operand_source_combo.currentIndex() == 1:
+            var_name = self.right_operand_var_combo.currentText()
+            if var_name == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select a variable for the right operand.")
+                return None
+            right_op_config = {"type": "variable", "value": var_name}
+        else:
+            right_op_config = {"type": "hardcoded", "value": self._parse_value(self.right_operand_editor.text())}
+
+        return {"block_name": block_name or None, "condition": {"left_operand": left_op_config, "operator": self.operator_combo.currentText(), "right_operand": right_op_config}}
+
+# --- Parameter Input Dialog ---
+class ParameterInputDialog(QDialog):
+    def __init__(self, method_name, parameters_to_configure, current_global_var_names, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Configure Parameters for '{method_name}'")
+        self.parameters_config = {}
+        self.assign_to_variable_name = None
+        self.param_editors = {}
+        self.param_var_selectors = {}
+        self.param_value_source_combos = {}
+
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        for param_name, (default_value, _) in parameters_to_configure.items():
+            param_h_layout = QHBoxLayout()
+            label = QLabel(f"{param_name}:")
+
+            value_source_combo = QComboBox()
+            value_source_combo.addItems(["Hardcoded Value", "Global Variable"])
+            self.param_value_source_combos[param_name] = value_source_combo
+
+            hardcoded_editor = QLineEdit()
+            if default_value is not inspect.Parameter.empty:
+                hardcoded_editor.setText(str(default_value))
+            self.param_editors[param_name] = hardcoded_editor
+
+            variable_select_combo = QComboBox()
+            variable_select_combo.addItem("-- Select Variable --")
+            variable_select_combo.addItems(current_global_var_names)
+            self.param_var_selectors[param_name] = variable_select_combo
+
+            param_h_layout.addWidget(value_source_combo)
+            param_h_layout.addWidget(hardcoded_editor)
+            param_h_layout.addWidget(variable_select_combo)
+            
+            if "link" in param_name.lower():
+                browse_button = QPushButton("Browse...")
+                browse_button.clicked.connect(lambda _, editor=hardcoded_editor: self._open_file_dialog_for_param(editor))
+                param_h_layout.addWidget(browse_button)
+
+            value_source_combo.currentIndexChanged.connect(
+                lambda index, editor=hardcoded_editor, selector=variable_select_combo: self._toggle_param_input_type(index, editor, selector)
+            )
+            self._toggle_param_input_type(0, hardcoded_editor, variable_select_combo)
+
+            form_layout.addRow(label, param_h_layout)
+
+        main_layout.addLayout(form_layout)
+
+        assignment_group_box = QGroupBox("Assign Method Result to Variable")
+        assignment_layout = QVBoxLayout()
+        self.assign_checkbox = QCheckBox("Assign result")
+        self.assign_checkbox.stateChanged.connect(self._toggle_assignment_widgets)
+        assignment_layout.addWidget(self.assign_checkbox)
+        self.new_var_radio = QRadioButton("New Variable Name:")
+        self.new_var_input = QLineEdit()
+        self.existing_var_radio = QRadioButton("Existing Variable:")
+        self.existing_var_combo = QComboBox()
+        self.existing_var_combo.addItem("-- Select Variable --")
+        self.existing_var_combo.addItems(current_global_var_names)
+        
+        self.new_var_radio.toggled.connect(self._toggle_assignment_inputs)
+
+        assignment_form_layout = QFormLayout()
+        assignment_form_layout.addRow(self.new_var_radio, self.new_var_input)
+        assignment_form_layout.addRow(self.existing_var_radio, self.existing_var_combo)
+        assignment_layout.addLayout(assignment_form_layout)
+        assignment_group_box.setLayout(assignment_layout)
+        main_layout.addWidget(assignment_group_box)
+        self._toggle_assignment_widgets()
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def _open_file_dialog_for_param(self, editor):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
+        if file_path:
+            editor.setText(file_path)
+
+    def _toggle_param_input_type(self, index, hardcoded_editor, variable_select_combo):
+        hardcoded_editor.setVisible(index == 0)
+        variable_select_combo.setVisible(index == 1)
+
+    def _toggle_assignment_widgets(self):
+        is_assign_enabled = self.assign_checkbox.isChecked()
+        self.new_var_radio.setVisible(is_assign_enabled)
+        self.new_var_input.setVisible(is_assign_enabled)
+        self.existing_var_radio.setVisible(is_assign_enabled)
+        self.existing_var_combo.setVisible(is_assign_enabled)
+        if is_assign_enabled:
+            self.new_var_radio.setChecked(True)
+
+    def _toggle_assignment_inputs(self):
+        self.new_var_input.setVisible(self.new_var_radio.isChecked())
+        self.existing_var_combo.setVisible(not self.new_var_radio.isChecked())
+
+    def get_parameters_config(self):
+        for param_name, source_combo in self.param_value_source_combos.items():
+            if source_combo.currentIndex() == 0:
+                self.parameters_config[param_name] = {'type': 'hardcoded', 'value': self.param_editors[param_name].text()}
+            else:
+                var_name = self.param_var_selectors[param_name].currentText()
+                if var_name == "-- Select Variable --":
+                    QMessageBox.warning(self, "Input Error", f"Please select a variable for '{param_name}'.")
+                    return None, None
+                self.parameters_config[param_name] = {'type': 'variable', 'value': var_name}
+        
+        assign_to = None
+        if self.assign_checkbox.isChecked():
+            if self.new_var_radio.isChecked():
+                assign_to = self.new_var_input.text().strip()
+                if not assign_to:
+                    QMessageBox.warning(self, "Input Error", "New variable name cannot be empty.")
+                    return None, None
+            else:
+                assign_to = self.existing_var_combo.currentText()
+                if assign_to == "-- Select Variable --":
+                    QMessageBox.warning(self, "Input Error", "Please select an existing variable to assign to.")
+                    return None, None
+
+        return self.parameters_config, assign_to
+
+# --- Step Insertion Dialog ---
+class StepInsertionDialog(QDialog):
+    def __init__(self, flowchart_items, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Insert Step At...")
+        self.layout = QVBoxLayout(self)
+        self.list_widget = QListWidget()
+        self.insertion_mode_group = QGroupBox("Insertion Mode")
+        self.insertion_mode_layout = QHBoxLayout()
+        self.insert_before_radio = QRadioButton("Insert Before Selected")
+        self.insert_after_radio = QRadioButton("Insert After Selected")
+        self.insert_after_radio.setChecked(True)
+        self.insertion_mode_layout.addWidget(self.insert_before_radio)
+        self.insertion_mode_layout.addWidget(self.insert_after_radio)
+        self.insertion_mode_group.setLayout(self.insertion_mode_layout)
+
+        self.layout.addWidget(QLabel("Select an existing step:"))
+        self.layout.addWidget(self.list_widget)
+        self.layout.addWidget(self.insertion_mode_group)
+
+        self._populate_list(flowchart_items)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        self.layout.addWidget(self.button_box)
+
+    def _populate_list(self, items):
+        if not items:
+            self.list_widget.addItem("End of Flowchart")
+            self.insert_before_radio.setEnabled(False)
+            self.insert_after_radio.setChecked(True)
+        else:
+            for item in items:
+                text = item.text_item.toPlainText().split('\n')[0]
+                list_item = QListWidgetItem(text)
+                list_item.setData(Qt.ItemDataRole.UserRole, item.step_id)
+                self.list_widget.addItem(list_item)
+            self.list_widget.setCurrentRow(len(items) - 1)
+
+    def get_insertion_point(self):
+        selected_list_item = self.list_widget.currentItem()
+        if not selected_list_item or selected_list_item.text() == "End of Flowchart":
+            return None, "after"
+
+        target_item_id = selected_list_item.data(Qt.ItemDataRole.UserRole)
+        mode = "before" if self.insert_before_radio.isChecked() else "after"
+        return target_item_id, mode
+
+# --- Module Selection Dialog ---
+class ModuleSelectionDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select a Method")
+        self.setMinimumSize(400, 500)
+        self.selected_method_info = None
+
+        main_layout = QVBoxLayout(self)
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("Search for methods...")
+        self.search_box.textChanged.connect(self._filter_tree)
+        main_layout.addWidget(self.search_box)
+
+        self.module_tree = QTreeWidget()
+        self.module_tree.setHeaderLabels(["Module/Class/Method"])
+        self.module_tree.itemDoubleClicked.connect(self.accept)
+        main_layout.addWidget(self.module_tree)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self.load_modules()
+
+    def _filter_tree(self):
+        search_text = self.search_box.text().lower()
+        iterator = QTreeWidgetItemIterator(self.module_tree)
+        while iterator.value():
+            item = iterator.value()
+            item_text = item.text(0).lower()
+            
+            is_match = search_text in item_text
+
+            item.setHidden(not is_match)
+            
+            if is_match:
+                parent = item.parent()
+                while parent:
+                    parent.setHidden(False)
+                    parent.setExpanded(True)
+                    parent = parent.parent()
+            iterator += 1
+
+    def load_modules(self):
+        base_directory = os.path.dirname(os.path.abspath(__file__))
+        module_directory = os.path.join(base_directory, "Bot_module")
+
+        if not os.path.exists(module_directory):
+            QMessageBox.warning(self, "Module Folder Not Found",
+                                f"The 'Bot_module' folder was not found at:\n{module_directory}")
+            return
+
+        original_sys_path = sys.path[:]
+        if module_directory not in sys.path:
+            sys.path.insert(0, module_directory)
+
+        try:
+            for module_name in [f[:-3] for f in os.listdir(module_directory) if f.endswith(".py") and f != "__init__.py"]:
+                module = importlib.import_module(module_name)
+                importlib.reload(module)
+                module_item = QTreeWidgetItem(self.module_tree, [module_name])
+
+                for name, obj in inspect.getmembers(module, inspect.isclass):
+                    if obj.__module__ == module_name:
+                        class_item = QTreeWidgetItem(module_item, [name])
+                        for method_name, method_obj in inspect.getmembers(obj, inspect.isfunction):
+                             if not method_name.startswith('_'):
+                                sig = inspect.signature(method_obj)
+                                params = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name != 'self'}
+                                method_item = QTreeWidgetItem(class_item, [method_name])
+                                method_item.setData(0, Qt.ItemDataRole.UserRole, (module_name, name, method_name, params))
+        finally:
+            sys.path = original_sys_path
+
+
+    def accept(self):
+        selected_item = self.module_tree.currentItem()
+        if selected_item and selected_item.childCount() == 0:
+            self.selected_method_info = selected_item.data(0, Qt.ItemDataRole.UserRole)
+            super().accept()
+        elif not selected_item:
+             QMessageBox.warning(self, "No Selection", "Please select a method.")
+        else:
+            QMessageBox.warning(self, "Invalid Selection", "Please select a method, not a class or module.")
+
 
 # --- Custom Graphics Items ---
-
-class Connector(QGraphicsLineItem):
-    """A line that connects two FlowchartItems."""
-    def __init__(self, start_item, end_item, parent=None):
+class Connector(QGraphicsPathItem):
+    def __init__(self, start_item, end_item, label="", color=QColor(LINE_COLOR), parent=None):
         super().__init__(parent)
         self.start_item = start_item
         self.end_item = end_item
-        self.setPen(QPen(QColor(LINE_COLOR), 2))
+        self.setPen(QPen(color, 2))
         self.setZValue(-1)
 
+        self.label = QGraphicsTextItem(label, self)
+        self.label.setDefaultTextColor(color)
+        self.label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+
     def update_position(self):
-        start_pos = self.start_item.scenePos()
-        end_pos = self.end_item.scenePos()
-        self.setLine(start_pos.x(), start_pos.y(), end_pos.x(), end_pos.y())
+        start_rect = self.start_item.boundingRect()
+        end_rect = self.end_item.boundingRect()
+        
+        start_center = self.start_item.mapToScene(start_rect.center())
+        end_center = self.end_item.mapToScene(end_rect.center())
+
+        start_point = QPointF(start_center.x(), start_center.y() + start_rect.height() / 2)
+        end_point = QPointF(end_center.x(), end_center.y() - end_rect.height() / 2)
+        
+        # Adjust connection points based on type and label
+        if isinstance(self.start_item, DecisionItem):
+            if self.label.toPlainText() == "True":
+                start_point = self.start_item.mapToScene(QPointF(-start_rect.width()/2, 0)) # Left side
+            elif self.label.toPlainText() == "False":
+                start_point = self.start_item.mapToScene(QPointF(start_rect.width()/2, 0)) # Right side
+            else: # If no label, connect from bottom (for connection before IF)
+                 start_point = self.start_item.mapToScene(QPointF(0, start_rect.height()/2))
+        
+        if isinstance(self.end_item, DecisionItem):
+            end_point = self.end_item.mapToScene(QPointF(0, -end_rect.height()/2)) # Connect to top
+
+        # Determine if end_item is END_IF and start_item is in a branch
+        is_branch_merge = (self.end_item.step_data.get('type') == 'IF_END' and
+                           self.start_item.step_data.get('if_branch') is not None)
+
+        path = QPainterPath()
+        path.moveTo(start_point)
+        
+        dy = end_point.y() - start_point.y()
+        dx = end_point.x() - start_point.x()
+
+        # Simplified right-angle logic
+        if abs(dy) > abs(dx) and dy > 0: # More vertical movement downwards
+            mid_y = start_point.y() + VERTICAL_SPACING / 2
+            path.lineTo(start_point.x(), mid_y)
+            path.lineTo(end_point.x(), mid_y)
+            path.lineTo(end_point)
+        elif abs(dx) > 0: # More horizontal movement or merging
+            mid_y = start_point.y() + dy / 2
+            path.lineTo(start_point.x(), mid_y)
+            path.lineTo(end_point.x(), mid_y)
+            path.lineTo(end_point)
+        else: # Straight vertical
+             path.lineTo(end_point)
+
+
+        self.setPath(path)
+        
+        # Adjust label position slightly based on direction
+        label_pos_x = (start_point.x() + end_point.x()) / 2
+        label_pos_y = start_point.y() + dy / 2
+        
+        if self.label.toPlainText() == "True":
+            label_pos_x = start_point.x() - 40 # Position left for True
+        elif self.label.toPlainText() == "False":
+             label_pos_x = start_point.x() + 10 # Position right for False
+
+        self.label.setPos(label_pos_x, mid_y - 20)
+
 
 class FlowchartItem(QGraphicsPolygonItem):
-    """Base class for all flowchart shapes."""
-    def __init__(self, polygon, text="Default", parent=None):
+    def __init__(self, polygon, text="Default", step_data=None, parent=None):
         super().__init__(polygon, parent)
+        self.step_id = str(uuid.uuid4())
+        self.step_data = step_data if step_data is not None else {}
         self.connectors = []
         self.setBrush(QBrush(QColor(SHAPE_FILL_COLOR)))
         self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2))
         self.setAcceptHoverEvents(True)
-        self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable)
         self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemSendsGeometryChanges)
 
         self.text_item = QGraphicsTextItem(text, self)
-        font = QFont("Arial", 11)
-        # Black text for light background
+        font = QFont("Arial", 10)
         self.text_item.setDefaultTextColor(QColor(BUTTON_TEXT_COLOR))
         self.text_item.setFont(font)
         self.text_item.setTextWidth(self.boundingRect().width() * 0.9)
+        
+        self.set_step_details(1)
+
+    def set_step_details(self, step_number, status=""):
+        prefix = ""
+        if self.step_data.get('if_branch') == 'true':
+            prefix = "IF_TRUE: "
+        elif self.step_data.get('if_branch') == 'false':
+            prefix = "IF_FALSE: "
+
+        display_text = f"Step {step_number} {prefix}: "
+        
+        if self.step_data.get('type') == 'IF_START':
+            cond = self.step_data['condition_config']['condition']
+            left = cond['left_operand']['value']
+            if cond['left_operand']['type'] == 'variable': left = f"@{left}"
+            right = cond['right_operand']['value']
+            if cond['right_operand']['type'] == 'variable': right = f"@{right}"
+            display_text = f"Step {step_number}: IF: {left} {cond['operator']} {right}\n"
+        elif self.step_data.get('type') == 'IF_END':
+            display_text = f"Step {step_number}: END IF\n"
+        else:
+            method_name = self.step_data.get('class', '') + "." + self.step_data.get('method', '')
+            if method_name != ".":
+                display_text += f"{method_name}\n"
+        
+        params = self.step_data.get('config', {})
+        if params:
+            for i, (param_name, param_config) in enumerate(params.items()):
+                value_display = str(param_config.get('value', ''))
+                if param_config.get('type') == 'variable':
+                    value_display = f"@{value_display}"
+                if len(value_display) > 20:
+                    value_display = value_display[:17] + "..."
+                display_text += f"Param {i+1}: {param_name}={value_display}\n"
+        
+        assign_to = self.step_data.get('assign_to')
+        if assign_to:
+            display_text += f"Assign: {assign_to}\n"
+        
+        display_text += f"Status: {status}\n"
+
+        self.text_item.setPlainText(display_text.strip())
+        self.text_item.setTextWidth(self.boundingRect().width() * 0.9)
         self.center_text()
+        
+        if self.step_data.get('if_branch') == 'true':
+            self.setBrush(QBrush(TRUE_BRANCH_COLOR_BOX))
+            self.setPen(QPen(TRUE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+        elif self.step_data.get('if_branch') == 'false':
+            self.setBrush(QBrush(FALSE_BRANCH_COLOR_BOX))
+            self.setPen(QPen(FALSE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+        else:
+            self.setBrush(QBrush(QColor(SHAPE_FILL_COLOR)))
+            self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2, Qt.PenStyle.SolidLine))
+
 
     def center_text(self):
-        text_rect = self.text_item.boundingRect()
-        new_x = -text_rect.width() / 2
-        new_y = -text_rect.height() / 2
-        self.text_item.setPos(new_x, new_y)
+        self.text_item.setPos(-self.boundingRect().width() / 2 * 0.95, -self.boundingRect().height() / 2 * 0.95)
 
     def add_connector(self, connector):
         self.connectors.append(connector)
@@ -76,37 +597,42 @@ class FlowchartItem(QGraphicsPolygonItem):
             for connector in self.connectors:
                 connector.update_position()
         return super().itemChange(change, value)
-    
+
     def mouseDoubleClickEvent(self, event):
-        text, ok = QInputDialog.getText(None, "Edit Text", "Enter new text:", text=self.text_item.toPlainText())
-        if ok and text:
-            self.text_item.setPlainText(text)
-            self.center_text()
+        QMessageBox.information(None, "Edit Step", "Double-click logic for editing step details is not yet implemented.")
         super().mouseDoubleClickEvent(event)
 
     def hoverEnterEvent(self, event):
-        self.setPen(QPen(QColor(HIGHLIGHT_COLOR), 3))
+        temp_pen = self.pen()
+        temp_pen.setColor(QColor(HIGHLIGHT_COLOR))
+        temp_pen.setWidth(3)
+        self.setPen(temp_pen)
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2))
+        if self.step_data.get('if_branch') == 'true':
+            self.setPen(QPen(TRUE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+        elif self.step_data.get('if_branch') == 'false':
+            self.setPen(QPen(FALSE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+        else:
+            self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2, Qt.PenStyle.SolidLine))
         super().hoverLeaveEvent(event)
 
 class StepItem(FlowchartItem):
-    def __init__(self, text="Step", parent=None):
+    def __init__(self, text="Step", step_data=None, parent=None):
         rect = QPolygonF([
             QPointF(-STEP_WIDTH / 2, -STEP_HEIGHT / 2), QPointF(STEP_WIDTH / 2, -STEP_HEIGHT / 2),
             QPointF(STEP_WIDTH / 2, STEP_HEIGHT / 2), QPointF(-STEP_WIDTH / 2, STEP_HEIGHT / 2),
         ])
-        super().__init__(rect, text, parent)
+        super().__init__(rect, text, step_data, parent)
 
 class DecisionItem(FlowchartItem):
-    def __init__(self, text="If...", parent=None):
+    def __init__(self, text="If...", step_data=None, parent=None):
         diamond = QPolygonF([
             QPointF(0, -DECISION_HEIGHT / 2), QPointF(DECISION_WIDTH / 2, 0),
             QPointF(0, DECISION_HEIGHT / 2), QPointF(-DECISION_WIDTH / 2, 0),
         ])
-        super().__init__(diamond, text, parent)
+        super().__init__(diamond, text, step_data, parent)
 
 # --- Custom QGraphicsView ---
 class FlowchartView(QGraphicsView):
@@ -115,159 +641,356 @@ class FlowchartView(QGraphicsView):
         self.main_window = parent
         self.setStyleSheet(f"background-color: {CANVAS_COLOR}; border: 1px solid #C0C0C0;")
 
-    def mousePressEvent(self, event):
-        if self.main_window.connection_mode and event.button() == Qt.MouseButton.LeftButton:
-            item = self.itemAt(event.pos())
-            if isinstance(item, FlowchartItem):
-                if self.main_window.start_item is None:
-                    self.main_window.start_item = item
-                    item.setPen(QPen(QColor(HIGHLIGHT_COLOR), 3))
-                else:
-                    if self.main_window.start_item != item:
-                        connector = Connector(self.main_window.start_item, item)
-                        self.main_window.start_item.add_connector(connector)
-                        item.add_connector(connector)
-                        self.scene().addItem(connector)
-                        connector.update_position()
-                    self.main_window.start_item.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2))
-                    self.main_window.start_item = None
-        else:
-            super().mousePressEvent(event)
-
 # --- Main Application Window ---
 class FlowchartApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Flowchart Creator")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1400, 900)
         self.setStyleSheet(f"background-color: {BG_COLOR};")
 
         self.connection_mode = False
         self.start_item = None
-        self.last_item = None
-        self.step_counter = 0
+        self.global_variables = {}
+        self.flow_steps = []
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
         left_panel = QFrame()
-        left_panel.setFixedWidth(200)
-        left_panel.setStyleSheet(f"background-color: {LEFT_PANEL_COLOR};")
+        left_panel.setFixedWidth(250)
+        left_panel.setStyleSheet(f"background-color: {LEFT_PANEL_COLOR}; border-radius: 5px;")
         left_panel_layout = QVBoxLayout(left_panel)
         left_panel_layout.setContentsMargins(10, 10, 10, 10)
-        left_panel_layout.setSpacing(10)
+        left_panel_layout.setSpacing(8)
 
         button_style = f"""
             QPushButton {{
-                background-color: {BUTTON_COLOR};
-                color: {BUTTON_TEXT_COLOR};
-                border: 1px solid #B0B0B0;
-                padding: 10px;
-                font-size: 13px;
-                border-radius: 5px;
+                background-color: {BUTTON_COLOR}; color: {BUTTON_TEXT_COLOR}; border: 1px solid #B0B0B0;
+                padding: 5px; font-size: 13px; border-radius: 5px;
             }}
-            QPushButton:hover {{
-                background-color: #E6E6E6;
-                border-color: #999999;
-            }}
-            QPushButton:pressed {{
-                background-color: #C0C0C0;
-            }}
-            QPushButton:checkable:checked {{
-                background-color: {HIGHLIGHT_COLOR};
-                color: #FFFFFF;
-                border-color: #005A9E;
-            }}
+            QPushButton:hover {{ background-color: #E6E6E6; border-color: #999999; }}
+            QPushButton:pressed {{ background-color: #C0C0C0; }}
+            QPushButton:checkable:checked {{ background-color: {HIGHLIGHT_COLOR}; color: #FFFFFF; border-color: #005A9E; }}
         """
-        
-        btn_add_step = QPushButton("Add Step")
-        btn_add_step.setStyleSheet(button_style)
-        btn_add_step.clicked.connect(self.add_step)
+        btn_add_step = QPushButton("Add Step"); btn_add_step.setStyleSheet(button_style); btn_add_step.clicked.connect(self.add_step)
         left_panel_layout.addWidget(btn_add_step)
-
-        btn_add_decision = QPushButton("Add Decision Branch")
-        btn_add_decision.setStyleSheet(button_style)
-        btn_add_decision.clicked.connect(self.add_decision_branch)
+        btn_add_decision = QPushButton("Add Decision Branch"); btn_add_decision.setStyleSheet(button_style); btn_add_decision.clicked.connect(self.add_decision_branch)
         left_panel_layout.addWidget(btn_add_decision)
-        
-        self.btn_connect_manual = QPushButton("Connect Manually")
-        self.btn_connect_manual.setStyleSheet(button_style)
-        self.btn_connect_manual.setCheckable(True)
-        self.btn_connect_manual.toggled.connect(self.toggle_connection_mode)
+        self.btn_connect_manual = QPushButton("Connect Manually"); self.btn_connect_manual.setStyleSheet(button_style); self.btn_connect_manual.setCheckable(True); self.btn_connect_manual.toggled.connect(self.toggle_connection_mode)
         left_panel_layout.addWidget(self.btn_connect_manual)
-        
-        btn_clear = QPushButton("Clear All")
-        btn_clear.setStyleSheet(button_style)
-        btn_clear.clicked.connect(self.clear_all)
-        left_panel_layout.addWidget(btn_clear)
-        
+        self.execute_all_button = QPushButton("Execute All Steps"); self.execute_all_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.execute_all_button)
+        self.execute_one_step_button = QPushButton("Execute 1 Step"); self.execute_one_step_button.setStyleSheet(button_style); self.execute_one_step_button.setEnabled(False)
+        left_panel_layout.addWidget(self.execute_one_step_button)
+        self.add_loop_button = QPushButton("Add Loop"); self.add_loop_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.add_loop_button)
+        self.add_conditional_button = QPushButton("Add Conditional"); self.add_conditional_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.add_conditional_button)
+        self.save_steps_button = QPushButton("Save Bot"); self.save_steps_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.save_steps_button)
+        self.group_steps_button = QPushButton("Group Selected"); self.group_steps_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.group_steps_button)
+        self.clear_selected_button = QPushButton("Clear Selected"); self.clear_selected_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.clear_selected_button)
+        self.remove_all_steps_button = QPushButton("Remove All"); self.remove_all_steps_button.setStyleSheet(button_style); self.remove_all_steps_button.clicked.connect(self.clear_all)
+        left_panel_layout.addWidget(self.remove_all_steps_button)
+        self.progress_bar = QProgressBar(); self.progress_bar.hide()
+        left_panel_layout.addWidget(self.progress_bar)
+        self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setStyleSheet(button_style); self.always_on_top_button.setCheckable(True)
+        left_panel_layout.addWidget(self.always_on_top_button)
+        self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); self.open_screenshot_tool_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.open_screenshot_tool_button)
+        self.exit_button = QPushButton("Exit GUI"); self.exit_button.setStyleSheet(button_style)
+        left_panel_layout.addWidget(self.exit_button)
         left_panel_layout.addStretch()
+
+        main_layout.addWidget(left_panel)
+
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.scene = QGraphicsScene()
         self.view = FlowchartView(self.scene, self)
         self.view.setRenderHint(self.view.renderHints().Antialiasing)
-        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        right_splitter.addWidget(self.view)
         
-        main_layout.addWidget(left_panel)
-        main_layout.addWidget(self.view)
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(0,0,0,0)
+        bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
+        
+        self.variables_group_box = QGroupBox("Global Variables")
+        variables_layout = QVBoxLayout()
+        self.variables_list = QListWidget()
+        variables_layout.addWidget(self.variables_list)
+        var_buttons_layout = QHBoxLayout()
+        self.add_var_button = QPushButton("Add"); var_buttons_layout.addWidget(self.add_var_button)
+        self.edit_var_button = QPushButton("Edit"); var_buttons_layout.addWidget(self.edit_var_button)
+        self.delete_var_button = QPushButton("Delete"); var_buttons_layout.addWidget(self.delete_var_button)
+        self.clear_vars_button = QPushButton("Reset"); var_buttons_layout.addWidget(self.clear_vars_button)
+        variables_layout.addLayout(var_buttons_layout)
+        self.variables_group_box.setLayout(variables_layout)
+        bottom_splitter.addWidget(self.variables_group_box)
 
-    def _get_next_position_y(self, previous_item, new_item_height=0):
-        if not previous_item:
-            return 50
-        prev_pos = previous_item.scenePos()
-        prev_height = previous_item.boundingRect().height()
-        return prev_pos.y() + (prev_height / 2) + VERTICAL_SPACING + (new_item_height / 2)
+        log_group_box = QGroupBox("Execution Log")
+        log_layout = QVBoxLayout()
+        self.log_console = QTextEdit(); self.log_console.setReadOnly(True)
+        log_layout.addWidget(self.log_console)
+        self.clear_log_button = QPushButton("Clear Log"); log_layout.addWidget(self.clear_log_button)
+        log_group_box.setLayout(log_layout)
+        bottom_splitter.addWidget(log_group_box)
+        
+        bottom_splitter.setSizes([350, 800])
+        bottom_layout.addWidget(bottom_splitter)
+        
+        right_splitter.addWidget(bottom_widget)
+        right_splitter.setSizes([self.height() - 250, 250])
+        
+        main_layout.addWidget(right_splitter)
+        self.centralWidget().setLayout(main_layout)
 
-    def _add_and_connect_item(self, item_class, text, x_pos, y_pos, connect_from_item=None):
-        self.step_counter += 1
-        shape_text = f"Step {self.step_counter}: {text}"
-        new_item = item_class(shape_text)
-        new_item.setPos(x_pos, y_pos)
-        self.scene.addItem(new_item)
-        if connect_from_item:
-            connector = Connector(connect_from_item, new_item)
-            connect_from_item.add_connector(connector)
-            new_item.add_connector(connector)
-            self.scene.addItem(connector)
-            connector.update_position()
-        self.view.ensureVisible(new_item)
-        return new_item
+        self.add_var_button.clicked.connect(self.add_variable)
+        self.edit_var_button.clicked.connect(self.edit_variable)
+        self.delete_var_button.clicked.connect(self.delete_variable)
+        self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
+        self._update_variables_list_display()
+
+    def _get_item_by_id(self, item_id):
+        for item in self.scene.items():
+            if isinstance(item, FlowchartItem) and hasattr(item, 'step_id') and item.step_id == item_id:
+                return item
+        return None
 
     def add_step(self):
-        initial_x = self.view.mapToScene(self.view.viewport().rect().center()).x()
-        initial_y = self._get_next_position_y(self.last_item, STEP_HEIGHT)
-        new_item = self._add_and_connect_item(StepItem, "New Step", initial_x, initial_y, self.last_item)
-        self.last_item = new_item
+        module_dialog = ModuleSelectionDialog(self)
+        if not module_dialog.exec(): return
+            
+        method_info = module_dialog.selected_method_info
+        if not method_info: return
+
+        _, class_name, method_name, params = method_info
+        param_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params, list(self.global_variables.keys()), self)
+        if not param_dialog.exec(): return
         
+        config, assign_to = param_dialog.get_parameters_config()
+        if config is None: return
+
+        if assign_to and assign_to not in self.global_variables:
+            self.global_variables[assign_to] = None
+            self._update_variables_list_display()
+
+        step_data = {'class': class_name, 'method': method_name, 'config': config, 'assign_to': assign_to, 'status': ''}
+        
+        new_item = StepItem(step_data=step_data)
+        
+        ordered_items = [self._get_item_by_id(sid) for sid in self.flow_steps if self._get_item_by_id(sid)]
+        insertion_dialog = StepInsertionDialog(ordered_items, self)
+        
+        if insertion_dialog.exec():
+            target_id, mode = insertion_dialog.get_insertion_point()
+            
+            self.scene.addItem(new_item)
+
+            if target_id is None:
+                self.flow_steps.append(new_item.step_id)
+            else:
+                try:
+                    target_idx = self.flow_steps.index(target_id)
+                    target_item = self._get_item_by_id(target_id)
+                    
+                    # Inherit branch properties if inserting into a branch
+                    if target_item and target_item.step_data.get('if_branch'):
+                        new_item.step_data['if_branch'] = target_item.step_data['if_branch']
+                        new_item.step_data['if_id'] = target_item.step_data['if_id']
+
+                    if mode == 'after':
+                        self.flow_steps.insert(target_idx + 1, new_item.step_id)
+                    else: # 'before'
+                        self.flow_steps.insert(target_idx, new_item.step_id)
+                except ValueError:
+                    self.flow_steps.append(new_item.step_id)
+
+            self._redraw_flowchart()
+
     def add_decision_branch(self):
-        initial_x = self.view.mapToScene(self.view.viewport().rect().center()).x()
-        initial_y = self._get_next_position_y(self.last_item, DECISION_HEIGHT)
-        decision_item = self._add_and_connect_item(DecisionItem, "New Decision", initial_x, initial_y, self.last_item)
-        y_for_parallel_steps = self._get_next_position_y(decision_item, STEP_HEIGHT)
-        left_step_x = initial_x - (STEP_WIDTH / 2) - (HORIZONTAL_SPACING / 2)
-        right_step_x = initial_x + (STEP_WIDTH / 2) + (HORIZONTAL_SPACING / 2)
-        step_left = self._add_and_connect_item(StepItem, "New Step", left_step_x, y_for_parallel_steps, decision_item)
-        step_right = self._add_and_connect_item(StepItem, "New Step", right_step_x, y_for_parallel_steps, decision_item)
-        lowest_y_of_parallel = max(step_left.scenePos().y() + step_left.boundingRect().height() / 2,
-                                   step_right.scenePos().y() + step_right.boundingRect().height() / 2)
-        final_step_y = lowest_y_of_parallel + VERTICAL_SPACING + (STEP_HEIGHT / 2)
-        final_step = self._add_and_connect_item(StepItem, "New Step", initial_x, final_step_y)
-        connector_left_to_final = Connector(step_left, final_step)
-        step_left.add_connector(connector_left_to_final)
-        final_step.add_connector(connector_left_to_final)
-        self.scene.addItem(connector_left_to_final)
-        connector_left_to_final.update_position()
-        connector_right_to_final = Connector(step_right, final_step)
-        step_right.add_connector(connector_right_to_final)
-        final_step.add_connector(connector_right_to_final)
-        self.scene.addItem(connector_right_to_final)
-        connector_right_to_final.update_position()
-        self.last_item = final_step
-        self.view.ensureVisible(final_step)
+        dialog = ConditionalConfigDialog(self.global_variables, self)
+        if not dialog.exec(): return
+
+        config = dialog.get_config()
+        if not config: return
+        
+        if_id = f"if_{uuid.uuid4().hex[:6]}"
+        if_data = {"type": "IF_START", "if_id": if_id, "condition_config": config}
+        true_data = {'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'if_branch': 'true', 'if_id': if_id, 'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None}
+        false_data = {'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'if_branch': 'false', 'if_id': if_id, 'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None}
+        end_if_data = {"type": "IF_END", "if_id": if_id}
+
+        if_item = DecisionItem(step_data=if_data)
+        true_item = StepItem(step_data=true_data)
+        false_item = StepItem(step_data=false_data)
+        end_if_item = StepItem(step_data=end_if_data)
+
+        self.scene.addItem(if_item)
+        self.scene.addItem(true_item)
+        self.scene.addItem(false_item)
+        self.scene.addItem(end_if_item)
+        
+        # --- Show Insertion Dialog for the whole block ---
+        ordered_items = [self._get_item_by_id(sid) for sid in self.flow_steps if self._get_item_by_id(sid)]
+        insertion_dialog = StepInsertionDialog(ordered_items, self)
+        
+        if insertion_dialog.exec():
+            target_id, mode = insertion_dialog.get_insertion_point()
+            new_block_ids = [if_item.step_id, true_item.step_id, false_item.step_id, end_if_item.step_id]
+
+            if target_id is None:
+                self.flow_steps.extend(new_block_ids)
+            else:
+                try:
+                    idx = self.flow_steps.index(target_id)
+                    if mode == 'after':
+                        self.flow_steps[idx + 1:idx + 1] = new_block_ids
+                    else: # 'before'
+                         self.flow_steps[idx:idx] = new_block_ids
+                except ValueError:
+                    self.flow_steps.extend(new_block_ids) # Fallback
+
+            self._redraw_flowchart()
+        else:
+             # If insertion is cancelled, remove the items we just added
+             self.scene.removeItem(if_item)
+             self.scene.removeItem(true_item)
+             self.scene.removeItem(false_item)
+             self.scene.removeItem(end_if_item)
+
+
+    def _redraw_flowchart(self):
+        all_items_on_scene = [item for item in self.scene.items() if isinstance(item, FlowchartItem)]
+        item_map = {item.step_id: item for item in all_items_on_scene}
+        
+        for item in self.scene.items():
+            if isinstance(item, Connector):
+                self.scene.removeItem(item)
+
+        y_pos = 50
+        last_item = None
+        
+        i = 0
+        while i < len(self.flow_steps):
+            step_id = self.flow_steps[i]
+            item = item_map.get(step_id)
+            if not item: 
+                i+=1
+                continue
+
+            if item.step_data.get('type') == 'IF_START':
+                if_item = item
+                if_id = if_item.step_data['if_id']
+                
+                # --- Find all items belonging to this specific IF block ---
+                true_branch_ids = []
+                false_branch_ids = []
+                end_if_idx = -1
+                nesting_level = 0
+                
+                for j in range(i + 1, len(self.flow_steps)):
+                    s_id = self.flow_steps[j]
+                    s_item = item_map.get(s_id)
+                    if not s_item: continue
+
+                    s_type = s_item.step_data.get('type')
+                    s_if_id = s_item.step_data.get('if_id')
+
+                    if s_type == 'IF_START': nesting_level += 1
+                    elif s_type == 'IF_END':
+                        if nesting_level == 0 and s_if_id == if_id:
+                            end_if_idx = j
+                            break
+                        elif nesting_level > 0:
+                            nesting_level -= 1
+
+                    # Only add items belonging to the current IF block level
+                    if nesting_level == 0 and s_if_id == if_id:
+                        if s_item.step_data.get('if_branch') == 'true':
+                            true_branch_ids.append(s_id)
+                        elif s_item.step_data.get('if_branch') == 'false':
+                            false_branch_ids.append(s_id)
+                
+                if end_if_idx == -1: # Malformed structure
+                    print(f"Error: Could not find matching END_IF for {if_id}")
+                    i += 1
+                    continue
+                
+                end_if_item = item_map[self.flow_steps[end_if_idx]]
+
+                # --- Position IF_START ---
+                x_center = self.view.mapToScene(self.view.viewport().rect().center()).x()
+                if_item.setPos(x_center, y_pos)
+                if last_item: self._add_connector(last_item, if_item)
+
+                branch_y_start = y_pos + (DECISION_HEIGHT/2) + VERTICAL_SPACING
+                
+                # --- Position True branch ---
+                current_y_true = branch_y_start
+                last_true_item = if_item
+                for true_id in true_branch_ids:
+                    true_item = item_map[true_id]
+                    true_item.setPos(x_center - HORIZONTAL_SPACING, current_y_true)
+                    self._add_connector(last_true_item, true_item, "True" if last_true_item == if_item else "", TRUE_BRANCH_COLOR_LINE)
+                    last_true_item = true_item
+                    current_y_true += STEP_HEIGHT + VERTICAL_SPACING
+
+                # --- Position False branch ---
+                current_y_false = branch_y_start
+                last_false_item = if_item
+                for false_id in false_branch_ids:
+                    false_item = item_map[false_id]
+                    false_item.setPos(x_center + HORIZONTAL_SPACING, current_y_false)
+                    self._add_connector(last_false_item, false_item, "False" if last_false_item == if_item else "", FALSE_BRANCH_COLOR_LINE)
+                    last_false_item = false_item
+                    current_y_false += STEP_HEIGHT + VERTICAL_SPACING
+                
+                # Determine max branch height for END_IF positioning
+                max_branch_y = max(current_y_true, current_y_false)
+                
+                # Position END_IF
+                end_if_y_pos = max_branch_y - VERTICAL_SPACING + STEP_HEIGHT/2 + VERTICAL_SPACING # Align below the taller branch
+                end_if_item.setPos(x_center, end_if_y_pos)
+                
+                # Connect last items of both branches to END_IF
+                self._add_connector(last_true_item, end_if_item, "", TRUE_BRANCH_COLOR_LINE)
+                self._add_connector(last_false_item, end_if_item, "", FALSE_BRANCH_COLOR_LINE)
+                
+                last_item = end_if_item
+                y_pos = end_if_y_pos # Continue from END_IF's y position
+                i = end_if_idx # Continue processing from the item *after* END_IF
+            else: # Regular step
+                x_pos = self.view.mapToScene(self.view.viewport().rect().center()).x()
+                item.setPos(x_pos, y_pos)
+                if last_item: self._add_connector(last_item, item)
+                last_item = item
+            
+            y_pos += item.boundingRect().height() + VERTICAL_SPACING
+            i += 1
+        
+        # Update step numbers and details for all items
+        for i, step_id in enumerate(self.flow_steps):
+            item = item_map.get(step_id)
+            if item:
+                item.set_step_details(i + 1, item.step_data.get('status', ''))
+                
+        # Adjust scene rect to fit all items
+        self.view.setSceneRect(self.scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
+
+
+    def _add_connector(self, start_item, end_item, label="", color=QColor(LINE_COLOR)):
+        connector = Connector(start_item, end_item, label, color)
+        self.scene.addItem(connector)
+        connector.update_position()
+        return connector
 
     def clear_all(self):
         reply = QMessageBox.question(self, "Confirm Clear",
@@ -276,9 +999,8 @@ class FlowchartApp(QMainWindow):
                                      QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.scene.clear()
-            self.last_item = None
+            self.flow_steps.clear()
             self.start_item = None
-            self.step_counter = 0
             self.btn_connect_manual.setChecked(False)
 
     def toggle_connection_mode(self, checked):
@@ -289,8 +1011,82 @@ class FlowchartApp(QMainWindow):
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
             if self.start_item:
-                self.start_item.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2))
+                pen = self.start_item.pen()
+                pen.setColor(QColor(SHAPE_BORDER_COLOR))
+                pen.setWidth(2)
+                self.start_item.setPen(pen)
                 self.start_item = None
+
+    def _update_variables_list_display(self):
+        self.variables_list.clear()
+        if not self.global_variables:
+            self.variables_list.addItem("No global variables defined.")
+            return
+        for name, value in self.global_variables.items():
+            value_str = repr(value)
+            if len(value_str) > 60: value_str = value_str[:57] + "..."
+            self.variables_list.addItem(f"{name} = {value_str}")
+    
+    def add_variable(self):
+        dialog = GlobalVariableDialog(parent=self)
+        if dialog.exec():
+            name, value = dialog.get_variable_data()
+            if name:
+                if name in self.global_variables:
+                    QMessageBox.warning(self, "Duplicate Variable", f"A variable named '{name}' already exists.")
+                    return
+                self.global_variables[name] = value
+                self._update_variables_list_display()
+    
+    def edit_variable(self):
+        selected_item = self.variables_list.currentItem()
+        if not selected_item or "No global variables" in selected_item.text():
+            QMessageBox.information(self, "No Selection", "Please select a variable to edit.")
+            return
+        
+        var_name = selected_item.text().split(' = ')[0]
+        dialog = GlobalVariableDialog(var_name, self.global_variables.get(var_name, ""), self)
+        
+        if dialog.exec():
+            new_name, new_value = dialog.get_variable_data()
+            if new_name:
+                if new_name != var_name and new_name in self.global_variables:
+                    QMessageBox.warning(self, "Duplicate Variable", f"A variable named '{new_name}' already exists.")
+                    return
+                if new_name != var_name and var_name in self.global_variables:
+                    del self.global_variables[var_name]
+                
+                self.global_variables[new_name] = new_value
+                self._update_variables_list_display()
+
+    def delete_variable(self):
+        selected_item = self.variables_list.currentItem()
+        if not selected_item or "No global variables" in selected_item.text():
+            QMessageBox.information(self, "No Selection", "Please select a variable to delete.")
+            return
+
+        var_name = selected_item.text().split(' = ')[0]
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     f"Are you sure you want to delete the variable '{var_name}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            if var_name in self.global_variables:
+                del self.global_variables[var_name]
+            self._update_variables_list_display()
+
+    def reset_all_variable_values(self):
+        if not self.global_variables:
+            QMessageBox.information(self, "Info", "There are no global variables to reset.")
+            return
+        
+        reply = QMessageBox.question(self, "Confirm Reset",
+                                     "Are you sure you want to reset all variable values to None?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            for var_name in self.global_variables:
+                self.global_variables[var_name] = None
+            self._update_variables_list_display()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
