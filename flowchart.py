@@ -6,6 +6,8 @@ import uuid
 import json
 import csv
 import re
+import time  # --- NEW ---
+from datetime import datetime  # --- NEW ---
 from typing import Optional, List, Any, Dict, Tuple
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QWidget,
@@ -20,8 +22,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPolygonF, QBrush, QPen, QFont, QColor, QPainterPath
 from PyQt6.QtCore import (
     QPointF, Qt, QRectF, QVariant, pyqtSignal, QLineF,
-    QDateTime, QPoint # <-- ADDED QPoint HERE
+    QDateTime, QPoint, QThread
 )
+
 # --- Configuration ---
 STEP_WIDTH = 250
 STEP_HEIGHT = 120
@@ -30,7 +33,7 @@ DECISION_HEIGHT = 100
 VERTICAL_SPACING = 80
 HORIZONTAL_SPACING = 300
 GRID_SIZE = 20
-LINE_CLEARANCE = 10 
+LINE_CLEARANCE = 10
 
 # Define constants for file management (assuming 'Bot_steps' is a folder next to 'flowchart.py')
 BOT_STEPS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Bot_steps")
@@ -49,14 +52,19 @@ TRUE_BRANCH_COLOR_BOX = QColor("#E6F2FF")
 TRUE_BRANCH_COLOR_LINE = QColor("#007BFF")
 FALSE_BRANCH_COLOR_BOX = QColor("#F8D7DA")
 FALSE_BRANCH_COLOR_LINE = QColor("#DC3545")
+SUCCESS_COLOR = QColor("#28A745")
+ERROR_COLOR = QColor("#DC3545")
 
 
-# --- Dummy Classes for Compatibility ---
-class GuiCommunicator:
-    update_module_info_signal = pyqtSignal(str)
+# --- NEW: Ensure my_lib is in the Python path ---
+script_dir = os.path.dirname(os.path.abspath(__file__))
+my_lib_dir = os.path.join(script_dir, "my_lib")
+if my_lib_dir not in sys.path:
+    sys.path.insert(0, my_lib_dir)
 
-class ExecutionContext:
-    pass
+# --- NEW: Real imports (replaces dummy classes) ---
+from my_lib.shared_context import ExecutionContext, GuiCommunicator
+
 
 # --- SaveBotDialog Class (NEW) ---
 class SaveBotDialog(QDialog):
@@ -425,11 +433,19 @@ class ConditionalConfigDialog(QDialog):
         self.right_operand_editor.setVisible(not is_using_var)
         self.right_operand_var_combo.setVisible(is_using_var)
 
-    def _parse_value(self, value_str):
+    # --- MODIFIED: Fixed bug, this now correctly parses values ---
+    def _parse_value(self, value_str: str) -> Any:
         try:
-            return json.loads(value_str)
-        except (json.JSONDecodeError, TypeError):
+            if value_str.lower() == 'none': return None
+            if value_str.lower() == 'true': return True
+            if value_str.lower() == 'false': return False
+            if value_str.isdigit(): return int(value_str)
+            if value_str.replace('.', '', 1).isdigit(): return float(value_str)
+            if (value_str.startswith('{') and value_str.endswith('}')) or (value_str.startswith('[') and value_str.endswith(']')): return json.loads(value_str)
             return value_str
+        except (ValueError, json.JSONDecodeError): 
+            return value_str
+    # --- END MODIFIED ---
 
     def get_config(self):
         block_name = self.block_name_editor.text().strip()
@@ -554,10 +570,24 @@ class ParameterInputDialog(QDialog):
         self.new_var_input.setVisible(self.new_var_radio.isChecked())
         self.existing_var_combo.setVisible(not self.new_var_radio.isChecked())
 
+    # --- MODIFIED: Fixed bug, this now correctly parses values ---
+    def _parse_value(self, value_str: str) -> Any:
+        try:
+            if value_str.lower() == 'none': return None
+            if value_str.lower() == 'true': return True
+            if value_str.lower() == 'false': return False
+            if value_str.isdigit(): return int(value_str)
+            if value_str.replace('.', '', 1).isdigit(): return float(value_str)
+            if (value_str.startswith('{') and value_str.endswith('}')) or (value_str.startswith('[') and value_str.endswith(']')): return json.loads(value_str)
+            return value_str
+        except (ValueError, json.JSONDecodeError): 
+            return value_str
+    # --- END MODIFIED ---
+
     def get_parameters_config(self):
         for param_name, source_combo in self.param_value_source_combos.items():
             if source_combo.currentIndex() == 0:
-                self.parameters_config[param_name] = {'type': 'hardcoded', 'value': self.param_editors[param_name].text()}
+                self.parameters_config[param_name] = {'type': 'hardcoded', 'value': self._parse_value(self.param_editors[param_name].text())}
             else:
                 var_name = self.param_var_selectors[param_name].currentText()
                 if var_name == "-- Select Variable --":
@@ -736,12 +766,21 @@ class ModuleSelectionDialog(QDialog):
                 for name, obj in inspect.getmembers(module, inspect.isclass):
                     if obj.__module__ == module_name:
                         class_item = QTreeWidgetItem(module_item, [name])
-                        for method_name, method_obj in inspect.getmembers(obj, inspect.isfunction):
-                             if not method_name.startswith('_'):
-                                sig = inspect.signature(method_obj)
-                                params = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name != 'self'}
-                                method_item = QTreeWidgetItem(class_item, [method_name])
-                                method_item.setData(0, Qt.ItemDataRole.UserRole, (module_name, name, method_name, params))
+                        for method_name, method_obj in inspect.getmembers(obj):
+                            # --- MODIFIED: More robust method check from main_app.py ---
+                            if (not method_name.startswith('_') and callable(method_obj) and 
+                                not inspect.isclass(method_obj) and 
+                                not isinstance(method_obj, (staticmethod, classmethod))):
+                                
+                                func_obj = method_obj.__func__ if inspect.ismethod(method_obj) else method_obj
+                                try:
+                                    sig = inspect.signature(func_obj)
+                                    params = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
+                                    method_item = QTreeWidgetItem(class_item, [method_name])
+                                    method_item.setData(0, Qt.ItemDataRole.UserRole, (module_name, name, method_name, params))
+                                except (ValueError, TypeError):
+                                    # Skip methods we can't inspect (e.g., C extensions)
+                                    pass
         finally:
             sys.path = original_sys_path
 
@@ -755,6 +794,233 @@ class ModuleSelectionDialog(QDialog):
              QMessageBox.warning(self, "No Selection", "Please select a method.")
         else:
             QMessageBox.warning(self, "Invalid Selection", "Please select a method, not a class or module.")
+
+
+# --- NEW: ExecutionWorker (Copied from main_app.py) ---
+class ExecutionWorker(QThread):
+    execution_started = pyqtSignal(str)
+    execution_progress = pyqtSignal(int)
+    execution_item_started = pyqtSignal(dict, int)
+    execution_item_finished = pyqtSignal(dict, str, int)
+    execution_error = pyqtSignal(dict, str, int)
+    execution_finished_all = pyqtSignal(ExecutionContext, bool, int)
+
+    def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
+                 global_variables_ref: Dict[str, Any], parent: Optional[QWidget] = None,
+                 single_step_mode: bool = False, selected_start_index: int = 0):
+        super().__init__(parent)
+        self.steps_to_execute = steps_to_execute
+        self.module_directory = module_directory
+        self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
+        self.instantiated_objects: Dict[Tuple[str, str], Any] = {}
+        self.context = ExecutionContext()
+        self.context.set_gui_communicator(gui_communicator)
+        self.global_variables = global_variables_ref
+        self._is_stopped = False
+        self.loop_stack: List[Dict[str, Any]] = []
+        self.conditional_stack: List[Dict[str, Any]] = []
+        self.single_step_mode = single_step_mode
+        self.selected_start_index = selected_start_index
+        self.next_step_index_to_select: int = -1
+
+    def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
+        # This logic is not used by the flowchart, but kept for compatibility
+        count_config = loop_config["iteration_count_config"]
+        if count_config["type"] == "variable":
+            var_name = count_config["value"]
+            var_value = self.global_variables.get(var_name)
+            if isinstance(var_value, int) and var_value >= 1: return var_value
+            else: self.context.add_log(f"Warning: Global variable '{var_name}' for loop count is not a valid positive integer (value: {var_value}). Defaulting to 1 iteration."); return 1
+        else: return count_config.get("value", 1)
+
+    def _resolve_operand_value(self, operand_config: Dict[str, Any]) -> Any:
+        if operand_config["type"] == "variable":
+            var_name = operand_config["value"]
+            if var_name not in self.global_variables: raise ValueError(f"Global variable '{var_name}' not found for condition operand.")
+            return self.global_variables[var_name]
+        else: return operand_config["value"]
+
+    def _evaluate_condition(self, condition_config: Dict[str, Any]) -> bool:
+        left_val = self._resolve_operand_value(condition_config["left_operand"])
+        right_val = self._resolve_operand_value(condition_config["right_operand"])
+        operator = condition_config["operator"]
+        try:
+            if operator == '==': return left_val == right_val
+            elif operator == '!=': return left_val != right_val
+            elif operator == '<': return left_val < right_val
+            elif operator == '>': return left_val > right_val
+            elif operator == '<=': return left_val <= right_val
+            elif operator == '>=': return left_val >= right_val
+            elif operator == 'in': return left_val in right_val
+            elif operator == 'not in': return left_val not in right_val
+            elif operator == 'is': return left_val is right_val
+            elif operator == 'is not': return left_val is not right_val
+            else: raise ValueError(f"Unknown operator: {operator}")
+        except Exception as e: raise ValueError(f"Error evaluating condition '{left_val} {operator} {right_val}': {e}")
+
+    # --- MODIFIED: This is the new execution logic for the flowchart ---
+    def run(self) -> None:
+        self.execution_started.emit("Starting execution...")
+        if not self.steps_to_execute:
+            self.execution_finished_all.emit(self.context, False, -1)
+            return
+
+        total_steps_for_progress = len(self.steps_to_execute) * 2 if not self.single_step_mode else 1
+        if total_steps_for_progress == 0: total_steps_for_progress = 1
+        current_execution_item_count = 0
+
+        original_sys_path = sys.path[:]
+        if self.module_directory not in sys.path:
+            sys.path.insert(0, self.module_directory)
+            
+        self.loop_stack = [] # Note: Loops are not implemented in this GUI
+        self.conditional_stack: List[Dict[str, Any]] = [] # Stores {'if_id': str, 'condition_result': bool, 'parent_if_id': str|None, 'parent_if_branch': str|None}
+        
+        step_index = self.selected_start_index if self.single_step_mode else 0
+        original_listbox_row_index = 0
+        
+        try:
+            while step_index < len(self.steps_to_execute):
+                if self._is_stopped: break
+                if self.single_step_mode and current_execution_item_count >= 1: break
+
+                step_data = self.steps_to_execute[step_index]
+                step_type = step_data["type"]
+                original_listbox_row_index = step_data.get("original_listbox_row_index", step_index)
+                
+                current_execution_item_count += 1
+                progress_percentage = int((current_execution_item_count / total_steps_for_progress) * 100)
+                self.execution_progress.emit(min(progress_percentage, 100))
+
+                # --- NEW Skipping Logic ---
+                is_skipping = False
+                if self.conditional_stack:
+                    # Check all parent IFs to see if we are in a skipped branch
+                    for if_block in reversed(self.conditional_stack):
+                        current_if_id = if_block['if_id']
+                        current_if_result = if_block['condition_result']
+                        
+                        # Check if the current step belongs to this IF block
+                        step_if_id = step_data.get('if_id')
+                        step_parent_if_id = step_data.get('parent_if_id')
+                        
+                        if step_if_id == current_if_id or step_parent_if_id == current_if_id:
+                            branch_to_check = step_data.get('if_branch') or step_data.get('parent_if_branch')
+                            
+                            if branch_to_check == 'true' and not current_if_result:
+                                is_skipping = True
+                                break
+                            if branch_to_check == 'false' and current_if_result:
+                                is_skipping = True
+                                break
+                
+                if is_skipping:
+                    self.execution_item_started.emit(step_data, original_listbox_row_index)
+                    if step_type == "IF_START":
+                        # We still need to push nested IFs to the stack to handle popping them correctly
+                        self.conditional_stack.append({'if_id': step_data['if_id'], 'condition_result': False, 'skipped_marker': True})
+                    elif step_type == "IF_END":
+                        # Pop the corresponding IF from the stack
+                        if self.conditional_stack and self.conditional_stack[-1].get('if_id') == step_data.get('if_id'):
+                            self.conditional_stack.pop()
+                            
+                    self.execution_item_finished.emit(step_data, "SKIPPED", original_listbox_row_index)
+                    step_index += 1
+                    continue
+                # --- End NEW Skipping Logic ---
+
+                self.execution_item_started.emit(step_data, original_listbox_row_index)
+                QThread.msleep(50)
+
+                if step_type == "step":
+                    class_name, method_name, module_name = step_data["class"], step_data["method"], step_data["module_name"]
+                    parameters_config = step_data["config"]; assign_to_variable_name = step_data["assign_to"]
+                    
+                    resolved_parameters, params_str_debug = {}, []
+                    for param_name, config in parameters_config.items():
+                        if param_name == "original_listbox_row_index": continue
+                        if config['type'] == 'hardcoded':
+                            resolved_parameters[param_name] = config['value']
+                            params_str_debug.append(f"{param_name}={repr(config['value'])}")
+                        elif config['type'] == 'hardcoded_file':
+                            resolved_parameters[param_name] = config['value']
+                            params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
+                        elif config['type'] == 'variable':
+                            var_name = config['value']
+                            if var_name in self.global_variables:
+                                resolved_parameters[param_name] = self.global_variables[var_name]
+                                params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
+                            else:
+                                raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
+                    
+                    self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
+                    try:
+                        module = importlib.import_module(module_name); importlib.reload(module)
+                        class_obj = getattr(module, class_name); instance_key = (class_name, module_name)
+                        if instance_key not in self.instantiated_objects:
+                            init_kwargs = {};
+                            if 'context' in inspect.signature(class_obj.__init__).parameters: init_kwargs['context'] = self.context
+                            self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
+                        instance = self.instantiated_objects[instance_key]; method_func = getattr(instance, method_name)
+                        method_kwargs = {k:v for k,v in resolved_parameters.items()}
+                        if 'context' in inspect.signature(method_func).parameters: method_kwargs['context'] = self.context
+                        result = method_func(**method_kwargs)
+                        if assign_to_variable_name:
+                            self.global_variables[assign_to_variable_name] = result
+                            result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
+                        else:
+                            result_msg = f"Result: {result}"
+                        self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
+                    except Exception as e:
+                        raise e
+                
+                elif step_type == "IF_START":
+                    if_id = step_data.get("if_id")
+                    condition_config = step_data.get("condition_config") # This is {"block_name": ..., "condition": {...}}
+                    
+                    if not condition_config or "condition" not in condition_config:
+                        raise ValueError(f"Invalid 'condition_config' for IF_START block at step {original_listbox_row_index + 1}.")
+                        
+                    condition_result = self._evaluate_condition(condition_config["condition"])
+                    self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}")
+                    
+                    # Push this IF block's result to the stack
+                    self.conditional_stack.append({
+                        'if_id': if_id, 
+                        'condition_result': condition_result
+                    })
+                    self.execution_item_finished.emit(step_data, f"Condition: {condition_result}", original_listbox_row_index)
+
+                elif step_type == "IF_END":
+                    if_id = step_data.get("if_id")
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != if_id:
+                        raise ValueError(f"Mismatched IF_END for ID: {if_id}")
+                    
+                    # Pop this IF block from the stack
+                    self.conditional_stack.pop()
+                    self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
+
+                elif step_type == "loop_start":
+                    # Loop logic is not implemented in this GUI
+                    self.execution_item_finished.emit(step_data, "Loop Start (Not Implemented)", original_listbox_row_index)
+                
+                elif step_type == "loop_end":
+                    # Loop logic is not implemented in this GUI
+                    self.execution_item_finished.emit(step_data, "Loop End (Not Implemented)", original_listbox_row_index)
+
+                step_index += 1
+                
+        except Exception as e:
+            error_msg = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"; self.context.add_log(error_msg)
+            self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, error_msg, original_listbox_row_index); self._is_stopped = True
+        finally:
+            sys.path = original_sys_path
+            if self.single_step_mode:
+                next_index = -1
+                if not self._is_stopped and step_index < len(self.steps_to_execute): next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
+                self.next_step_index_to_select = next_index
+            self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
+    # --- END MODIFIED ---
 
 
 # --- Custom Graphics Items ---
@@ -924,9 +1190,14 @@ class FlowchartItem(QGraphicsPolygonItem):
         elif self.step_data.get('type') == 'IF_END':
             display_text = f"Step {step_number}: END IF\n"
         else:
+            # --- MODIFIED: Use new data structure ---
             method_name = self.step_data.get('class', '') + "." + self.step_data.get('method', '')
             if method_name != ".":
                 display_text += f"{method_name}\n"
+                # --- NEW: Add module_name to step_data for worker ---
+                if 'module_name' not in self.step_data:
+                    self.step_data['module_name'] = self._find_module_for_class(self.step_data.get('class', ''))
+            # --- END MODIFIED ---
         
         params = self.step_data.get('config', {})
         if params:
@@ -940,7 +1211,7 @@ class FlowchartItem(QGraphicsPolygonItem):
         
         assign_to = self.step_data.get('assign_to')
         if assign_to:
-            display_text += f"Assign: {assign_to}\n"
+            display_text += f"Assign: @{assign_to}\n"
         
         display_text += f"Status: {status}\n"
 
@@ -958,6 +1229,35 @@ class FlowchartItem(QGraphicsPolygonItem):
             self.setBrush(QBrush(QColor(SHAPE_FILL_COLOR)))
             self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2, Qt.PenStyle.SolidLine))
 
+    # --- NEW: Helper to find module_name ---
+    def _find_module_for_class(self, class_name: str) -> str:
+        """Finds the module name for a given class name from the Bot_module directory."""
+        if not class_name:
+            return "Unknown_Module"
+
+        base_directory = os.path.dirname(os.path.abspath(__file__))
+        module_directory = os.path.join(base_directory, "Bot_module")
+        if not os.path.exists(module_directory):
+            return "Unknown_Module"
+            
+        original_sys_path = sys.path[:]
+        if module_directory not in sys.path:
+            sys.path.insert(0, module_directory)
+            
+        try:
+            for module_file in [f for f in os.listdir(module_directory) if f.endswith(".py") and f != "__init__.py"]:
+                module_name = module_file[:-3]
+                try:
+                    module = importlib.import_module(module_name)
+                    importlib.reload(module)
+                    if hasattr(module, class_name):
+                        return module_name
+                except Exception:
+                    continue # Ignore modules that fail to import
+        finally:
+            sys.path = original_sys_path
+            
+        return "Unknown_Module"
 
     def center_text(self):
         self.text_item.setPos(-self.boundingRect().width() / 2 * 0.95, -self.boundingRect().height() / 2 * 0.95)
@@ -999,6 +1299,12 @@ class FlowchartItem(QGraphicsPolygonItem):
             self.setPen(QPen(TRUE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
         elif self.step_data.get('if_branch') == 'false':
             self.setPen(QPen(FALSE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+        # --- NEW: Check for execution status colors ---
+        elif self.step_data.get('status') == 'Success':
+             self.setPen(QPen(SUCCESS_COLOR, 2))
+        elif self.step_data.get('status') == 'Error':
+            self.setPen(QPen(ERROR_COLOR, 3))
+        # --- END NEW ---
         else:
             self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2, Qt.PenStyle.SolidLine))
         super().hoverLeaveEvent(event)
@@ -1028,6 +1334,8 @@ class FlowchartView(QGraphicsView):
         self.temp_line = None
         self.setRenderHint(self.renderHints().Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        # --- NEW: Enable panning ---
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
     # Override drawBackground to draw the grid
     def drawBackground(self, painter, rect):
@@ -1059,6 +1367,9 @@ class FlowchartView(QGraphicsView):
 
     def mousePressEvent(self, event):
         if self.main_window.connection_mode and event.button() == Qt.MouseButton.LeftButton:
+            # --- MODIFIED: Disable panning in connection mode ---
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            
             scene_pos = self.mapToScene(event.pos())
             item = self.scene().itemAt(scene_pos, self.transform())
             
@@ -1140,8 +1451,13 @@ class FlowchartView(QGraphicsView):
                     if self.temp_line:
                         self.scene().removeItem(self.temp_line)
                         self.temp_line = None
+            
+            # --- MODIFIED: Re-enable panning after click ---
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            
         else:
             # Normal mode - allow dragging blocks
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -1166,6 +1482,9 @@ class FlowchartView(QGraphicsView):
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
+        # --- MODIFIED: Ensure panning is re-enabled ---
+        if not self.main_window.connection_mode:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self.main_window.connection_mode:
@@ -1237,6 +1556,16 @@ class FlowchartApp(QMainWindow):
         self.start_item = None
         self.global_variables = {}
         self.flow_steps = [] # Stores list of step_ids in execution order
+        
+        # --- NEW: Execution attributes ---
+        self.is_bot_running = False
+        self.last_executed_context = None
+        self.gui_communicator = GuiCommunicator()
+        self.gui_communicator.log_message_signal.connect(self._log_to_console)
+        self.base_directory = os.path.dirname(os.path.abspath(__file__))
+        self.module_subfolder = "Bot_module"
+        self.module_directory = os.path.join(self.base_directory, self.module_subfolder)
+        # --- END NEW ---
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -1259,46 +1588,57 @@ class FlowchartApp(QMainWindow):
             QPushButton:hover {{ background-color: #E6E6E6; border-color: #999999; }}
             QPushButton:pressed {{ background-color: #C0C0C0; }}
             QPushButton:checkable:checked {{ background-color: {HIGHLIGHT_COLOR}; color: #FFFFFF; border-color: #005A9E; }}
+            QPushButton:disabled {{ background-color: #F0F0F0; color: #A0A0A0; border-color: #D0D0D0; }}
         """
-        btn_add_step = QPushButton("Add Step"); btn_add_step.setStyleSheet(button_style); btn_add_step.clicked.connect(self.add_step)
-        left_panel_layout.addWidget(btn_add_step)
-        btn_add_decision = QPushButton("Add Decision Branch"); btn_add_decision.setStyleSheet(button_style); btn_add_decision.clicked.connect(self.add_decision_branch)
-        left_panel_layout.addWidget(btn_add_decision)
+        # --- MODIFIED: Assign buttons to self.* attributes ---
+        self.btn_add_step = QPushButton("Add Step"); self.btn_add_step.setStyleSheet(button_style); self.btn_add_step.clicked.connect(self.add_step)
+        left_panel_layout.addWidget(self.btn_add_step)
+        self.btn_add_decision = QPushButton("Add Decision Branch"); self.btn_add_decision.setStyleSheet(button_style); self.btn_add_decision.clicked.connect(self.add_decision_branch)
+        left_panel_layout.addWidget(self.btn_add_decision)
         self.btn_connect_manual = QPushButton("Connect Manually"); self.btn_connect_manual.setStyleSheet(button_style); self.btn_connect_manual.setCheckable(True); self.btn_connect_manual.toggled.connect(self.toggle_connection_mode)
         left_panel_layout.addWidget(self.btn_connect_manual)
         
-        # --- NEW BUTTON ---
         self.btn_load_bot = QPushButton("Load Your Bot")
         self.btn_load_bot.setStyleSheet(button_style)
         self.btn_load_bot.clicked.connect(self.show_load_bot_dialog)
         left_panel_layout.addWidget(self.btn_load_bot)
-        # --- END NEW BUTTON ---
         
         self.execute_all_button = QPushButton("Execute All Steps"); self.execute_all_button.setStyleSheet(button_style)
+        # --- NEW: Connect execute button ---
+        self.execute_all_button.clicked.connect(self.execute_all_steps)
         left_panel_layout.addWidget(self.execute_all_button)
+        
         self.execute_one_step_button = QPushButton("Execute 1 Step"); self.execute_one_step_button.setStyleSheet(button_style); self.execute_one_step_button.setEnabled(False)
         left_panel_layout.addWidget(self.execute_one_step_button)
-        self.add_loop_button = QPushButton("Add Loop"); self.add_loop_button.setStyleSheet(button_style)
+        
+        # (These buttons are not implemented in this port, but kept for UI layout)
+        self.add_loop_button = QPushButton("Add Loop"); self.add_loop_button.setStyleSheet(button_style); self.add_loop_button.setEnabled(False)
         left_panel_layout.addWidget(self.add_loop_button)
-        self.add_conditional_button = QPushButton("Add Conditional"); self.add_conditional_button.setStyleSheet(button_style)
+        self.add_conditional_button = QPushButton("Add Conditional"); self.add_conditional_button.setStyleSheet(button_style); self.add_conditional_button.setEnabled(False)
         left_panel_layout.addWidget(self.add_conditional_button)
+        
         self.save_steps_button = QPushButton("Save Bot"); self.save_steps_button.setStyleSheet(button_style); self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
         left_panel_layout.addWidget(self.save_steps_button)
-        self.group_steps_button = QPushButton("Group Selected"); self.group_steps_button.setStyleSheet(button_style)
+        
+        self.group_steps_button = QPushButton("Group Selected"); self.group_steps_button.setStyleSheet(button_style); self.group_steps_button.setEnabled(False)
         left_panel_layout.addWidget(self.group_steps_button)
-        self.clear_selected_button = QPushButton("Clear Selected"); self.clear_selected_button.setStyleSheet(button_style)
+        self.clear_selected_button = QPushButton("Clear Selected"); self.clear_selected_button.setStyleSheet(button_style); self.clear_selected_button.setEnabled(False)
         left_panel_layout.addWidget(self.clear_selected_button)
+        
         self.remove_all_steps_button = QPushButton("Remove All"); self.remove_all_steps_button.setStyleSheet(button_style); self.remove_all_steps_button.clicked.connect(self.clear_all)
         left_panel_layout.addWidget(self.remove_all_steps_button)
         self.progress_bar = QProgressBar(); self.progress_bar.hide()
         left_panel_layout.addWidget(self.progress_bar)
+        
         self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setStyleSheet(button_style); self.always_on_top_button.setCheckable(True)
         left_panel_layout.addWidget(self.always_on_top_button)
-        self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); self.open_screenshot_tool_button.setStyleSheet(button_style)
+        self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); self.open_screenshot_tool_button.setStyleSheet(button_style); self.open_screenshot_tool_button.setEnabled(False)
         left_panel_layout.addWidget(self.open_screenshot_tool_button)
+        
         self.exit_button = QPushButton("Exit GUI"); self.exit_button.setStyleSheet(button_style)
         left_panel_layout.addWidget(self.exit_button)
         left_panel_layout.addStretch()
+        # --- END MODIFIED ---
 
         main_layout.addWidget(left_panel)
 
@@ -1330,7 +1670,7 @@ class FlowchartApp(QMainWindow):
 
         log_group_box = QGroupBox("Execution Log")
         log_layout = QVBoxLayout()
-        self.log_console = QTextEdit(); self.log_console.setReadOnly(True)
+        self.log_console = QTextEdit(); self.log_console.setReadOnly(True);
         log_layout.addWidget(self.log_console)
         self.clear_log_button = QPushButton("Clear Log"); log_layout.addWidget(self.clear_log_button)
         log_group_box.setLayout(log_layout)
@@ -1349,7 +1689,15 @@ class FlowchartApp(QMainWindow):
         self.edit_var_button.clicked.connect(self.edit_variable)
         self.delete_var_button.clicked.connect(self.delete_variable)
         self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
+        self.clear_log_button.clicked.connect(self.log_console.clear)
+        self.exit_button.clicked.connect(self.close)
+        
         self._update_variables_list_display()
+
+    # --- NEW METHOD: Logger ---
+    def _log_to_console(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_console.append(f"[{timestamp}] {message}")
 
     # --- NEW METHOD: Show the LoadBotDialog ---
     def show_load_bot_dialog(self):
@@ -1366,7 +1714,7 @@ class FlowchartApp(QMainWindow):
             self.load_steps_from_file(file_path, bot_name)
         else:
             QMessageBox.warning(self, "File Not Found", f"The bot file '{bot_name}.csv' was not found.")
-            self.log_console.append(f"Error: Could not find file for bot '{bot_name}'.")
+            self._log_to_console(f"Error: Could not find file for bot '{bot_name}'.")
 
     # --- NEW METHOD: The main bot loading logic ---
     def load_steps_from_file(self, file_path: str, bot_name: str = ""):
@@ -1379,7 +1727,7 @@ class FlowchartApp(QMainWindow):
         self._update_variables_list_display() # Update display
         self.start_item = None
         self.btn_connect_manual.setChecked(False)
-        self.log_console.append(f"Cleared canvas to load new bot: {bot_name}")
+        self._log_to_console(f"Cleared canvas to load new bot: {bot_name}")
         
         try:
             section = None
@@ -1434,11 +1782,11 @@ class FlowchartApp(QMainWindow):
             # After all items are added, redraw the flowchart to position and connect them
             self._redraw_flowchart()
             
-            self.log_console.append(f"Loaded bot '{bot_name}' from {os.path.basename(file_path)}")
+            self._log_to_console(f"Loaded bot '{bot_name}' from {os.path.basename(file_path)}")
 
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
-            self.log_console.append(f"Load Error: {e}")
+            self._log_to_console(f"Load Error: {e}")
 
     # --- NEW HELPER METHOD: Get list of existing bot names ---
     def _get_bot_names(self) -> list:
@@ -1446,17 +1794,22 @@ class FlowchartApp(QMainWindow):
         os.makedirs(BOT_STEPS_DIR, exist_ok=True)
         return sorted([os.path.splitext(f)[0] for f in os.listdir(BOT_STEPS_DIR) if f.endswith(".csv")])
 
-    # --- NEW HELPER METHOD: Get linear step data ---
+    # --- MODIFIED HELPER METHOD: Get linear step data ---
     def _get_flat_steps_data(self) -> list:
         """Converts the list of step_ids into a linear list of step_data dictionaries."""
         flat_steps_data = []
         item_map = {item.step_id: item for item in self.scene.items() if isinstance(item, FlowchartItem)}
         
-        for step_id in self.flow_steps:
+        for i, step_id in enumerate(self.flow_steps):
             item = item_map.get(step_id)
             if item and item.step_data:
                 # Need to use a deep copy or copy to prevent modifying the original dict in FlowchartItem
                 step_data_copy = item.step_data.copy()
+                
+                # --- NEW: Inject the original_listbox_row_index ---
+                # This is CRITICAL for the worker to report back the correct index
+                step_data_copy["original_listbox_row_index"] = i
+                
                 flat_steps_data.append(step_data_copy)
                 
         return flat_steps_data
@@ -1561,7 +1914,7 @@ class FlowchartApp(QMainWindow):
         method_info = module_dialog.selected_method_info
         if not method_info: return
 
-        _, class_name, method_name, params = method_info
+        module_name, class_name, method_name, params = method_info
         param_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params, list(self.global_variables.keys()), self)
         if not param_dialog.exec(): return
         
@@ -1572,7 +1925,16 @@ class FlowchartApp(QMainWindow):
             self.global_variables[assign_to] = None
             self._update_variables_list_display()
 
-        step_data = {'type': 'step', 'class': class_name, 'method': method_name, 'config': config, 'assign_to': assign_to, 'status': ''}
+        # --- MODIFIED: Add module_name to step_data ---
+        step_data = {
+            'type': 'step', 
+            'class': class_name, 
+            'method': method_name,
+            'module_name': module_name, # <-- NEW
+            'config': config, 
+            'assign_to': assign_to, 
+            'status': ''
+        }
         
         new_item = StepItem(step_data=step_data)
         
@@ -1609,7 +1971,7 @@ class FlowchartApp(QMainWindow):
                     self.flow_steps.append(new_item.step_id)
 
             self._redraw_flowchart()
-
+    '''
     def add_decision_branch(self):
         dialog = ConditionalConfigDialog(self.global_variables, self)
         if not dialog.exec(): return
@@ -1619,8 +1981,20 @@ class FlowchartApp(QMainWindow):
         
         if_id = f"if_{uuid.uuid4().hex[:6]}"
         if_data = {"type": "IF_START", "if_id": if_id, "condition_config": config}
-        true_data = {'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'if_branch': 'true', 'if_id': if_id, 'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None}
-        false_data = {'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'if_branch': 'false', 'if_id': if_id, 'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None}
+        
+        # --- MODIFIED: Create placeholder steps with correct module/class/method ---
+        true_data = {
+            'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'module_name': 'Bot_utility',
+            'if_branch': 'true', 'if_id': if_id, 
+            'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None
+        }
+        false_data = {
+            'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'module_name': 'Bot_utility',
+            'if_branch': 'false', 'if_id': if_id, 
+            'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None
+        }
+        # --- END MODIFIED ---
+        
         end_if_data = {"type": "IF_END", "if_id": if_id}
 
         if_item = DecisionItem(text="IF...", step_data=if_data)
@@ -1683,7 +2057,94 @@ class FlowchartApp(QMainWindow):
              self.scene.removeItem(false_item)
              self.scene.removeItem(end_if_item)
 
+        '''
+    def add_decision_branch(self):
+        dialog = ConditionalConfigDialog(self.global_variables, self)
+        if not dialog.exec(): return
 
+        config = dialog.get_config()
+        if not config: return
+
+        if_id = f"if_{uuid.uuid4().hex[:6]}"
+        if_data = {"type": "IF_START", "if_id": if_id, "condition_config": config}
+
+        # --- MODIFIED: Removed hardcoded 'module_name' ---
+        true_data = {
+            'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms',
+            # 'module_name': 'Bot_utility', # <-- REMOVED THIS LINE
+            'if_branch': 'true', 'if_id': if_id,
+            'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None
+        }
+        false_data = {
+            'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms',
+            # 'module_name': 'Bot_utility', # <-- REMOVED THIS LINE
+            'if_branch': 'false', 'if_id': if_id,
+            'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None
+        }
+        # --- END MODIFIED ---
+
+        end_if_data = {"type": "IF_END", "if_id": if_id}
+
+        if_item = DecisionItem(text="IF...", step_data=if_data)
+        true_item = StepItem(text="True Branch Start (Placeholder)", step_data=true_data)
+        false_item = StepItem(text="False Branch Start (Placeholder)", step_data=false_data)
+        end_if_item = StepItem(step_data=end_if_data)
+
+        self.scene.addItem(if_item)
+        self.scene.addItem(true_item)
+        self.scene.addItem(false_item)
+        self.scene.addItem(end_if_item)
+
+        # --- Show Insertion Dialog for the whole block ---
+        ordered_items = [self._get_item_by_id(sid) for sid in self.flow_steps if self._get_item_by_id(sid)]
+        insertion_dialog = StepInsertionDialog(ordered_items, self)
+
+        if insertion_dialog.exec():
+            target_id, mode = insertion_dialog.get_insertion_point()
+            new_block_ids = [if_item.step_id, true_item.step_id, false_item.step_id, end_if_item.step_id]
+
+            # Inherit parent branch properties if inserting into an existing branch
+            if target_id is not None:
+                target_item = self._get_item_by_id(target_id)
+                if target_item and target_item.step_data.get('if_branch'):
+                    parent_branch = target_item.step_data.get('if_branch')
+                    parent_if_id = target_item.step_data.get('if_id')
+
+                    # Set parent branch info for the entire nested IF block
+                    if_item.step_data['parent_if_branch'] = parent_branch
+                    if_item.step_data['parent_if_id'] = parent_if_id
+                    if_item.step_data['if_branch'] = parent_branch
+                    if_item.step_data['outer_if_id'] = parent_if_id
+
+                    true_item.step_data['parent_if_branch'] = parent_branch
+                    true_item.step_data['parent_if_id'] = parent_if_id
+
+                    false_item.step_data['parent_if_branch'] = parent_branch
+                    false_item.step_data['parent_if_id'] = parent_if_id
+
+                    end_if_item.step_data['if_branch'] = parent_branch
+                    end_if_item.step_data['outer_if_id'] = parent_if_id
+
+            if target_id is None:
+                self.flow_steps.extend(new_block_ids)
+            else:
+                try:
+                    idx = self.flow_steps.index(target_id)
+                    if mode == 'after':
+                        self.flow_steps[idx + 1:idx + 1] = new_block_ids
+                    else: # 'before'
+                         self.flow_steps[idx:idx] = new_block_ids
+                except ValueError:
+                    self.flow_steps.extend(new_block_ids) # Fallback
+
+            self._redraw_flowchart()
+        else:
+             # If insertion is cancelled, remove the items we just added
+             self.scene.removeItem(if_item)
+             self.scene.removeItem(true_item)
+             self.scene.removeItem(false_item)
+             self.scene.removeItem(end_if_item)
+            
     def _redraw_flowchart(self):
         all_items_on_scene = [item for item in self.scene.items() if isinstance(item, FlowchartItem)]
         item_map = {item.step_id: item for item in all_items_on_scene}
@@ -2015,6 +2476,224 @@ class FlowchartApp(QMainWindow):
             for var_name in self.global_variables:
                 self.global_variables[var_name] = None
             self._update_variables_list_display()
+
+    # --- ALL NEW METHODS FOR EXECUTION ---
+    
+    def set_ui_enabled_state(self, enabled: bool) -> None:
+        """Disables or enables UI elements during execution."""
+        widgets_to_toggle = [
+            self.btn_add_step, self.btn_add_decision, self.btn_connect_manual,
+            self.btn_load_bot, self.execute_all_button, self.save_steps_button,
+            self.remove_all_steps_button, self.add_var_button, self.edit_var_button,
+            self.delete_var_button, self.clear_vars_button, self.variables_list,
+            self.view, # Disable the whole view
+            
+            # Also disable the unimplemented buttons
+            self.add_loop_button, self.add_conditional_button, 
+            self.group_steps_button, self.clear_selected_button,
+            self.open_screenshot_tool_button
+        ]
+        for widget in widgets_to_toggle:
+            widget.setEnabled(enabled)
+            
+        # Specific logic for 1-step button
+        self.execute_one_step_button.setEnabled(enabled and len(self.scene.selectedItems()) > 0)
+
+    def _validate_block_structure_on_execution(self, steps_data: List[Dict[str, Any]]) -> bool:
+        """Checks for mismatched blocks in a flat list of step data."""
+        open_blocks = []
+        for step_data in steps_data:
+            step_type = step_data["type"]
+            if step_type == "group_start":
+                open_blocks.append(("group", step_data.get("group_id")))
+            elif step_type == "loop_start":
+                open_blocks.append(("loop", step_data.get("loop_id")))
+            elif step_type == "IF_START":
+                open_blocks.append(("if", step_data.get("if_id")))
+            
+            # --- MODIFIED: No ELSE block in this logic ---
+            # elif step_type == "ELSE":
+            #    ...
+            
+            elif step_type == "group_end":
+                if not open_blocks or open_blocks.pop() != ("group", step_data.get("group_id")):
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched GROUP block.")
+                    return False
+            elif step_type == "loop_end":
+                if not open_blocks or open_blocks.pop() != ("loop", step_data.get("loop_id")):
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched LOOP block.")
+                    return False
+            elif step_type == "IF_END":
+                # --- MODIFIED: No ELSE, so just pop 'if' ---
+                if not open_blocks or open_blocks.pop() != ("if", step_data.get("if_id")):
+                    QMessageBox.warning(self, "Invalid Block Structure", "Mismatched IF_END block.")
+                    return False
+        
+        if open_blocks:
+            QMessageBox.warning(self, "Invalid Block Structure", f"Unclosed blocks remain: {open_blocks}.")
+            return False
+        return True
+
+    def _clear_all_item_statuses(self):
+        """Resets all flowchart items to their 'Idle' visual state."""
+        item_map = {item.step_id: item for item in self.scene.items() if isinstance(item, FlowchartItem)}
+        for i, step_id in enumerate(self.flow_steps):
+            item = item_map.get(step_id)
+            if item:
+                item.step_data['status'] = 'Idle'
+                item.set_step_details(i + 1, 'Idle')
+                
+                # Reset pen to default (checking for branch colors)
+                if item.step_data.get('if_branch') == 'true':
+                    item.setPen(QPen(TRUE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+                elif item.step_data.get('if_branch') == 'false':
+                    item.setPen(QPen(FALSE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
+                else:
+                    item.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2, Qt.PenStyle.SolidLine))
+
+    def execute_all_steps(self) -> None:
+        """Prepares and runs the ExecutionWorker with the flowchart steps."""
+        if self.is_bot_running:
+            QMessageBox.warning(self, "Execution in Progress", "A bot is already running. Please wait for it to complete.")
+            return
+
+        steps_to_execute = self._get_flat_steps_data()
+        if not steps_to_execute:
+            QMessageBox.information(self, "No Steps", "No steps have been added to the flowchart.")
+            return
+        
+        if not self._validate_block_structure_on_execution(steps_to_execute):
+            return
+        
+        self.is_bot_running = True
+        
+        self.set_ui_enabled_state(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self._clear_all_item_statuses() # Reset visuals before run
+        
+        self.worker = ExecutionWorker(
+            steps_to_execute,
+            self.module_directory, 
+            self.gui_communicator, 
+            self.global_variables
+        )
+        self._connect_worker_signals()
+        self.worker.start()
+
+    def _connect_worker_signals(self) -> None:
+        """Connects signals from the worker thread to the UI handlers."""
+        # Disconnect old signals if any worker exists
+        try:
+            self.worker.execution_started.disconnect()
+            self.worker.execution_progress.disconnect()
+            self.worker.execution_item_started.disconnect()
+            self.worker.execution_item_finished.disconnect()
+            self.worker.execution_error.disconnect()
+            self.worker.execution_finished_all.disconnect()
+        except (TypeError, AttributeError):
+            pass # No worker or signals to disconnect
+            
+        self.worker.execution_started.connect(lambda msg: self._log_to_console(f"GUI: {msg}"))
+        self.worker.execution_progress.connect(self.progress_bar.setValue)
+        self.worker.execution_item_started.connect(self.update_flowchart_item_status_started)
+        self.worker.execution_item_finished.connect(self.update_flowchart_item_status_finished)
+        self.worker.execution_error.connect(self.update_flowchart_item_status_error)
+        self.worker.execution_finished_all.connect(self.on_execution_finished)
+        self.worker.execution_finished_all.connect(lambda: self._update_variables_list_display())
+
+    def update_flowchart_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int):
+        """Highlights the flowchart item that is starting."""
+        try:
+            step_id = self.flow_steps[original_listbox_row_index]
+            item = self._get_item_by_id(step_id)
+            if item:
+                item.step_data['status'] = 'Running'
+                item.set_step_details(original_listbox_row_index + 1, 'Running...')
+                
+                # Highlight it
+                pen = item.pen()
+                pen.setColor(QColor(HIGHLIGHT_COLOR))
+                pen.setWidth(3)
+                item.setPen(pen)
+                
+                self.view.centerOn(item)
+                self._log_to_console(f"Executing: Step {original_listbox_row_index + 1}")
+        except IndexError:
+            self._log_to_console(f"Error: Could not find item for index {original_listbox_row_index}")
+
+    def update_flowchart_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int):
+        """Updates a flowchart item to show success."""
+        try:
+            step_id = self.flow_steps[original_listbox_row_index]
+            item = self._get_item_by_id(step_id)
+            if item:
+                item.step_data['status'] = 'Success'
+                # Truncate long messages for display
+                if len(message) > 100:
+                    message = message[:97] + "..."
+                item.set_step_details(original_listbox_row_index + 1, f"Success: {message}")
+                
+                # Set to 'success' color
+                pen = item.pen()
+                pen.setColor(SUCCESS_COLOR) 
+                pen.setWidth(2)
+                item.setPen(pen)
+
+                self._log_to_console(f"Finished: Step {original_listbox_row_index + 1} | {message}")
+                self._update_variables_list_display() # Update vars on success
+        except IndexError:
+            self._log_to_console(f"Error: Could not find item for index {original_listbox_row_index}")
+
+    def update_flowchart_item_status_error(self, step_data_dict: Dict[str, Any], error_message: str, original_listbox_row_index: int):
+        """Updates a flowchart item to show an error."""
+        try:
+            step_id = self.flow_steps[original_listbox_row_index]
+            item = self._get_item_by_id(step_id)
+            if item:
+                item.step_data['status'] = 'Error'
+                # Truncate long messages
+                if len(error_message) > 100:
+                    error_message = error_message[:97] + "..."
+                item.set_step_details(original_listbox_row_index + 1, f"Error: {error_message}")
+                
+                # Set to 'error' color
+                pen = item.pen()
+                pen.setColor(ERROR_COLOR)
+                pen.setWidth(3)
+                item.setPen(pen)
+
+                self._log_to_console(f"ERROR on Step {original_listbox_row_index + 1}: {error_message}")
+                self._update_variables_list_display() # Update vars even on error
+        except IndexError:
+            self._log_to_console(f"Error: Could not find item for index {original_listbox_row_index}")
+
+    def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
+        """Called when the worker thread finishes."""
+        self.is_bot_running = False
+        self.progress_bar.setValue(100)
+        self.progress_bar.hide()
+        self.set_ui_enabled_state(True)
+        self.last_executed_context = context
+
+        if stopped_by_error:
+            QMessageBox.critical(self, "Execution Halted", "Execution stopped due to an error. Check the log.")
+            self._log_to_console("Execution STOPPED due to an error.")
+        else:
+            QMessageBox.information(self, "Execution Complete", "All steps processed successfully.")
+            self._log_to_console("Execution finished successfully.")
+        
+        # Logic to select the next item if in single-step mode (not fully implemented)
+        if next_step_index_to_select != -1 and 0 <= next_step_index_to_select < len(self.flow_steps):
+            try:
+                step_id = self.flow_steps[next_step_index_to_select]
+                target_item = self._get_item_by_id(step_id)
+                if target_item:
+                    self.scene.clearSelection()
+                    target_item.setSelected(True)
+                    self.view.centerOn(target_item)
+            except IndexError:
+                pass
 
 
 if __name__ == "__main__":
