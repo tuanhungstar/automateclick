@@ -131,7 +131,6 @@ class ConditionalConfigDialog(QDialog):
         button_box.rejected.connect(self.reject)
         main_layout.addLayout(form_layout)
         main_layout.addWidget(button_box)
-        self.setLayout(main_layout)
         self._toggle_left_operand_input()
         self._toggle_right_operand_input()
 
@@ -455,69 +454,71 @@ class Connector(QGraphicsPathItem):
         start_rect = self.start_item.boundingRect()
         end_rect = self.end_item.boundingRect()
         
-        start_center = self.start_item.mapToScene(start_rect.center())
-        end_center = self.end_item.mapToScene(end_rect.center())
-
-        start_point = QPointF(start_center.x(), start_center.y() + start_rect.height() / 2)
-        end_point = QPointF(end_center.x(), end_center.y() - end_rect.height() / 2)
-        
-        # Adjust connection points based on type and label
+        # Determine base connection points in Scene coordinates
         is_true_branch = self.label.toPlainText() == "True"
         is_false_branch = self.label.toPlainText() == "False"
         
         if isinstance(self.start_item, DecisionItem):
             if is_true_branch:
-                start_point = self.start_item.mapToScene(QPointF(-start_rect.width()/2, 0))
+                # Left side of diamond
+                start_point = self.start_item.mapToScene(QPointF(-DECISION_WIDTH/2, 0))
             elif is_false_branch:
-                start_point = self.start_item.mapToScene(QPointF(start_rect.width()/2, 0))
+                # Right side of diamond
+                start_point = self.start_item.mapToScene(QPointF(DECISION_WIDTH/2, 0))
             else:
-                start_point = self.start_item.mapToScene(QPointF(0, start_rect.height()/2))
+                # Bottom point of diamond
+                start_point = self.start_item.mapToScene(QPointF(0, DECISION_HEIGHT/2))
+        else:
+            # Bottom center of rectangle
+            start_point = self.start_item.mapToScene(QPointF(0, start_rect.height() / 2))
         
-        if isinstance(self.end_item, DecisionItem):
-            end_point = self.end_item.mapToScene(QPointF(0, -end_rect.height()/2))
+        if isinstance(self.end_item, DecisionItem) and not (is_true_branch or is_false_branch):
+            # Top point of diamond (default entry)
+            end_point = self.end_item.mapToScene(QPointF(0, -DECISION_HEIGHT/2))
+        else:
+            # Top center of rectangle/step
+            end_point = self.end_item.mapToScene(QPointF(0, -end_rect.height() / 2))
 
+        # --- Corrected Path Drawing Logic for Moveable Shapes ---
+        
         path = QPainterPath()
         path.moveTo(start_point)
         
         dy = end_point.y() - start_point.y()
         dx = end_point.x() - start_point.x()
 
-        # Check if end_item is a nested IF block (has outer_if_id)
-        is_connecting_to_nested_if = (isinstance(self.end_item, DecisionItem) and 
-                                      self.end_item.step_data.get('outer_if_id') is not None)
+        # Determine if this is a connection from the side of a DecisionItem
+        is_side_branch_from_decision = isinstance(self.start_item, DecisionItem) and (is_true_branch or is_false_branch)
         
-        # For connections to nested IF blocks from parent IF, route around the side
-        if (isinstance(self.start_item, DecisionItem) and is_connecting_to_nested_if and 
-            (is_true_branch or is_false_branch)):
-            # Route to the side first, then down, then to the target
-            side_offset = HORIZONTAL_SPACING * 0.3
-            if is_true_branch:
-                # Go left, then down
-                waypoint_x = start_point.x() - side_offset
-            else:  # is_false_branch
-                # Go right, then down
-                waypoint_x = start_point.x() + side_offset
+        # The key to keeping lines attached is using an elbow (VHV or HVH) path
+        # that doesn't rely on fixed grid coordinates.
+        if is_side_branch_from_decision:
+            # HVH path: Horizontal-Vertical-Horizontal
+            # 1. Move horizontally out from the DecisionItem to clear the shape.
+            #    DECISION_WIDTH/2 is the max horizontal size. We add a 10px buffer.
+            h_clearance = DECISION_WIDTH / 2 + 10
+            x_offset = h_clearance * (1 if is_false_branch else -1)
             
-            waypoint1 = QPointF(waypoint_x, start_point.y())
-            waypoint2 = QPointF(waypoint_x, end_point.y())
+            waypoint_x = start_point.x() + x_offset
             
-            path.lineTo(waypoint1)
-            path.lineTo(waypoint2)
-            path.lineTo(end_point)
-        elif abs(dy) > abs(dx) and dy > 0:
-            # More vertical movement downwards
-            mid_y = start_point.y() + VERTICAL_SPACING / 2
-            path.lineTo(start_point.x(), mid_y)
-            path.lineTo(end_point.x(), mid_y)
-            path.lineTo(end_point)
-        elif abs(dx) > 0:
-            # More horizontal movement or merging
-            mid_y = start_point.y() + dy / 2
-            path.lineTo(start_point.x(), mid_y)
-            path.lineTo(end_point.x(), mid_y)
+            path.lineTo(waypoint_x, start_point.y()) # Move horizontally out
+            
+            # 2. Move vertically to align with the target's Y position
+            path.lineTo(waypoint_x, end_point.y())
+            
+            # 3. Move horizontally into the target item
             path.lineTo(end_point)
         else:
-            # Straight vertical
+            # VHV path: Vertical-Horizontal-Vertical (Standard Top/Bottom Connection)
+            # 1. Move vertically halfway to the target for a clean elbow
+            mid_y = start_point.y() + dy / 2
+            
+            path.lineTo(start_point.x(), mid_y)
+            
+            # 2. Move horizontally to align with the target's X position
+            path.lineTo(end_point.x(), mid_y)
+            
+            # 3. Move vertically into the target
             path.lineTo(end_point)
 
         self.setPath(path)
@@ -618,6 +619,7 @@ class FlowchartItem(QGraphicsPolygonItem):
 
     def itemChange(self, change, value):
         if change == QGraphicsPolygonItem.GraphicsItemChange.ItemPositionHasChanged:
+            # This is the crucial line that triggers the connector update when the shape moves
             for connector in self.connectors:
                 connector.update_position()
         return super().itemChange(change, value)
@@ -633,7 +635,7 @@ class FlowchartItem(QGraphicsPolygonItem):
         self.setPen(temp_pen)
         super().hoverEnterEvent(event)
 
-    def hoverLeaveEvent(self, event):
+    def hoverLeaveEvent(self, event): # FIX: Added 'event' argument
         if self.step_data.get('if_branch') == 'true':
             self.setPen(QPen(TRUE_BRANCH_COLOR_LINE, 2, Qt.PenStyle.DashLine))
         elif self.step_data.get('if_branch') == 'false':
@@ -701,9 +703,12 @@ class FlowchartView(QGraphicsView):
                         connector = Connector(self.main_window.start_item, end_item)
                         self.scene().addItem(connector)
                         connector.update_position()
+                        
+                        # --- Manual Connection Registration (Keep this) ---
                         self.main_window.start_item.add_connector(connector)
                         end_item.add_connector(connector)
-                    
+                        # ------------------------------------------------
+                        
                     # Reset start item
                     pen = self.main_window.start_item.pen()
                     if self.main_window.start_item.step_data.get('if_branch') == 'true':
@@ -732,11 +737,23 @@ class FlowchartView(QGraphicsView):
             # Update temporary line to follow mouse
             scene_pos = self.mapToScene(event.pos())
             start_rect = self.main_window.start_item.boundingRect()
-            start_center = self.main_window.start_item.mapToScene(start_rect.center())
-            start_point = QPointF(start_center.x(), start_center.y() + start_rect.height() / 2)
+            
+            # Use the already determined connection point for the start of the line
+            start_point = QPointF(0, start_rect.height() / 2) # Default bottom center in local coords
+            if isinstance(self.main_window.start_item, DecisionItem):
+                is_true = self.main_window.start_item.step_data.get('if_branch') == 'true'
+                is_false = self.main_window.start_item.step_data.get('if_branch') == 'false'
+                if is_true:
+                    start_point = QPointF(-DECISION_WIDTH/2, 0)
+                elif is_false:
+                    start_point = QPointF(DECISION_WIDTH/2, 0)
+                else:
+                    start_point = QPointF(0, DECISION_HEIGHT/2)
+            
+            start_point_scene = self.main_window.start_item.mapToScene(start_point)
             
             path = QPainterPath()
-            path.moveTo(start_point)
+            path.moveTo(start_point_scene)
             path.lineTo(scene_pos)
             self.temp_line.setPath(path)
         else:
@@ -1030,6 +1047,11 @@ class FlowchartApp(QMainWindow):
         for item in self.scene.items():
             if isinstance(item, Connector):
                 self.scene.removeItem(item)
+        
+        # Clear all connector lists before redrawing connections
+        for item in all_items_on_scene:
+            item.connectors.clear()
+
 
         y_pos = 50
         last_item = None
@@ -1238,6 +1260,11 @@ class FlowchartApp(QMainWindow):
         connector = Connector(start_item, end_item, label, color)
         self.scene.addItem(connector)
         connector.update_position()
+        
+        # Register connector with both items to enable movement tracking
+        start_item.add_connector(connector)
+        end_item.add_connector(connector)
+        
         return connector
 
     def clear_all(self):
@@ -1260,7 +1287,15 @@ class FlowchartApp(QMainWindow):
             self.setCursor(Qt.CursorShape.ArrowCursor)
             if self.start_item:
                 pen = self.start_item.pen()
-                pen.setColor(QColor(SHAPE_BORDER_COLOR))
+                if self.start_item.step_data.get('if_branch') == 'true':
+                    pen.setColor(TRUE_BRANCH_COLOR_LINE)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                elif self.start_item.step_data.get('if_branch') == 'false':
+                    pen.setColor(FALSE_BRANCH_COLOR_LINE)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                else:
+                    pen.setColor(QColor(SHAPE_BORDER_COLOR))
+                    pen.setStyle(Qt.PenStyle.SolidLine)
                 pen.setWidth(2)
                 self.start_item.setPen(pen)
                 self.start_item = None
