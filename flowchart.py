@@ -462,20 +462,19 @@ class Connector(QGraphicsPathItem):
         end_point = QPointF(end_center.x(), end_center.y() - end_rect.height() / 2)
         
         # Adjust connection points based on type and label
+        is_true_branch = self.label.toPlainText() == "True"
+        is_false_branch = self.label.toPlainText() == "False"
+        
         if isinstance(self.start_item, DecisionItem):
-            if self.label.toPlainText() == "True":
-                start_point = self.start_item.mapToScene(QPointF(-start_rect.width()/2, 0)) # Left side
-            elif self.label.toPlainText() == "False":
-                start_point = self.start_item.mapToScene(QPointF(start_rect.width()/2, 0)) # Right side
-            else: # If no label, connect from bottom (for connection before IF)
-                 start_point = self.start_item.mapToScene(QPointF(0, start_rect.height()/2))
+            if is_true_branch:
+                start_point = self.start_item.mapToScene(QPointF(-start_rect.width()/2, 0))
+            elif is_false_branch:
+                start_point = self.start_item.mapToScene(QPointF(start_rect.width()/2, 0))
+            else:
+                start_point = self.start_item.mapToScene(QPointF(0, start_rect.height()/2))
         
         if isinstance(self.end_item, DecisionItem):
-            end_point = self.end_item.mapToScene(QPointF(0, -end_rect.height()/2)) # Connect to top
-
-        # Determine if end_item is END_IF and start_item is in a branch
-        is_branch_merge = (self.end_item.step_data.get('type') == 'IF_END' and
-                           self.start_item.step_data.get('if_branch') is not None)
+            end_point = self.end_item.mapToScene(QPointF(0, -end_rect.height()/2))
 
         path = QPainterPath()
         path.moveTo(start_point)
@@ -483,33 +482,57 @@ class Connector(QGraphicsPathItem):
         dy = end_point.y() - start_point.y()
         dx = end_point.x() - start_point.x()
 
-        # Simplified right-angle logic
-        if abs(dy) > abs(dx) and dy > 0: # More vertical movement downwards
+        # Check if end_item is a nested IF block (has outer_if_id)
+        is_connecting_to_nested_if = (isinstance(self.end_item, DecisionItem) and 
+                                      self.end_item.step_data.get('outer_if_id') is not None)
+        
+        # For connections to nested IF blocks from parent IF, route around the side
+        if (isinstance(self.start_item, DecisionItem) and is_connecting_to_nested_if and 
+            (is_true_branch or is_false_branch)):
+            # Route to the side first, then down, then to the target
+            side_offset = HORIZONTAL_SPACING * 0.3
+            if is_true_branch:
+                # Go left, then down
+                waypoint_x = start_point.x() - side_offset
+            else:  # is_false_branch
+                # Go right, then down
+                waypoint_x = start_point.x() + side_offset
+            
+            waypoint1 = QPointF(waypoint_x, start_point.y())
+            waypoint2 = QPointF(waypoint_x, end_point.y())
+            
+            path.lineTo(waypoint1)
+            path.lineTo(waypoint2)
+            path.lineTo(end_point)
+        elif abs(dy) > abs(dx) and dy > 0:
+            # More vertical movement downwards
             mid_y = start_point.y() + VERTICAL_SPACING / 2
             path.lineTo(start_point.x(), mid_y)
             path.lineTo(end_point.x(), mid_y)
             path.lineTo(end_point)
-        elif abs(dx) > 0: # More horizontal movement or merging
+        elif abs(dx) > 0:
+            # More horizontal movement or merging
             mid_y = start_point.y() + dy / 2
             path.lineTo(start_point.x(), mid_y)
             path.lineTo(end_point.x(), mid_y)
             path.lineTo(end_point)
-        else: # Straight vertical
-             path.lineTo(end_point)
-
+        else:
+            # Straight vertical
+            path.lineTo(end_point)
 
         self.setPath(path)
         
-        # Adjust label position slightly based on direction
-        label_pos_x = (start_point.x() + end_point.x()) / 2
-        label_pos_y = start_point.y() + dy / 2
+        # Adjust label position
+        if is_true_branch or is_false_branch:
+            # Position label near the start point for branch labels
+            label_x = start_point.x() + (-40 if is_true_branch else 10)
+            label_y = start_point.y() + 5
+        else:
+            # Position label in the middle for other connections
+            label_x = (start_point.x() + end_point.x()) / 2 - 20
+            label_y = (start_point.y() + end_point.y()) / 2 - 10
         
-        if self.label.toPlainText() == "True":
-            label_pos_x = start_point.x() - 40 # Position left for True
-        elif self.label.toPlainText() == "False":
-             label_pos_x = start_point.x() + 10 # Position right for False
-
-        self.label.setPos(label_pos_x, mid_y - 20)
+        self.label.setPos(label_x, label_y)
 
 
 class FlowchartItem(QGraphicsPolygonItem):
@@ -522,6 +545,7 @@ class FlowchartItem(QGraphicsPolygonItem):
         self.setPen(QPen(QColor(SHAPE_BORDER_COLOR), 2))
         self.setAcceptHoverEvents(True)
         self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemIsMovable)
         self.setFlag(QGraphicsPolygonItem.GraphicsItemFlag.ItemSendsGeometryChanges)
 
         self.text_item = QGraphicsTextItem(text, self)
@@ -640,6 +664,110 @@ class FlowchartView(QGraphicsView):
         super().__init__(scene, parent)
         self.main_window = parent
         self.setStyleSheet(f"background-color: {CANVAS_COLOR}; border: 1px solid #C0C0C0;")
+        self.temp_line = None
+        self.setRenderHint(self.renderHints().Antialiasing)
+        self.setDragMode(QGraphicsView.DragMode.NoDrag)
+
+    def mousePressEvent(self, event):
+        if self.main_window.connection_mode and event.button() == Qt.MouseButton.LeftButton:
+            scene_pos = self.mapToScene(event.pos())
+            item = self.scene().itemAt(scene_pos, self.transform())
+            
+            # Find the FlowchartItem if we clicked on a text or the shape itself
+            flowchart_item = None
+            if isinstance(item, FlowchartItem):
+                flowchart_item = item
+            elif isinstance(item, QGraphicsTextItem) and isinstance(item.parentItem(), FlowchartItem):
+                flowchart_item = item.parentItem()
+            
+            if flowchart_item:
+                if self.main_window.start_item is None:
+                    # First click - select start item
+                    self.main_window.start_item = flowchart_item
+                    pen = flowchart_item.pen()
+                    pen.setColor(QColor(HIGHLIGHT_COLOR))
+                    pen.setWidth(3)
+                    flowchart_item.setPen(pen)
+                    
+                    # Create temporary line for visual feedback
+                    self.temp_line = QGraphicsPathItem()
+                    self.temp_line.setPen(QPen(QColor(HIGHLIGHT_COLOR), 2, Qt.PenStyle.DashLine))
+                    self.scene().addItem(self.temp_line)
+                else:
+                    # Second click - connect to end item
+                    end_item = flowchart_item
+                    if self.main_window.start_item != end_item:
+                        # Create the connection
+                        connector = Connector(self.main_window.start_item, end_item)
+                        self.scene().addItem(connector)
+                        connector.update_position()
+                        self.main_window.start_item.add_connector(connector)
+                        end_item.add_connector(connector)
+                    
+                    # Reset start item
+                    pen = self.main_window.start_item.pen()
+                    if self.main_window.start_item.step_data.get('if_branch') == 'true':
+                        pen.setColor(TRUE_BRANCH_COLOR_LINE)
+                        pen.setStyle(Qt.PenStyle.DashLine)
+                    elif self.main_window.start_item.step_data.get('if_branch') == 'false':
+                        pen.setColor(FALSE_BRANCH_COLOR_LINE)
+                        pen.setStyle(Qt.PenStyle.DashLine)
+                    else:
+                        pen.setColor(QColor(SHAPE_BORDER_COLOR))
+                        pen.setStyle(Qt.PenStyle.SolidLine)
+                    pen.setWidth(2)
+                    self.main_window.start_item.setPen(pen)
+                    self.main_window.start_item = None
+                    
+                    # Remove temporary line
+                    if self.temp_line:
+                        self.scene().removeItem(self.temp_line)
+                        self.temp_line = None
+        else:
+            # Normal mode - allow dragging blocks
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.main_window.connection_mode and self.temp_line and self.main_window.start_item:
+            # Update temporary line to follow mouse
+            scene_pos = self.mapToScene(event.pos())
+            start_rect = self.main_window.start_item.boundingRect()
+            start_center = self.main_window.start_item.mapToScene(start_rect.center())
+            start_point = QPointF(start_center.x(), start_center.y() + start_rect.height() / 2)
+            
+            path = QPainterPath()
+            path.moveTo(start_point)
+            path.lineTo(scene_pos)
+            self.temp_line.setPath(path)
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.main_window.connection_mode:
+            # Cancel connection mode
+            if self.main_window.start_item:
+                pen = self.main_window.start_item.pen()
+                if self.main_window.start_item.step_data.get('if_branch') == 'true':
+                    pen.setColor(TRUE_BRANCH_COLOR_LINE)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                elif self.main_window.start_item.step_data.get('if_branch') == 'false':
+                    pen.setColor(FALSE_BRANCH_COLOR_LINE)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                else:
+                    pen.setColor(QColor(SHAPE_BORDER_COLOR))
+                    pen.setStyle(Qt.PenStyle.SolidLine)
+                pen.setWidth(2)
+                self.main_window.start_item.setPen(pen)
+                self.main_window.start_item = None
+            
+            if self.temp_line:
+                self.scene().removeItem(self.temp_line)
+                self.temp_line = None
+        else:
+            super().keyPressEvent(event)
 
 # --- Main Application Window ---
 class FlowchartApp(QMainWindow):
@@ -715,6 +843,7 @@ class FlowchartApp(QMainWindow):
         self.scene = QGraphicsScene()
         self.view = FlowchartView(self.scene, self)
         self.view.setRenderHint(self.view.renderHints().Antialiasing)
+        self.view.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Enable keyboard events
         right_splitter.addWidget(self.view)
         
         bottom_widget = QWidget()
@@ -805,6 +934,11 @@ class FlowchartApp(QMainWindow):
                     if target_item and target_item.step_data.get('if_branch'):
                         new_item.step_data['if_branch'] = target_item.step_data['if_branch']
                         new_item.step_data['if_id'] = target_item.step_data['if_id']
+                        
+                        # Also inherit parent branch properties for nested branches
+                        if target_item.step_data.get('parent_if_branch'):
+                            new_item.step_data['parent_if_branch'] = target_item.step_data['parent_if_branch']
+                            new_item.step_data['parent_if_id'] = target_item.step_data['parent_if_id']
 
                     if mode == 'after':
                         self.flow_steps.insert(target_idx + 1, new_item.step_id)
@@ -846,6 +980,28 @@ class FlowchartApp(QMainWindow):
             target_id, mode = insertion_dialog.get_insertion_point()
             new_block_ids = [if_item.step_id, true_item.step_id, false_item.step_id, end_if_item.step_id]
 
+            # Inherit parent branch properties if inserting into an existing branch
+            if target_id is not None:
+                target_item = self._get_item_by_id(target_id)
+                if target_item and target_item.step_data.get('if_branch'):
+                    parent_branch = target_item.step_data.get('if_branch')
+                    parent_if_id = target_item.step_data.get('if_id')
+                    
+                    # Set parent branch info for the entire nested IF block
+                    if_item.step_data['parent_if_branch'] = parent_branch
+                    if_item.step_data['parent_if_id'] = parent_if_id
+                    if_item.step_data['if_branch'] = parent_branch
+                    if_item.step_data['outer_if_id'] = parent_if_id
+                    
+                    true_item.step_data['parent_if_branch'] = parent_branch
+                    true_item.step_data['parent_if_id'] = parent_if_id
+                    
+                    false_item.step_data['parent_if_branch'] = parent_branch
+                    false_item.step_data['parent_if_id'] = parent_if_id
+                    
+                    end_if_item.step_data['if_branch'] = parent_branch
+                    end_if_item.step_data['outer_if_id'] = parent_if_id
+
             if target_id is None:
                 self.flow_steps.extend(new_block_ids)
             else:
@@ -878,103 +1034,195 @@ class FlowchartApp(QMainWindow):
         y_pos = 50
         last_item = None
         
+        def process_if_block(if_item, start_y, x_center):
+            """Recursively process an IF block and return the END_IF item and next y position"""
+            if_id = if_item.step_data['if_id']
+            if_idx = self.flow_steps.index(if_item.step_id)
+            
+            # Find all items belonging to this specific IF block
+            true_branch_ids = []
+            false_branch_ids = []
+            end_if_idx = -1
+            nesting_level = 0
+            
+            for j in range(if_idx + 1, len(self.flow_steps)):
+                s_id = self.flow_steps[j]
+                s_item = item_map.get(s_id)
+                if not s_item: continue
+
+                s_type = s_item.step_data.get('type')
+                s_if_id = s_item.step_data.get('if_id')
+                
+                if s_type == 'IF_START':
+                    s_outer_if_id = s_item.step_data.get('outer_if_id')
+                    if s_outer_if_id == if_id and nesting_level == 0:
+                        parent_branch = s_item.step_data.get('if_branch')
+                        if parent_branch == 'true':
+                            true_branch_ids.append(s_id)
+                        elif parent_branch == 'false':
+                            false_branch_ids.append(s_id)
+                    nesting_level += 1
+                elif s_type == 'IF_END':
+                    if nesting_level == 0 and s_if_id == if_id:
+                        end_if_idx = j
+                        break
+                    elif nesting_level > 0:
+                        s_outer_if_id = s_item.step_data.get('outer_if_id')
+                        if s_outer_if_id == if_id and nesting_level == 1:
+                            parent_branch = s_item.step_data.get('if_branch')
+                            if parent_branch == 'true':
+                                true_branch_ids.append(s_id)
+                            elif parent_branch == 'false':
+                                false_branch_ids.append(s_id)
+                        nesting_level -= 1
+                elif nesting_level == 0 and s_if_id == if_id:
+                    if s_item.step_data.get('if_branch') == 'true':
+                        true_branch_ids.append(s_id)
+                    elif s_item.step_data.get('if_branch') == 'false':
+                        false_branch_ids.append(s_id)
+                elif nesting_level > 0:
+                    parent_if_id = s_item.step_data.get('parent_if_id')
+                    if parent_if_id == if_id:
+                        parent_branch = s_item.step_data.get('parent_if_branch')
+                        if parent_branch == 'true':
+                            true_branch_ids.append(s_id)
+                        elif parent_branch == 'false':
+                            false_branch_ids.append(s_id)
+            
+            if end_if_idx == -1:
+                print(f"Error: Could not find matching END_IF for {if_id}")
+                return None, start_y
+            
+            end_if_item = item_map[self.flow_steps[end_if_idx]]
+            
+            # Position IF_START
+            if_item.setPos(x_center, start_y)
+            
+            branch_y_start = start_y + (DECISION_HEIGHT/2) + VERTICAL_SPACING
+            
+            # Process True branch
+            current_y_true = branch_y_start
+            last_true_item = if_item
+            true_x = x_center - HORIZONTAL_SPACING
+            
+            i = 0
+            while i < len(true_branch_ids):
+                true_id = true_branch_ids[i]
+                true_item = item_map[true_id]
+                
+                if true_item.step_data.get('type') == 'IF_START':
+                    # Nested IF block in TRUE branch
+                    nested_end_if, current_y_true = process_if_block(true_item, current_y_true, true_x)
+                    self._add_connector(last_true_item, true_item, "True" if last_true_item == if_item else "", TRUE_BRANCH_COLOR_LINE)
+                    last_true_item = nested_end_if if nested_end_if else true_item
+                    
+                    # Skip all items that belong to this nested IF block
+                    nested_if_id = true_item.step_data['if_id']
+                    while i < len(true_branch_ids):
+                        check_item = item_map[true_branch_ids[i]]
+                        # Stop when we reach the END_IF of the nested block
+                        if (check_item.step_data.get('type') == 'IF_END' and 
+                            check_item.step_data.get('if_id') == nested_if_id):
+                            i += 1
+                            break
+                        i += 1
+                elif true_item.step_data.get('type') == 'IF_END':
+                    # Skip END_IF blocks as they're handled by their IF_START
+                    i += 1
+                else:
+                    true_item.setPos(true_x, current_y_true)
+                    self._add_connector(last_true_item, true_item, "True" if last_true_item == if_item else "", TRUE_BRANCH_COLOR_LINE)
+                    last_true_item = true_item
+                    current_y_true += STEP_HEIGHT + VERTICAL_SPACING
+                    i += 1
+            
+            # Process False branch
+            current_y_false = branch_y_start
+            last_false_item = if_item
+            false_x = x_center + HORIZONTAL_SPACING
+            
+            i = 0
+            while i < len(false_branch_ids):
+                false_id = false_branch_ids[i]
+                false_item = item_map[false_id]
+                
+                if false_item.step_data.get('type') == 'IF_START':
+                    # Nested IF block in FALSE branch
+                    nested_end_if, current_y_false = process_if_block(false_item, current_y_false, false_x)
+                    self._add_connector(last_false_item, false_item, "False" if last_false_item == if_item else "", FALSE_BRANCH_COLOR_LINE)
+                    last_false_item = nested_end_if if nested_end_if else false_item
+                    
+                    # Skip all items that belong to this nested IF block
+                    nested_if_id = false_item.step_data['if_id']
+                    while i < len(false_branch_ids):
+                        check_item = item_map[false_branch_ids[i]]
+                        # Stop when we reach the END_IF of the nested block
+                        if (check_item.step_data.get('type') == 'IF_END' and 
+                            check_item.step_data.get('if_id') == nested_if_id):
+                            i += 1
+                            break
+                        i += 1
+                elif false_item.step_data.get('type') == 'IF_END':
+                    # Skip END_IF blocks as they're handled by their IF_START
+                    i += 1
+                else:
+                    false_item.setPos(false_x, current_y_false)
+                    self._add_connector(last_false_item, false_item, "False" if last_false_item == if_item else "", FALSE_BRANCH_COLOR_LINE)
+                    last_false_item = false_item
+                    current_y_false += STEP_HEIGHT + VERTICAL_SPACING
+                    i += 1
+            
+            # Determine max branch height for END_IF positioning
+            max_branch_y = max(current_y_true, current_y_false)
+            
+            # Position END_IF
+            end_if_y_pos = max_branch_y
+            end_if_item.setPos(x_center, end_if_y_pos)
+            
+            # Connect last items of both branches to END_IF
+            self._add_connector(last_true_item, end_if_item, "", TRUE_BRANCH_COLOR_LINE)
+            self._add_connector(last_false_item, end_if_item, "", FALSE_BRANCH_COLOR_LINE)
+            
+            return end_if_item, end_if_y_pos + STEP_HEIGHT + VERTICAL_SPACING
+        
+        # Main processing loop
         i = 0
         while i < len(self.flow_steps):
             step_id = self.flow_steps[i]
             item = item_map.get(step_id)
             if not item: 
-                i+=1
+                i += 1
                 continue
 
-            if item.step_data.get('type') == 'IF_START':
-                if_item = item
-                if_id = if_item.step_data['if_id']
-                
-                # --- Find all items belonging to this specific IF block ---
-                true_branch_ids = []
-                false_branch_ids = []
-                end_if_idx = -1
-                nesting_level = 0
-                
-                for j in range(i + 1, len(self.flow_steps)):
-                    s_id = self.flow_steps[j]
-                    s_item = item_map.get(s_id)
-                    if not s_item: continue
+            # Skip items that are part of IF blocks (they'll be processed recursively)
+            if item.step_data.get('if_branch') or item.step_data.get('type') == 'IF_END':
+                i += 1
+                continue
 
-                    s_type = s_item.step_data.get('type')
-                    s_if_id = s_item.step_data.get('if_id')
-
-                    if s_type == 'IF_START': nesting_level += 1
-                    elif s_type == 'IF_END':
-                        if nesting_level == 0 and s_if_id == if_id:
-                            end_if_idx = j
-                            break
-                        elif nesting_level > 0:
-                            nesting_level -= 1
-
-                    # Only add items belonging to the current IF block level
-                    if nesting_level == 0 and s_if_id == if_id:
-                        if s_item.step_data.get('if_branch') == 'true':
-                            true_branch_ids.append(s_id)
-                        elif s_item.step_data.get('if_branch') == 'false':
-                            false_branch_ids.append(s_id)
-                
-                if end_if_idx == -1: # Malformed structure
-                    print(f"Error: Could not find matching END_IF for {if_id}")
-                    i += 1
-                    continue
-                
-                end_if_item = item_map[self.flow_steps[end_if_idx]]
-
-                # --- Position IF_START ---
+            if item.step_data.get('type') == 'IF_START' and not item.step_data.get('outer_if_id'):
+                # Top-level IF block
                 x_center = self.view.mapToScene(self.view.viewport().rect().center()).x()
-                if_item.setPos(x_center, y_pos)
-                if last_item: self._add_connector(last_item, if_item)
-
-                branch_y_start = y_pos + (DECISION_HEIGHT/2) + VERTICAL_SPACING
+                if last_item:
+                    self._add_connector(last_item, item)
                 
-                # --- Position True branch ---
-                current_y_true = branch_y_start
-                last_true_item = if_item
-                for true_id in true_branch_ids:
-                    true_item = item_map[true_id]
-                    true_item.setPos(x_center - HORIZONTAL_SPACING, current_y_true)
-                    self._add_connector(last_true_item, true_item, "True" if last_true_item == if_item else "", TRUE_BRANCH_COLOR_LINE)
-                    last_true_item = true_item
-                    current_y_true += STEP_HEIGHT + VERTICAL_SPACING
-
-                # --- Position False branch ---
-                current_y_false = branch_y_start
-                last_false_item = if_item
-                for false_id in false_branch_ids:
-                    false_item = item_map[false_id]
-                    false_item.setPos(x_center + HORIZONTAL_SPACING, current_y_false)
-                    self._add_connector(last_false_item, false_item, "False" if last_false_item == if_item else "", FALSE_BRANCH_COLOR_LINE)
-                    last_false_item = false_item
-                    current_y_false += STEP_HEIGHT + VERTICAL_SPACING
-                
-                # Determine max branch height for END_IF positioning
-                max_branch_y = max(current_y_true, current_y_false)
-                
-                # Position END_IF
-                end_if_y_pos = max_branch_y - VERTICAL_SPACING + STEP_HEIGHT/2 + VERTICAL_SPACING # Align below the taller branch
-                end_if_item.setPos(x_center, end_if_y_pos)
-                
-                # Connect last items of both branches to END_IF
-                self._add_connector(last_true_item, end_if_item, "", TRUE_BRANCH_COLOR_LINE)
-                self._add_connector(last_false_item, end_if_item, "", FALSE_BRANCH_COLOR_LINE)
-                
+                end_if_item, y_pos = process_if_block(item, y_pos, x_center)
                 last_item = end_if_item
-                y_pos = end_if_y_pos # Continue from END_IF's y position
-                i = end_if_idx # Continue processing from the item *after* END_IF
-            else: # Regular step
+                
+                # Skip to after the END_IF
+                if end_if_item:
+                    end_if_idx = self.flow_steps.index(end_if_item.step_id)
+                    i = end_if_idx + 1
+                else:
+                    i += 1
+            else:
+                # Regular step (not in any branch)
                 x_pos = self.view.mapToScene(self.view.viewport().rect().center()).x()
                 item.setPos(x_pos, y_pos)
-                if last_item: self._add_connector(last_item, item)
+                if last_item:
+                    self._add_connector(last_item, item)
                 last_item = item
-            
-            y_pos += item.boundingRect().height() + VERTICAL_SPACING
-            i += 1
+                y_pos += item.boundingRect().height() + VERTICAL_SPACING
+                i += 1
         
         # Update step numbers and details for all items
         for i, step_id in enumerate(self.flow_steps):
