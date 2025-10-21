@@ -4,6 +4,8 @@ import inspect
 import importlib
 import uuid
 import json
+import csv
+from typing import Optional, List, Any, Dict, Tuple # NEW: Added Optional and other types for clarity
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView, QGraphicsScene, QWidget,
     QInputDialog, QGraphicsPolygonItem, QGraphicsTextItem,
@@ -14,7 +16,7 @@ from PyQt6.QtWidgets import (
     QGridLayout, QTreeWidgetItemIterator, QGraphicsPathItem
 )
 from PyQt6.QtGui import QPolygonF, QBrush, QPen, QFont, QColor, QPainterPath
-from PyQt6.QtCore import QPointF, Qt, QRectF, QVariant, pyqtSignal
+from PyQt6.QtCore import QPointF, Qt, QRectF, QVariant, pyqtSignal, QLineF
 
 # --- Configuration ---
 STEP_WIDTH = 250
@@ -23,7 +25,11 @@ DECISION_WIDTH = 280
 DECISION_HEIGHT = 100
 VERTICAL_SPACING = 80
 HORIZONTAL_SPACING = 300
-GRID_SIZE = 20  # Define the size of the grid squares
+GRID_SIZE = 20
+LINE_CLEARANCE = 10 
+
+# Define constants for file management (assuming 'Bot_steps' is a folder next to 'flowchart.py')
+BOT_STEPS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Bot_steps")
 
 # --- Style Configuration ---
 BG_COLOR = "#FFFFFF"
@@ -47,6 +53,58 @@ class GuiCommunicator:
 
 class ExecutionContext:
     pass
+
+# --- SaveBotDialog Class (NEW) ---
+class SaveBotDialog(QDialog):
+    def __init__(self, existing_bots: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Bot Steps")
+        self.setMinimumWidth(350)
+        
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        self.info_label = QLabel("Select an existing bot to overwrite, or type a new name.")
+        
+        self.bots_combo = QComboBox()
+        self.bots_combo.addItem("-- Create New Bot --")
+        self.bots_combo.addItems(sorted(existing_bots))
+
+        self.name_editor = QLineEdit()
+        self.name_editor.setPlaceholderText("Enter new bot name")
+
+        self.bots_combo.currentTextChanged.connect(self._selection_changed)
+
+        form_layout.addRow("Action:", self.bots_combo)
+        form_layout.addRow("Bot Name:", self.name_editor)
+
+        main_layout.addWidget(self.info_label)
+        main_layout.addLayout(form_layout)
+        
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+        self._selection_changed(self.bots_combo.currentText())
+
+    def _selection_changed(self, text: str) -> None:
+        if text == "-- Create New Bot --":
+            self.name_editor.clear()
+            self.name_editor.setEnabled(True)
+            self.name_editor.setPlaceholderText("Enter new bot name")
+        else:
+            self.name_editor.setText(text)
+            self.name_editor.setEnabled(True)
+
+    def get_bot_name(self) -> Optional[str]: # FIXED TYPE HINT
+        name = self.name_editor.text().strip()
+        # Simple sanitization to prevent issues with file paths
+        sanitized_name = "".join(c for c in name if c.isalnum() or c in (' ', '_', '-')).rstrip()
+        if not sanitized_name:
+            QMessageBox.warning(self, "Invalid Name", "Bot name cannot be empty.")
+            return None
+        return sanitized_name
 
 # --- Global Variable Dialog ---
 class GlobalVariableDialog(QDialog):
@@ -490,89 +548,117 @@ class Connector(QGraphicsPathItem):
         self.label.setDefaultTextColor(color)
         self.label.setFont(QFont("Arial", 10, QFont.Weight.Bold))
 
-    def update_position(self):
+    def get_connection_points(self):
         start_rect = self.start_item.boundingRect()
         end_rect = self.end_item.boundingRect()
-        
-        # Determine base connection points in Scene coordinates
+
         is_true_branch = self.label.toPlainText() == "True"
         is_false_branch = self.label.toPlainText() == "False"
         
+        # Determine START point in Scene coordinates
         if isinstance(self.start_item, DecisionItem):
             if is_true_branch:
                 # Left side of diamond
-                start_point = self.start_item.mapToScene(QPointF(-DECISION_WIDTH/2, 0))
+                start_point_local = QPointF(-DECISION_WIDTH/2, 0)
             elif is_false_branch:
                 # Right side of diamond
-                start_point = self.start_item.mapToScene(QPointF(DECISION_WIDTH/2, 0))
+                start_point_local = QPointF(DECISION_WIDTH/2, 0)
             else:
                 # Bottom point of diamond
-                start_point = self.start_item.mapToScene(QPointF(0, DECISION_HEIGHT/2))
+                start_point_local = QPointF(0, DECISION_HEIGHT/2)
         else:
             # Bottom center of rectangle
-            start_point = self.start_item.mapToScene(QPointF(0, start_rect.height() / 2))
-        
+            start_point_local = QPointF(0, start_rect.height() / 2)
+        start_point_scene = self.start_item.mapToScene(start_point_local)
+
+        # Determine END point in Scene coordinates
         if isinstance(self.end_item, DecisionItem) and not (is_true_branch or is_false_branch):
             # Top point of diamond (default entry)
-            end_point = self.end_item.mapToScene(QPointF(0, -DECISION_HEIGHT/2))
+            end_point_local = QPointF(0, -DECISION_HEIGHT/2)
         else:
             # Top center of rectangle/step
-            end_point = self.end_item.mapToScene(QPointF(0, -end_rect.height() / 2))
+            end_point_local = QPointF(0, -end_rect.height() / 2)
+        end_point_scene = self.end_item.mapToScene(end_point_local)
+        
+        return start_point_scene, end_point_scene, is_true_branch, is_false_branch
 
-        # --- Corrected Path Drawing Logic for Moveable Shapes ---
+    def update_position(self):
+        start_point, end_point, is_true_branch, is_false_branch = self.get_connection_points()
         
         path = QPainterPath()
         path.moveTo(start_point)
         
-        dy = end_point.y() - start_point.y()
-        # dx = end_point.x() - start_point.x() # Not strictly needed for the path logic below
-
         # Determine if this is a connection from the side of a DecisionItem
         is_side_branch_from_decision = isinstance(self.start_item, DecisionItem) and (is_true_branch or is_false_branch)
         
-        # The key to keeping lines attached is using an elbow (VHV or HVH) path
-        # that doesn't rely on fixed grid coordinates.
         if is_side_branch_from_decision:
-            # HVH path: Horizontal-Vertical-Horizontal
-            # 1. Move horizontally out from the DecisionItem to clear the shape.
-            #    DECISION_WIDTH/2 is the max horizontal size. We add a 10px buffer.
-            h_clearance = DECISION_WIDTH / 2 + 10
+            # --- Smart Horizontal-Vertical-Horizontal (HVH) Route for Decision Branches ---
+            
+            h_clearance = max(DECISION_WIDTH / 2, self.end_item.boundingRect().width() / 2) + LINE_CLEARANCE
             x_offset = h_clearance * (1 if is_false_branch else -1)
             
-            waypoint_x = start_point.x() + x_offset
+            waypoint_x_1 = start_point.x() + x_offset
             
-            path.lineTo(waypoint_x, start_point.y()) # Move horizontally out
+            if (is_false_branch and waypoint_x_1 < end_point.x()) or \
+               (is_true_branch and waypoint_x_1 > end_point.x()):
+                waypoint_x_1 = end_point.x()
+                
+            path.lineTo(waypoint_x_1, start_point.y())
             
-            # 2. Move vertically to align with the target's Y position
-            path.lineTo(waypoint_x, end_point.y())
+            waypoint_y_2 = end_point.y()
+            path.lineTo(waypoint_x_1, waypoint_y_2)
             
-            # 3. Move horizontally into the target item
             path.lineTo(end_point)
-        else:
-            # VHV path: Vertical-Horizontal-Vertical (Standard Top/Bottom Connection)
-            # 1. Move vertically halfway to the target for a clean elbow
-            mid_y = start_point.y() + dy / 2
             
-            path.lineTo(start_point.x(), mid_y)
-            
-            # 2. Move horizontally to align with the target's X position
-            path.lineTo(end_point.x(), mid_y)
-            
-            # 3. Move vertically into the target
-            path.lineTo(end_point)
-
-        self.setPath(path)
-        
-        # Adjust label position
-        if is_true_branch or is_false_branch:
-            # Position label near the start point for branch labels
             label_x = start_point.x() + (-40 if is_true_branch else 10)
             label_y = start_point.y() + 5
+            
         else:
-            # Position label in the middle for other connections
+            # --- Smart Vertical-Horizontal-Vertical (VHV) Route for Standard Connections ---
+            
+            dy = end_point.y() - start_point.y()
+            
+            if abs(dy) > (STEP_HEIGHT + LINE_CLEARANCE):
+                # If shapes are far apart, use a 3-segment path (V-H-V)
+                mid_y = start_point.y() + dy / 2
+                path.lineTo(start_point.x(), mid_y)
+                path.lineTo(end_point.x(), mid_y)
+            else:
+                # If shapes are close, use a 5-segment path for better separation
+                
+                vertical_clearance_start = (self.start_item.boundingRect().height() / 2) + LINE_CLEARANCE
+                vertical_clearance_end = (self.end_item.boundingRect().height() / 2) + LINE_CLEARANCE
+
+                waypoint_x_1 = start_point.x()
+                waypoint_y_1 = start_point.y() + vertical_clearance_start 
+                
+                is_mostly_vertical = abs(start_point.x() - end_point.x()) < GRID_SIZE
+                
+                if is_mostly_vertical:
+                    mid_y = (start_point.y() + end_point.y()) / 2
+                    path.lineTo(start_point.x(), mid_y)
+                    path.lineTo(end_point.x(), mid_y)
+                else:
+                    path.lineTo(waypoint_x_1, waypoint_y_1)
+
+                    waypoint_x_2 = (start_point.x() + end_point.x()) / 2
+                    path.lineTo(waypoint_x_2, waypoint_y_1)
+
+                    waypoint_y_3 = end_point.y() - vertical_clearance_end
+                    if waypoint_y_3 < waypoint_y_1:
+                        waypoint_y_3 = max(waypoint_y_1, end_point.y() + vertical_clearance_start)
+                        
+                    path.lineTo(waypoint_x_2, waypoint_y_3)
+
+                    waypoint_x_4 = end_point.x()
+                    path.lineTo(waypoint_x_4, waypoint_y_3)
+                
+            path.lineTo(end_point)
+
             label_x = (start_point.x() + end_point.x()) / 2 - 20
             label_y = (start_point.y() + end_point.y()) / 2 - 10
-        
+            
+        self.setPath(path)
         self.label.setPos(label_x, label_y)
 
 
@@ -669,6 +755,10 @@ class FlowchartItem(QGraphicsPolygonItem):
             # This is the crucial line that triggers the connector update when the shape moves
             for connector in self.connectors:
                 connector.update_position()
+            # Also update connectors of items connected to this one's output
+            for item in self.scene().items():
+                if isinstance(item, Connector) and item.end_item == self:
+                    item.update_position()
         return super().itemChange(change, value)
 
     def mouseDoubleClickEvent(self, event):
@@ -774,8 +864,33 @@ class FlowchartView(QGraphicsView):
                     # Second click - connect to end item
                     end_item = flowchart_item
                     if self.main_window.start_item != end_item:
-                        # Create the connection
-                        connector = Connector(self.main_window.start_item, end_item)
+                        # Determine label based on connection type
+                        label = ""
+                        color = QColor(LINE_COLOR)
+                        
+                        # If the starting item is a DecisionItem, ask which branch
+                        if isinstance(self.main_window.start_item, DecisionItem):
+                            branch_choice, ok = QInputDialog.getItem(self, "Branch Selection", "Select branch type:", ["Default (Bottom)", "True (Left)", "False (Right)"], 0, False)
+                            if not ok:
+                                # User cancelled, reset start item visual
+                                pen = self.main_window.start_item.pen()
+                                pen.setColor(QColor(SHAPE_BORDER_COLOR))
+                                pen.setWidth(2)
+                                self.main_window.start_item.setPen(pen)
+                                self.main_window.start_item = None
+                                if self.temp_line:
+                                    self.scene().removeItem(self.temp_line)
+                                    self.temp_line = None
+                                return
+                                
+                            if branch_choice == "True (Left)":
+                                label = "True"
+                                color = TRUE_BRANCH_COLOR_LINE
+                            elif branch_choice == "False (Right)":
+                                label = "False"
+                                color = FALSE_BRANCH_COLOR_LINE
+
+                        connector = Connector(self.main_window.start_item, end_item, label, color)
                         self.scene().addItem(connector)
                         connector.update_position()
                         
@@ -811,25 +926,18 @@ class FlowchartView(QGraphicsView):
         if self.main_window.connection_mode and self.temp_line and self.main_window.start_item:
             # Update temporary line to follow mouse
             scene_pos = self.mapToScene(event.pos())
-            start_rect = self.main_window.start_item.boundingRect()
+            start_item = self.main_window.start_item
             
-            # Use the already determined connection point for the start of the line
-            start_point = QPointF(0, start_rect.height() / 2) # Default bottom center in local coords
-            if isinstance(self.main_window.start_item, DecisionItem):
-                is_true = self.main_window.start_item.step_data.get('if_branch') == 'true'
-                is_false = self.main_window.start_item.step_data.get('if_branch') == 'false'
-                if is_true:
-                    start_point = QPointF(-DECISION_WIDTH/2, 0)
-                elif is_false:
-                    start_point = QPointF(DECISION_WIDTH/2, 0)
-                else:
-                    start_point = QPointF(0, DECISION_HEIGHT/2)
-            
-            start_point_scene = self.main_window.start_item.mapToScene(start_point)
+            # Use the connector's logic to determine the start point to be consistent
+            temp_connector = Connector(start_item, start_item) # Dummy connector
+            start_point_scene, _, is_true_branch, is_false_branch = temp_connector.get_connection_points()
             
             path = QPainterPath()
             path.moveTo(start_point_scene)
+            
+            # Simple line to follow the mouse for temporary visual
             path.lineTo(scene_pos)
+            
             self.temp_line.setPath(path)
         else:
             super().mouseMoveEvent(event)
@@ -906,7 +1014,7 @@ class FlowchartApp(QMainWindow):
         self.connection_mode = False
         self.start_item = None
         self.global_variables = {}
-        self.flow_steps = []
+        self.flow_steps = [] # Stores list of step_ids in execution order
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -944,7 +1052,7 @@ class FlowchartApp(QMainWindow):
         left_panel_layout.addWidget(self.add_loop_button)
         self.add_conditional_button = QPushButton("Add Conditional"); self.add_conditional_button.setStyleSheet(button_style)
         left_panel_layout.addWidget(self.add_conditional_button)
-        self.save_steps_button = QPushButton("Save Bot"); self.save_steps_button.setStyleSheet(button_style)
+        self.save_steps_button = QPushButton("Save Bot"); self.save_steps_button.setStyleSheet(button_style); self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
         left_panel_layout.addWidget(self.save_steps_button)
         self.group_steps_button = QPushButton("Group Selected"); self.group_steps_button.setStyleSheet(button_style)
         left_panel_layout.addWidget(self.group_steps_button)
@@ -1013,6 +1121,88 @@ class FlowchartApp(QMainWindow):
         self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
         self._update_variables_list_display()
 
+    # --- NEW HELPER METHOD: Get list of existing bot names ---
+    def _get_bot_names(self) -> list:
+        """Returns a sorted list of existing bot names (without extension)."""
+        os.makedirs(BOT_STEPS_DIR, exist_ok=True)
+        return sorted([os.path.splitext(f)[0] for f in os.listdir(BOT_STEPS_DIR) if f.endswith(".csv")])
+
+    # --- NEW HELPER METHOD: Get linear step data ---
+    def _get_flat_steps_data(self) -> list:
+        """Converts the list of step_ids into a linear list of step_data dictionaries."""
+        flat_steps_data = []
+        item_map = {item.step_id: item for item in self.scene.items() if isinstance(item, FlowchartItem)}
+        
+        for step_id in self.flow_steps:
+            item = item_map.get(step_id)
+            if item and item.step_data:
+                # Need to use a deep copy or copy to prevent modifying the original dict in FlowchartItem
+                step_data_copy = item.step_data.copy()
+                flat_steps_data.append(step_data_copy)
+                
+        return flat_steps_data
+
+    # --- NEW METHOD: Save Bot Logic ---
+    def save_bot_steps_dialog(self) -> None:
+        """Opens a dialog to name the bot, then saves the steps and variables to a CSV file."""
+        
+        flat_steps = self._get_flat_steps_data()
+
+        if not flat_steps and not self.global_variables:
+            QMessageBox.information(self, "Nothing to Save", "The flowchart and global variables are empty.")
+            return
+
+        existing_bots = self._get_bot_names()
+        dialog = SaveBotDialog(existing_bots, self)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            bot_name = dialog.get_bot_name()
+            if not bot_name: return # Dialog already showed an error message
+
+            file_path = os.path.join(BOT_STEPS_DIR, f"{bot_name}.csv")
+
+            # Check for overwrite
+            if bot_name in existing_bots:
+                 reply = QMessageBox.question(self, "Confirm Overwrite",
+                                              f"A bot named '{bot_name}' already exists. Overwrite it?",
+                                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                 if reply == QMessageBox.StandardButton.No:
+                    return
+
+            try:
+                # Only serialize primitive types (str, int, float, bool, list, dict, None)
+                variables_to_save = {}
+                for var_name, var_value in self.global_variables.items():
+                    # Attempt to dump/load to check serializability. If it fails, save as None.
+                    try:
+                        json.dumps(var_value)
+                        variables_to_save[var_name] = var_value
+                    except (TypeError, OverflowError):
+                        variables_to_save[var_name] = None 
+
+                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                    writer = csv.writer(csvfile)
+                    
+                    # 1. Write variables
+                    writer.writerow(["__GLOBAL_VARIABLES__"])
+                    for var_name, var_value in variables_to_save.items():
+                        writer.writerow([var_name, json.dumps(var_value)])
+                    
+                    # 2. Write steps
+                    writer.writerow(["__BOT_STEPS__"])
+                    writer.writerow(["StepType", "DataJSON"])
+                    for step_data_dict in flat_steps:
+                        # Ensure keys like 'original_listbox_row_index' are removed before final save
+                        step_data_to_save = step_data_dict.copy()
+                        step_data_to_save.pop("original_listbox_row_index", None)
+                        
+                        writer.writerow([step_data_to_save["type"], json.dumps(step_data_to_save)])
+                
+                QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{file_path}")
+            
+            except Exception as e:
+                QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
+
     def _get_item_by_id(self, item_id):
         for item in self.scene.items():
             if isinstance(item, FlowchartItem) and hasattr(item, 'step_id') and item.step_id == item_id:
@@ -1037,7 +1227,7 @@ class FlowchartApp(QMainWindow):
             self.global_variables[assign_to] = None
             self._update_variables_list_display()
 
-        step_data = {'class': class_name, 'method': method_name, 'config': config, 'assign_to': assign_to, 'status': ''}
+        step_data = {'type': 'step', 'class': class_name, 'method': method_name, 'config': config, 'assign_to': assign_to, 'status': ''}
         
         new_item = StepItem(step_data=step_data)
         
@@ -1384,6 +1574,8 @@ class FlowchartApp(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             self.scene.clear()
             self.flow_steps.clear()
+            self.global_variables.clear() # Clear variables too
+            self._update_variables_list_display() # Update display
             self.start_item = None
             self.btn_connect_manual.setChecked(False)
 
@@ -1406,8 +1598,8 @@ class FlowchartApp(QMainWindow):
                     pen.setColor(QColor(SHAPE_BORDER_COLOR))
                     pen.setStyle(Qt.PenStyle.SolidLine)
                 pen.setWidth(2)
-                self.main_window.start_item.setPen(pen)
-                self.main_window.start_item = None
+                self.start_item.setPen(pen)
+                self.start_item = None
 
     def _update_variables_list_display(self):
         self.variables_list.clear()
