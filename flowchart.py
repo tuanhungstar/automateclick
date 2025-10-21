@@ -23,7 +23,7 @@ DECISION_WIDTH = 280
 DECISION_HEIGHT = 100
 VERTICAL_SPACING = 80
 HORIZONTAL_SPACING = 300
-GRID_SIZE = 20  # New: Define the size of the grid squares
+GRID_SIZE = 20  # Define the size of the grid squares
 
 # --- Style Configuration ---
 BG_COLOR = "#FFFFFF"
@@ -319,6 +319,9 @@ class StepInsertionDialog(QDialog):
         self.layout.addWidget(QLabel("Select an existing step:"))
         self.layout.addWidget(self.list_widget)
         self.layout.addWidget(self.insertion_mode_group)
+        
+        # NEW: Create a map for quick lookup to check item type
+        self.item_map = {item.step_id: item for item in flowchart_items}
 
         self._populate_list(flowchart_items)
 
@@ -326,6 +329,10 @@ class StepInsertionDialog(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
+        
+        # NEW: Connect signal to update insertion options based on selection
+        self.list_widget.currentItemChanged.connect(self._update_insertion_mode_options)
+        self._update_insertion_mode_options() # Initial call
 
     def _populate_list(self, items):
         if not items:
@@ -339,6 +346,38 @@ class StepInsertionDialog(QDialog):
                 list_item.setData(Qt.ItemDataRole.UserRole, item.step_id)
                 self.list_widget.addItem(list_item)
             self.list_widget.setCurrentRow(len(items) - 1)
+
+    # NEW METHOD: Update radio buttons based on selected item type
+    def _update_insertion_mode_options(self):
+        selected_list_item = self.list_widget.currentItem()
+        if not selected_list_item:
+            self.insert_before_radio.setEnabled(False)
+            self.insert_after_radio.setEnabled(False)
+            return
+
+        target_item_id = selected_list_item.data(Qt.ItemDataRole.UserRole)
+
+        # Handle 'End of Flowchart' item which has no UserRole data
+        if not target_item_id:
+            self.insert_before_radio.setEnabled(False)
+            self.insert_after_radio.setEnabled(True)
+            self.insert_after_radio.setChecked(True)
+            return
+            
+        target_item = self.item_map.get(target_item_id)
+        
+        # Check if the target item is a DecisionItem (diamond shape/IF_START)
+        is_decision_item = isinstance(target_item, DecisionItem)
+        
+        if is_decision_item:
+            # If a DecisionItem is selected, only allow inserting BEFORE it.
+            self.insert_after_radio.setEnabled(False)
+            self.insert_before_radio.setEnabled(True)
+            self.insert_before_radio.setChecked(True) # Force to "Insert Before"
+        else:
+            # For all other items, allow both before and after.
+            self.insert_after_radio.setEnabled(True)
+            self.insert_before_radio.setEnabled(True)
 
     def get_insertion_point(self):
         selected_list_item = self.list_widget.currentItem()
@@ -620,7 +659,7 @@ class FlowchartItem(QGraphicsPolygonItem):
 
     def itemChange(self, change, value):
         if change == QGraphicsPolygonItem.GraphicsItemChange.ItemPositionChange:
-            # New: Snap the item position to the grid
+            # Snap the item position to the grid
             new_pos = value
             x = round(new_pos.x() / GRID_SIZE) * GRID_SIZE
             y = round(new_pos.y() / GRID_SIZE) * GRID_SIZE
@@ -678,7 +717,7 @@ class FlowchartView(QGraphicsView):
         self.setRenderHint(self.renderHints().Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
 
-    # New: Override drawBackground to draw the grid
+    # Override drawBackground to draw the grid
     def drawBackground(self, painter, rect):
         super().drawBackground(painter, rect)
 
@@ -821,6 +860,40 @@ class FlowchartView(QGraphicsView):
                 self.temp_line = None
         else:
             super().keyPressEvent(event)
+            
+    # NEW METHOD: Handle Ctrl + Scroll for Zoom
+    def wheelEvent(self, event):
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            # Determine zoom factor
+            zoom_in_factor = 1.15
+            zoom_out_factor = 1.0 / zoom_in_factor
+
+            # Get the point in the view where the scroll wheel occurred
+            point_before_scale = self.mapToScene(event.position().toPoint())
+
+            # Apply transformation
+            if event.angleDelta().y() > 0:
+                # Zoom in
+                self.scale(zoom_in_factor, zoom_in_factor)
+            else:
+                # Zoom out
+                self.scale(zoom_out_factor, zoom_out_factor)
+
+            # Get the point after scaling and translate the view to keep the initial point constant
+            point_after_scale = self.mapToScene(event.position().toPoint())
+            
+            # Calculate the translation required
+            translation_delta = point_before_scale - point_after_scale
+            
+            # Apply the translation
+            self.translate(translation_delta.x(), translation_delta.y())
+
+            # Accept the event to prevent default scrolling
+            event.accept()
+        else:
+            # If Ctrl is not pressed, handle as a normal scroll (panning)
+            super().wheelEvent(event)
+
 
 # --- Main Application Window ---
 class FlowchartApp(QMainWindow):
@@ -1015,9 +1088,9 @@ class FlowchartApp(QMainWindow):
         false_data = {'type': 'step', 'class': 'Bot_utility', 'method': 'wait_ms', 'if_branch': 'false', 'if_id': if_id, 'config': {'value': {'type': 'hardcoded', 'value': 1}}, 'assign_to': None}
         end_if_data = {"type": "IF_END", "if_id": if_id}
 
-        if_item = DecisionItem(step_data=if_data)
-        true_item = StepItem(step_data=true_data)
-        false_item = StepItem(step_data=false_data)
+        if_item = DecisionItem(text="IF...", step_data=if_data)
+        true_item = StepItem(text="True Branch Start (Placeholder)", step_data=true_data)
+        false_item = StepItem(text="False Branch Start (Placeholder)", step_data=false_data)
         end_if_item = StepItem(step_data=end_if_data)
 
         self.scene.addItem(if_item)
