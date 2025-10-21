@@ -23,6 +23,7 @@ DECISION_WIDTH = 280
 DECISION_HEIGHT = 100
 VERTICAL_SPACING = 80
 HORIZONTAL_SPACING = 300
+GRID_SIZE = 20  # New: Define the size of the grid squares
 
 # --- Style Configuration ---
 BG_COLOR = "#FFFFFF"
@@ -485,7 +486,7 @@ class Connector(QGraphicsPathItem):
         path.moveTo(start_point)
         
         dy = end_point.y() - start_point.y()
-        dx = end_point.x() - start_point.x()
+        # dx = end_point.x() - start_point.x() # Not strictly needed for the path logic below
 
         # Determine if this is a connection from the side of a DecisionItem
         is_side_branch_from_decision = isinstance(self.start_item, DecisionItem) and (is_true_branch or is_false_branch)
@@ -618,6 +619,13 @@ class FlowchartItem(QGraphicsPolygonItem):
         self.connectors.append(connector)
 
     def itemChange(self, change, value):
+        if change == QGraphicsPolygonItem.GraphicsItemChange.ItemPositionChange:
+            # New: Snap the item position to the grid
+            new_pos = value
+            x = round(new_pos.x() / GRID_SIZE) * GRID_SIZE
+            y = round(new_pos.y() / GRID_SIZE) * GRID_SIZE
+            return QPointF(x, y)
+        
         if change == QGraphicsPolygonItem.GraphicsItemChange.ItemPositionHasChanged:
             # This is the crucial line that triggers the connector update when the shape moves
             for connector in self.connectors:
@@ -669,6 +677,34 @@ class FlowchartView(QGraphicsView):
         self.temp_line = None
         self.setRenderHint(self.renderHints().Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
+
+    # New: Override drawBackground to draw the grid
+    def drawBackground(self, painter, rect):
+        super().drawBackground(painter, rect)
+
+        grid_size = GRID_SIZE
+        light_gray = QColor("#E8E8E8")
+        pen = QPen(light_gray)
+        pen.setWidth(0) # hairline
+
+        painter.setPen(pen)
+
+        left = int(rect.left())
+        right = int(rect.right())
+        top = int(rect.top())
+        bottom = int(rect.bottom())
+
+        # Draw vertical lines
+        x = left - (left % grid_size)
+        while x < right:
+            painter.drawLine(x, top, x, bottom)
+            x += grid_size
+
+        # Draw horizontal lines
+        y = top - (top % grid_size)
+        while y < bottom:
+            painter.drawLine(left, y, right, y)
+            y += grid_size
 
     def mousePressEvent(self, event):
         if self.main_window.connection_mode and event.button() == Qt.MouseButton.LeftButton:
@@ -1297,8 +1333,8 @@ class FlowchartApp(QMainWindow):
                     pen.setColor(QColor(SHAPE_BORDER_COLOR))
                     pen.setStyle(Qt.PenStyle.SolidLine)
                 pen.setWidth(2)
-                self.start_item.setPen(pen)
-                self.start_item = None
+                self.main_window.start_item.setPen(pen)
+                self.main_window.start_item = None
 
     def _update_variables_list_display(self):
         self.variables_list.clear()
