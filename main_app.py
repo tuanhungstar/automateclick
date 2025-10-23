@@ -16,7 +16,10 @@ import shutil
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
-from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon
+# In main_app.py
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor # <-- ADD QCursor
+# In main_app.py
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
 from PyQt6 import QtWidgets, QtGui
 from typing import Optional, List, Dict, Any, Tuple, Union
 
@@ -25,7 +28,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 my_lib_dir = os.path.join(script_dir, "my_lib")
 if my_lib_dir not in sys.path:
     sys.path.insert(0, my_lib_dir)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QComboBox, QListWidget, QLabel, QPushButton, QListWidgetItem,
@@ -34,11 +37,15 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
-    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator
+    QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator,
+    QScrollArea, QTabWidget # <-- ADD QTabWidget HERE
 )
 
 from PyQt6.QtGui import QIntValidator
+
+from PyQt6.QtGui import QIntValidator
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QPainter, QPen, QTextCursor,QTextFormat,QKeyEvent,QTextDocument
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon,QPolygonF
 
 # Use the actual libraries from the my_lib folder
 from my_lib.shared_context import ExecutionContext, GuiCommunicator
@@ -1318,6 +1325,8 @@ class SaveBotDialog(QDialog):
 
 # In main_app.py, REPLACE your existing GroupedTreeWidget class with this one
 
+# In main_app.py, REPLACE your entire GroupedTreeWidget class with this:
+
 class GroupedTreeWidget(QTreeWidget):
     """
     A custom QTreeWidget that draws vertical lines to indicate the scope
@@ -1388,7 +1397,6 @@ class GroupedTreeWidget(QTreeWidget):
             # Recurse into the children of the current item to draw nested block lines.
             if child_item.isExpanded():
                 self._draw_group_lines_recursive(child_item, painter)
-
 # --- NEW WIDGET: FindReplaceWidget ---
 class FindReplaceWidget(QWidget):
     """A widget for find and replace functionality."""
@@ -2047,7 +2055,700 @@ class UpdateDialog(QDialog):
                 all_children_list.append(child_path)
             else:
                 self.get_all_children(child, child_path, all_children_list)
+# In main_app.py, after the SecondWindow class or similar
+
+# In main_app.py
+# REPLACE the entire WorkflowCanvas class with this:
+
+class WorkflowCanvas(QWidget):
+    """A custom widget that draws the bot's workflow."""
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    def __init__(self, workflow_tree: List[Dict[str, Any]], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.workflow_tree = workflow_tree
+        
+        # --- MODIFIED: Store step_data in the node ---
+        # self.nodes: List[Tuple[QRect, str, str, Dict[str, Any]]]
+        # (rect, text, shape, step_data)
+        self.nodes: List[Tuple[QRect, str, str, Dict[str, Any]]] = [] 
+        
+        self.edges: List[Tuple[Optional[str], Tuple[int, str], Tuple[int, str]]] = []
+        self.merge_lines: List[Tuple[int, int]] = []
+        
+        self.NODE_WIDTH = 250
+        self.NODE_HEIGHT = 60
+        self.V_SPACING = 50
+        self.H_SPACING = 100 
+        self.GRID_SIZE = 50
+        
+        self.total_width = 0
+        self.total_height = 0
+
+        self.dragging_node_index: Optional[int] = None
+        self.drag_offset: QPoint = QPoint()
+        self.setMouseTracking(True) 
+        
+        self._build_layout()
+        self._adjust_canvas_size()
+        self.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding)
+        
+        
+    # In main_app.py, add this new method inside the WorkflowCanvas class
+# (A good place is after the mouseReleaseEvent)
+    # In main_app.py, inside the WorkflowCanvas class
+    # ADD this new helper method:
+
+        
+    def _draw_grid(self, painter: QPainter):
+        """Draws a light gray dotted grid."""
+        pen = QPen(QColor("#E0E0E0"))
+        pen.setStyle(Qt.PenStyle.DotLine)
+        painter.setPen(pen)
+        
+        width = self.width()
+        height = self.height()
+        
+        # Draw vertical lines
+        for x in range(0, width, self.GRID_SIZE):
+            painter.drawLine(x, 0, x, height)
+            
+        # Draw horizontal lines
+        for y in range(0, height, self.GRID_SIZE):
+            painter.drawLine(0, y, width, y)
+            
+
+    # --- ADD NEW MOUSE EVENTS ---
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+    def wheelEvent(self, event: QtGui.QWheelEvent):
+        """Handles mouse wheel events for zooming the canvas."""
+        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            delta = event.angleDelta().y()
+            zoom_factor = 1.1 if delta > 0 else (1 / 1.1)
+            
+            # Get the mouse position as the anchor point for zooming
+            anchor_point = event.position()
+            
+            self._scale_layout(zoom_factor, anchor_point)
+            self._adjust_canvas_size()
+            self.update()
+            event.accept() # Consume the event
+        else:
+            # Allow the QScrollArea to handle normal scrolling
+            event.ignore()
+
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    def _scale_layout(self, factor: float, anchor: QPointF):
+        """
+        Scales layout parameters and user-defined positions, then rebuilds the layout.
+        """
+        # 1. Scale the base layout parameters
+        self.NODE_WIDTH = max(50, int(self.NODE_WIDTH * factor))
+        self.NODE_HEIGHT = max(30, int(self.NODE_HEIGHT * factor))
+        self.V_SPACING = max(10, int(self.V_SPACING * factor))
+        self.H_SPACING = max(20, int(self.H_SPACING * factor))
+        self.GRID_SIZE = max(5, int(self.GRID_SIZE * factor))
+
+        # 2. Scale USER-DEFINED positions stored in the persistent workflow_tree data
+        #    This preserves the relative positions set by dragging.
+        def scale_user_pos_recursive(nodes: List[Dict]):
+            for node in nodes:
+                step_data = node['step_data']
+                if "workflow_pos" in step_data and step_data["workflow_pos"]:
+                    try:
+                        # --- FIX: Ensure workflow_pos is treated as tuple/list ---
+                        current_pos_tuple = step_data["workflow_pos"]
+                        if isinstance(current_pos_tuple, (list, tuple)) and len(current_pos_tuple) == 2:
+                             current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
+                             new_pos_f = (current_pos - anchor) * factor + anchor
+                             # Store back as tuple of ints
+                             step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
+                        else:
+                             # Handle potential malformed data gracefully - remove invalid position
+                              del step_data["workflow_pos"]
+                    except (TypeError, ValueError, IndexError):
+                         # Handle potential errors during conversion/scaling - remove invalid position
+                         if "workflow_pos" in step_data:
+                              del step_data["workflow_pos"]
+
+                # Recurse into children and false children
+                scale_user_pos_recursive(node.get('children', []))
+                scale_user_pos_recursive(node.get('false_children', []))
+                # Also scale the end node if it exists
+                if node.get('end_node'):
+                     end_node_step_data = node['end_node']['step_data']
+                     if "workflow_pos" in end_node_step_data and end_node_step_data["workflow_pos"]:
+                         try:
+                              # --- FIX: Ensure workflow_pos is treated as tuple/list ---
+                              current_pos_tuple = end_node_step_data["workflow_pos"]
+                              if isinstance(current_pos_tuple, (list, tuple)) and len(current_pos_tuple) == 2:
+                                    current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
+                                    new_pos_f = (current_pos - anchor) * factor + anchor
+                                    # Store back as tuple of ints
+                                    end_node_step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
+                              else:
+                                    del end_node_step_data["workflow_pos"] # Remove invalid
+                         except (TypeError, ValueError, IndexError):
+                               if "workflow_pos" in end_node_step_data:
+                                    del end_node_step_data["workflow_pos"] # Remove invalid
+
+
+        scale_user_pos_recursive(self.workflow_tree) # Apply scaling to the source data tree
+
+        # 3. Clear existing calculated layout
+        self.nodes.clear()
+        self.edges.clear()
+        self.merge_lines.clear()
+        self.total_width = 0 # Reset dimensions
+        self.total_height = 0
+
+        # 4. Rebuild the entire layout using new parameters and scaled user positions
+        self._build_layout()
+        # self._adjust_canvas_size() # This will be called by the wheelEvent handler after _scale_layout
+
+    def _adjust_canvas_size(self):
+        """Recalculates the minimum size of the canvas to fit all nodes."""
+        if not self.nodes:
+            self.setMinimumSize(800, 600) # Default size
+            return
+
+        max_x = 0
+        max_y = 0
+        for rect, _, _, _ in self.nodes:
+            max_x = max(max_x, rect.right())
+            max_y = max(max_y, rect.bottom())
+        
+        # Add some padding
+        self.total_width = max_x + 100
+        self.total_height = max_y + 100
+        self.setMinimumSize(self.total_width, self.total_height)
+        
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            for i in range(len(self.nodes) - 1, -1, -1):
+                # --- MODIFIED: Unpack 4 items ---
+                rect, _, _, _ = self.nodes[i]
+                if rect.contains(event.pos()):
+                    self.dragging_node_index = i
+                    self.drag_offset = event.pos() - rect.topLeft()
+                    self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                    
+                    node = self.nodes.pop(i)
+                    self.nodes.append(node)
+                    self._remap_edges_for_drag(i, len(self.nodes) - 1)
+                    self.dragging_node_index = len(self.nodes) - 1
+                    self.update()
+                    break
+        super().mousePressEvent(event)
+
+    def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
+        """Updates all edge indices when a node is moved in the list."""
+        new_edges = []
+        for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
+            new_from_idx = from_idx
+            new_to_idx = to_idx
+            
+            if from_idx == old_idx: new_from_idx = new_idx
+            elif from_idx > old_idx: new_from_idx -= 1
+            
+            if to_idx == old_idx: new_to_idx = new_idx
+            elif to_idx > old_idx: new_to_idx -= 1
                 
+            new_edges.append((label, (new_from_idx, from_port), (new_to_idx, to_port)))
+        self.edges = new_edges
+        
+        new_merges = []
+        for from_idx, to_idx in self.merge_lines:
+            new_from_idx = from_idx
+            new_to_idx = to_idx
+
+            if from_idx == old_idx: new_from_idx = new_idx
+            elif from_idx > old_idx: new_from_idx -= 1
+            
+            if to_idx == old_idx: new_to_idx = new_idx
+            elif to_idx > old_idx: new_to_idx -= 1
+            
+            new_merges.append((new_from_idx, new_to_idx))
+        self.merge_lines = new_merges
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    def mouseMoveEvent(self, event: QtGui.QMoveEvent):
+        if self.dragging_node_index is not None:
+            new_top_left = event.pos() - self.drag_offset
+            
+            # --- MODIFIED: Unpack 4 items ---
+            _, text, shape, step_data = self.nodes[self.dragging_node_index]
+            old_rect = self.nodes[self.dragging_node_index][0]
+            
+            # --- MODIFIED: Re-pack 4 items ---
+            self.nodes[self.dragging_node_index] = (QRect(new_top_left, old_rect.size()), text, shape, step_data)
+            self.update() # Trigger a repaint
+        else:
+            cursor = Qt.CursorShape.ArrowCursor
+            # --- MODIFIED: Unpack 4 items ---
+            for rect, _, _, _ in self.nodes:
+                if rect.contains(event.pos()):
+                    cursor = Qt.CursorShape.OpenHandCursor
+                    break
+            self.setCursor(cursor)
+        super().mouseMoveEvent(event)
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE your mouseReleaseEvent method with this one:
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+
+            if self.dragging_node_index is not None:
+                rect, text, shape, step_data = self.nodes[self.dragging_node_index]
+                top_left = rect.topLeft()
+
+                snapped_x = round(top_left.x() / self.GRID_SIZE) * self.GRID_SIZE
+                snapped_y = round(top_left.y() / self.GRID_SIZE) * self.GRID_SIZE
+
+                new_top_left = QPoint(snapped_x, snapped_y)
+                snapped_rect = QRect(new_top_left, rect.size())
+
+                # --- MODIFIED: Ensure position is saved as a tuple of ints ---
+                step_data["workflow_pos"] = (snapped_rect.x(), snapped_rect.y())
+
+                self.nodes[self.dragging_node_index] = (snapped_rect, text, shape, step_data)
+                self.update()
+
+            self.dragging_node_index = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        super().mouseReleaseEvent(event)
+
+    def _get_port_pos(self, node_idx: int, port: str) -> QPoint:
+        """Gets the QPoint for a given port on a node."""
+        rect = self.nodes[node_idx][0]
+        if port == "top":
+            return rect.center() - QPoint(0, rect.height() // 2)
+        if port == "bottom":
+            return rect.center() + QPoint(0, rect.height() // 2)
+        if port == "left":
+            return rect.center() - QPoint(rect.width() // 2, 0)
+        if port == "right":
+            return rect.center() + QPoint(rect.width() // 2, 0)
+        return rect.center()
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    def _draw_right_angle_line(self, painter: QPainter, p1: QPoint, p2: QPoint, from_port: str, to_port: str):
+        """Draws a rectilinear line between two points."""
+        
+        if from_port == "bottom" and to_port == "top":
+            # Standard vertical connection
+            mid_y = p1.y() + self.V_SPACING // 2
+            points = [p1, QPoint(p1.x(), mid_y), QPoint(p2.x(), mid_y), p2]
+        
+        # --- THIS BLOCK IS MODIFIED ---
+        elif from_port in ("left", "right") and to_port == "top":
+            # IF branch connection (True or False)
+            # This logic draws horizontal first (left or right), then vertical (down or up)
+            points = [p1, QPoint(p2.x(), p1.y()), p2]
+        # --- END MODIFICATION ---
+        
+        elif from_port == "right" and to_port == "top":
+            # Loop Recycle (loop_end -> loop_start)
+            # This is now only used if the other logic is overridden,
+            # but we keep it as a fallback.
+            mid_x = p1.x() + self.H_SPACING // 2
+            points = [p1, QPoint(mid_x, p1.y()), QPoint(mid_x, p2.y() - self.V_SPACING // 2),
+                      QPoint(p2.x(), p2.y() - self.V_SPACING // 2), p2]
+        
+        else:
+            # Default fallback (e.g., drag-and-drop)
+            points = [p1, QPoint(p1.x(), p2.y()), p2]
+            
+        for i in range(len(points) - 1):
+            painter.drawLine(points[i], points[i+1])
+        return points
+        
+
+    def _get_node_text(self, step_data: Dict[str, Any], step_num: int) -> str:
+        """Generates a concise text for the workflow node."""
+        step_type = step_data.get("type")
+        
+        title_prefix = f"{step_num}. "
+        
+        if step_type == "step":
+            method_name = step_data.get("method_name", "Unknown")
+            assign_var = step_data.get("assign_to_variable_name")
+            if assign_var:
+                return f"{title_prefix}@{assign_var} = {method_name}()"
+            return f"{title_prefix}{method_name}()"
+            
+        elif step_type == "loop_start":
+            config = step_data.get("loop_config", {})
+            count_config = config.get("iteration_count_config", {})
+            val = count_config.get("value", "N")
+            if count_config.get("type") == "variable":
+                val = f"@{val}"
+            return f"{title_prefix}Loop {val} times"
+            
+        elif step_type == "IF_START":
+            cond = step_data.get("condition_config", {}).get("condition", {})
+            left = cond.get("left_operand", {}).get("value", "L")
+            if cond.get("left_operand", {}).get("type") == "variable":
+                left = f"@{left}"
+            right = cond.get("right_operand", {}).get("value", "R")
+            if cond.get("right_operand", {}).get("type") == "variable":
+                right = f"@{right}"
+            op = cond.get("operator", "??")
+            return f"{title_prefix}IF ({left} {op} {right})"
+            
+        elif step_type == "ELSE":
+            return f"{title_prefix}ELSE"
+        elif step_type == "group_start":
+            return f"{title_prefix}Group: {step_data.get('group_name', 'Unnamed')}"
+        elif step_type in ["loop_end", "IF_END", "group_end"]:
+            # Don't number the end blocks
+            return f"End {step_type.split('_')[0].capitalize()}"
+            
+        return f"{title_prefix}{step_type.replace('_', ' ').title()}"
+
+    def _build_layout(self):
+        """Recursively builds the node and edge lists."""
+        x = 50
+        y = 50
+        self._recursive_layout(self.workflow_tree, x, y, -1)
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    def _recursive_layout(self, nodes: List[Dict], x: int, y: int, 
+                          last_node_idx: int) -> Tuple[int, int, int]:
+        """
+        Lays out nodes vertically, handling branches for IFs and LOOPs.
+        Returns the (next_available_y, last_node_index, max_x_in_subtree)
+        """
+        current_y = y
+        last_node_idx_in_level = last_node_idx
+        max_x = x
+
+        for node in nodes:
+            step_data = node['step_data']
+            step_type = step_data.get("type")
+
+            current_step_num = step_data.get("original_listbox_row_index", -1) + 1
+            text = self._get_node_text(step_data, current_step_num)
+            
+            node_shape = "rect"
+            if step_type == "IF_START": node_shape = "diamond"
+            elif step_type == "loop_start": node_shape = "loop_rect"
+            elif step_type == "loop_end": node_shape = "loop_rect"
+            elif step_type in ["ELSE", "IF_END"]:
+                node_shape = "rect_gray"
+            # --- NEW SHAPE for collapsed group ---
+            elif step_type == "group_start":
+                node_shape = "rect_group_collapsed"
+
+            saved_pos = step_data.get("workflow_pos")
+            
+            # --- IF_START / LOOP_START Logic ---
+            if step_type == "IF_START" or step_type == "loop_start":
+                node_y = saved_pos[1] if saved_pos else current_y
+                
+                # Default Y for branches is *after* this node
+                branch_default_y = max(current_y, node_y) + self.NODE_HEIGHT + self.V_SPACING
+
+                node_idx = len(self.nodes)
+                # Add placeholder rect, will be updated
+                self.nodes.append((QRect(x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT), text, node_shape, step_data)) 
+                
+                if last_node_idx_in_level != -1:
+                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
+
+                true_children = node.get('children', [])
+                false_children = node.get('false_children', []) # Only for IF
+                end_node_data = node.get('end_node')
+                
+                # --- Layout TRUE branch (Loop Body) ---
+                true_x = x
+                true_y_start = branch_default_y
+                first_true_node_idx = len(self.nodes)
+                true_y_end, last_true_node_idx, true_max_x = self._recursive_layout(
+                    true_children, true_x, true_y_start, -1
+                )
+                
+                if true_children:
+                    true_label = "True" if step_type == "IF_START" else "Loop Body"
+                    true_port = "left" if step_type == "IF_START" else "bottom"
+                    self.edges.append((true_label, (node_idx, true_port), (first_true_node_idx, "top")))
+
+                # --- Layout FALSE branch (Else) ---
+                false_x = (true_max_x + self.H_SPACING) if true_children else x + self.NODE_WIDTH + self.H_SPACING
+                if not true_children: 
+                    false_x = x + self.H_SPACING 
+                
+                false_y_start = branch_default_y
+                first_false_node_idx = len(self.nodes)
+                false_y_end, last_false_node_idx, false_max_x = self._recursive_layout(
+                    false_children, false_x, false_y_start, -1
+                )
+                
+                if step_type == "IF_START" and false_children:
+                    self.edges.append(("False", (node_idx, "right"), (first_false_node_idx, "top")))
+
+                # --- Update START_NODE Rect ---
+                if not false_children: false_max_x = true_max_x
+                if not true_children: true_max_x = x
+                
+                node_x = saved_pos[0] if saved_pos else (true_x + false_max_x - self.NODE_WIDTH) // 2
+                if not true_children and not false_children and not saved_pos:
+                    node_x = x 
+                    
+                rect = QRect(node_x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
+                self.nodes[node_idx] = (rect, text, node_shape, step_data) # Update placeholder
+                current_max_x = max(true_max_x, false_max_x)
+
+                # --- Layout END node ---
+                next_y_after_branches = max(true_y_end, false_y_end)
+                if not true_children and not false_children:
+                    next_y_after_branches = branch_default_y
+                
+                current_y = next_y_after_branches # Default y for the end node
+                
+                if end_node_data:
+                    end_step_num = end_node_data['step_data'].get("original_listbox_row_index", -1) + 1
+                    end_text = self._get_node_text(end_node_data['step_data'], end_step_num)
+                    
+                    end_saved_pos = end_node_data['step_data'].get("workflow_pos")
+                    end_node_x = end_saved_pos[0] if end_saved_pos else node_x 
+                    end_node_y = end_saved_pos[1] if end_saved_pos else current_y
+                    end_node_rect = QRect(end_node_x, end_node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
+                    
+                    end_node_idx = len(self.nodes)
+                    end_node_shape = "rect_gray" if step_type == "IF_START" else "loop_rect"
+                    self.nodes.append((end_node_rect, end_text, end_node_shape, end_node_data['step_data']))
+                    
+                    # Connect end of TRUE branch (or loop body) to END node
+                    if last_true_node_idx != -1:
+                        self.merge_lines.append((last_true_node_idx, end_node_idx))
+                    else: 
+                        self.merge_lines.append((node_idx, end_node_idx)) 
+
+                    if step_type == "IF_START":
+                        # Connect end of FALSE branch to END node
+                        if last_false_node_idx != -1:
+                            self.merge_lines.append((last_false_node_idx, end_node_idx))
+                        else: 
+                            self.merge_lines.append((node_idx, end_node_idx)) 
+                    
+                    elif step_type == "loop_start":
+                        self.edges.append(("Loop Again", (end_node_idx, "right"), (node_idx, "top")))
+
+                    last_node_idx_in_level = end_node_idx # Next node connects to END node
+                    current_y = max(next_y_after_branches, end_node_rect.y()) + self.NODE_HEIGHT + self.V_SPACING
+                
+                else:
+                    if last_true_node_idx != -1 and last_false_node_idx != -1:
+                         last_node_idx_in_level = last_true_node_idx if true_y_end > false_y_end else last_false_node_idx
+                    elif last_true_node_idx != -1:
+                        last_node_idx_in_level = last_true_node_idx
+                    elif last_false_node_idx != -1:
+                        last_node_idx_in_level = last_false_node_idx
+                    else:
+                        last_node_idx_in_level = node_idx 
+                
+                if end_node_data:
+                    last_node_idx_in_level = end_node_idx
+                elif last_true_node_idx != -1 and last_false_node_idx != -1:
+                    last_node_idx_in_level = last_true_node_idx if true_y_end > false_y_end else last_false_node_idx
+                elif last_true_node_idx != -1:
+                    last_node_idx_in_level = last_true_node_idx
+                elif last_false_node_idx != -1:
+                    last_node_idx_in_level = last_false_node_idx
+                else: 
+                    last_node_idx_in_level = node_idx
+            
+            # --- MODIFIED BLOCK: Handle Group as a SINGLE node ---
+            elif step_type == "group_start":
+                # This logic is now the same as a standard step.
+                # We create one node for the group and DO NOT recurse into children.
+                current_node_idx = len(self.nodes)
+                
+                node_x = saved_pos[0] if saved_pos else x
+                node_y = saved_pos[1] if saved_pos else current_y
+                rect = QRect(node_x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
+                current_max_x = node_x + self.NODE_WIDTH
+                
+                # Add the single group node
+                self.nodes.append((rect, text, node_shape, step_data))
+                
+                if last_node_idx_in_level != -1:
+                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (current_node_idx, "top")))
+                
+                last_node_idx_in_level = current_node_idx
+                current_y = max(current_y, node_y) + self.NODE_HEIGHT + self.V_SPACING
+                
+                # We explicitly DO NOT call _recursive_layout for node.get('children', [])
+                # This hides all the children steps from the diagram.
+            
+            else:
+                # --- Standard Logic (STEP, ELSE, IF_END, loop_end) ---
+                current_node_idx = len(self.nodes)
+                
+                node_x = saved_pos[0] if saved_pos else x
+                node_y = saved_pos[1] if saved_pos else current_y
+                rect = QRect(node_x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
+                current_max_x = node_x + self.NODE_WIDTH
+                
+                self.nodes.append((rect, text, node_shape, step_data))
+                
+                if last_node_idx_in_level != -1:
+                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (current_node_idx, "top")))
+                
+                last_node_idx_in_level = current_node_idx
+                current_y = max(current_y, node_y) + self.NODE_HEIGHT + self.V_SPACING
+            
+            self.total_height = max(self.total_height, current_y)
+            max_x = max(max_x, current_max_x)
+
+        self.total_width = max(self.total_width, max_x)
+        return current_y, last_node_idx_in_level, max_x
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    # In main_app.py, inside the WorkflowCanvas class
+    # REPLACE this entire method:
+    def paintEvent(self, event: QtGui.QPaintEvent):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        self._draw_grid(painter)
+        
+        pen = QPen(Qt.GlobalColor.black, 2)
+        font = QFont("Arial", 9)
+        painter.setFont(font)
+
+        # --- Draw lines first, but store labels to draw later ---
+        painter.setPen(pen)
+        labels_to_draw = [] # Stores (label, mid_point, label_rect)
+
+        for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
+            try:
+                p1 = self._get_port_pos(from_idx, from_port)
+                p2 = self._get_port_pos(to_idx, to_port)
+            except IndexError:
+                continue 
+
+            line_points = self._draw_right_angle_line(painter, p1, p2, from_port, to_port)
+
+            if label:
+                if from_port == "left":
+                    mid_point = line_points[0] + QPoint(-40, -15)
+                    label_rect = QRect(-30, -10, 60, 20)
+                elif from_port == "right":
+                    mid_point = line_points[0] + QPoint(40, -15)
+                    label_rect = QRect(-30, -10, 60, 20)
+                elif label == "Loop Again":
+                    mid_point = (line_points[1] + line_points[2]) / 2 + QPoint(0, -15)
+                    label_rect = QRect(-40, -10, 80, 20)
+                else: 
+                    mid_point = line_points[0] + QPoint(40, 15)
+                    label_rect = QRect(-40, -10, 80, 20)
+                
+                labels_to_draw.append((label, mid_point, label_rect))
+
+        # Draw Merge Lines
+        for from_idx, to_idx in self.merge_lines:
+            try:
+                from_rect, _, _, _ = self.nodes[from_idx]
+                to_rect, _, _, _ = self.nodes[to_idx]
+            except IndexError:
+                continue
+
+            from_port = "bottom"
+            if self.nodes[from_idx][2] == "diamond": 
+                from_port = "left" if from_rect.center().x() >= to_rect.center().x() else "right"
+            
+            p1 = self._get_port_pos(from_idx, from_port)
+            p2 = self._get_port_pos(to_idx, "top")
+            
+            merge_y = p2.y() - self.V_SPACING // 2
+            points = [p1, QPoint(p1.x(), merge_y), QPoint(p2.x(), merge_y), p2]
+            
+            for i in range(len(points) - 1):
+                painter.drawLine(points[i], points[i+1])
+
+        # --- Draw Nodes (Single Pass) ---
+        for rect, text, shape, _ in self.nodes:
+            painter.setPen(QPen(Qt.GlobalColor.black, 2))
+            
+            # Set Brush Color
+            if shape == "rect": painter.setBrush(QColor("#EAEAEA"))
+            elif shape == "diamond": painter.setBrush(QColor("#D6EAF8"))
+            elif shape == "loop_rect": painter.setBrush(QColor("#D4EDDA"))
+            elif shape == "rect_gray": painter.setBrush(QColor("#F0F0F0"))
+            # --- NEW COLOR for collapsed group ---
+            elif shape == "rect_group_collapsed": painter.setBrush(QColor("#E8DAEF")) # Light purple
+            
+            if shape == "diamond":
+                poly = QPolygonF([
+                    QPointF(rect.center() - QPoint(rect.width() // 2, 0)), # Left
+                    QPointF(rect.center() - QPoint(0, rect.height() // 2)), # Top
+                    QPointF(rect.center() + QPoint(rect.width() // 2, 0)), # Right
+                    QPointF(rect.center() + QPoint(0, rect.height() // 2))  # Bottom
+                ])
+                painter.drawPolygon(poly)
+            else:
+                painter.drawRoundedRect(rect, 5, 5)
+
+            painter.setPen(Qt.GlobalColor.black)
+            # --- MODIFICATION: Add "(+)" to group titles ---
+            if shape == "rect_group_collapsed":
+                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, f"{text} (+)")
+            else:
+                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+
+        # --- Draw labels LAST so they are on top ---
+        for label, mid_point, label_rect in labels_to_draw:
+            painter.save()
+            painter.translate(mid_point)
+            painter.setPen(Qt.GlobalColor.darkGray)
+            painter.setBrush(Qt.GlobalColor.white) 
+            painter.drawRect(label_rect)
+            painter.setPen(Qt.GlobalColor.black)
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
+            painter.restore()
+
+
+            
 class MainWindow(QWidget):
 # In main_app.py, replace the __init__ method in the MainWindow class
 
@@ -2326,19 +3027,26 @@ class MainWindow(QWidget):
         self.utility_buttons_layout_2 = QHBoxLayout()
         self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setCheckable(True); utility_buttons_layout.addWidget(self.always_on_top_button)
         self.update_app_btn = QPushButton("Update App"); utility_buttons_layout.addWidget(self.update_app_btn);self.update_app_btn.setToolTip("Update the main_app.py file from the GitHub repository");self.update_app_btn.clicked.connect(self.update_application)
+        self.view_workflow_button = QPushButton("View Workflow"); 
+        utility_buttons_layout.addWidget(self.view_workflow_button)
         self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
         self.toggle_log_checkbox = QCheckBox("Show Log"); self.toggle_log_checkbox.setChecked(False); self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
         self.exit_button = QPushButton("Exit GUI"); self.utility_buttons_layout_2.addWidget(self.exit_button)
         left_panel_layout.addLayout(utility_buttons_layout)
         left_panel_layout.addLayout(self.utility_buttons_layout_2)
         self.add_var_button.clicked.connect(self.add_variable); self.edit_var_button.clicked.connect(self.edit_variable); self.delete_var_button.clicked.connect(self.delete_variable); self.clear_vars_button.clicked.connect(self.reset_all_variable_values); self.execute_all_button.clicked.connect(self.execute_all_steps); self.execute_one_step_button.clicked.connect(self.execute_one_step); self.add_loop_button.clicked.connect(self.add_loop_block); self.add_conditional_button.clicked.connect(self.add_conditional_block); self.save_steps_button.clicked.connect(self.save_bot_steps_dialog); self.group_steps_button.clicked.connect(self.group_selected_steps); self.clear_selected_button.clicked.connect(self.clear_selected_steps); self.remove_all_steps_button.clicked.connect(self.clear_all_steps); self.always_on_top_button.clicked.connect(self.toggle_always_on_top); self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool); self.exit_button.clicked.connect(QApplication.instance().quit)
-
+        self.view_workflow_button.clicked.connect(lambda: self._update_workflow_tab(switch_to_tab=True))
         # --- RIGHT SIDE CONTENT ---
         right_panel_container = QWidget()
         right_panel_layout = QVBoxLayout(right_panel_container)
         right_panel_layout.setContentsMargins(0,0,0,0)
-        # ... (The rest of the right panel setup is the same)
+        
         self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # --- Create Tab Widget ---
+        self.main_right_tab_widget = QTabWidget()
+        
+        # --- Tab 1: Execution Flow ---
         self.execution_tree_widget = QWidget()
         self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
         self.execution_tree_layout.setContentsMargins(0,0,0,0)
@@ -2351,6 +3059,19 @@ class MainWindow(QWidget):
         self.label_info2 = QLabel("Image Preview"); self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter); self.info_labels_layout.addWidget(self.label_info2)
         self.label_info3 = QLabel("Image Name"); self.label_info3.setAlignment(Qt.AlignmentFlag.AlignRight); self.info_labels_layout.addWidget(self.label_info3)
         self.execution_tree_layout.addLayout(self.info_labels_layout)
+        self.main_right_tab_widget.addTab(self.execution_tree_widget, "Execution Flow")
+
+        # --- Tab 2: Bot Workflow ---
+        self.workflow_view_widget = QWidget()
+        workflow_layout = QVBoxLayout(self.workflow_view_widget)
+        workflow_layout.setContentsMargins(0,0,0,0)
+        self.workflow_scroll_area = QScrollArea()
+        self.workflow_scroll_area.setWidgetResizable(True)
+        # We'll create and set the canvas when the button is clicked
+        workflow_layout.addWidget(self.workflow_scroll_area)
+        self.main_right_tab_widget.addTab(self.workflow_view_widget, "Bot Workflow")
+
+        # --- Log Widget (outside tabs) ---
         self.log_widget = QWidget()
         log_layout = QVBoxLayout(self.log_widget)
         log_group_box = QGroupBox("Execution Log"); log_layout.addWidget(log_group_box)
@@ -2359,7 +3080,9 @@ class MainWindow(QWidget):
         self.clear_log_button = QPushButton("Clear Log"); self.clear_log_button.clicked.connect(self.log_console.clear); log_group_layout.addWidget(self.clear_log_button)
         self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
         self.log_widget.setVisible(False)
-        self.right_splitter.addWidget(self.execution_tree_widget)
+        
+        # --- Add tabs and log to splitter ---
+        self.right_splitter.addWidget(self.main_right_tab_widget) # Add tab widget here
         self.right_splitter.addWidget(self.log_widget)
         self.right_splitter.setSizes([700, 300])
         right_panel_layout.addWidget(self.right_splitter)
@@ -2668,23 +3391,36 @@ class MainWindow(QWidget):
     
         self.update_status_column_for_all_items()
         self._restore_expansion_state(expanded_state)
-    
+        self._update_workflow_tab(switch_to_tab=False) # <-- ADD THIS LINE
 
     def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
         item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
         if item_to_edit:
             self.edit_step_in_execution_tree(item_to_edit, 0)
         else:
+            # Fallback for safety, try to find by index
+            idx = step_data_to_edit.get("original_listbox_row_index")
+            if idx is not None and 0 <= idx < len(self.added_steps_data):
+                item_from_map = self.data_to_item_map.get(idx)
+                if item_from_map:
+                    self.edit_step_in_execution_tree(item_from_map, 0)
+                    return
             QMessageBox.critical(self, "Error", "Could not find the step to edit.")
 
     def _handle_delete_request(self, step_to_delete: Dict[str, Any]):
         step_type = step_to_delete.get("type")
         start_index = -1
-        try:
-            start_index = self.added_steps_data.index(step_to_delete)
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Could not find step to delete in data list.")
-            return
+        
+        # --- FIX: Use original_listbox_row_index instead of list.index() ---
+        start_index = step_to_delete.get("original_listbox_row_index")
+        if start_index is None or not (0 <= start_index < len(self.added_steps_data)) or self.added_steps_data[start_index].get("original_listbox_row_index") != start_index:
+            # Fallback in case of mismatch
+            try:
+                start_index = self.added_steps_data.index(step_to_delete)
+            except ValueError:
+                 QMessageBox.critical(self, "Error", "Could not find step to delete in data list. Data may be out of sync.")
+                 return
+        # --- END FIX ---
 
         if step_type in ["loop_start", "IF_START", "group_start"]:
             start_idx, end_idx = self._find_block_indices(start_index)
@@ -2733,14 +3469,19 @@ class MainWindow(QWidget):
         return start_index, start_index
 
     def _handle_move_up_request(self, step_data: Dict[str, Any]):
-        try:
-            current_pos = self.added_steps_data.index(step_data)
-        except ValueError:
-            return
+        # --- FIX: Use original_listbox_row_index instead of list.index() ---
+        current_pos = step_data.get("original_listbox_row_index")
+        if current_pos is None or not (0 <= current_pos < len(self.added_steps_data)) or self.added_steps_data[current_pos].get("original_listbox_row_index") != current_pos:
+            # Fallback
+            try:
+                current_pos = self.added_steps_data.index(step_data)
+            except ValueError:
+                 return # Silently fail
+        # --- END FIX ---
+        
         if current_pos == 0:
             return
         start_idx, end_idx = self._find_block_indices(current_pos)
-        block_to_move = self.added_steps_data[start_idx : end_idx + 1]
         
         prev_start_idx, prev_end_idx = self._find_block_indices(start_idx - 1) if (start_idx -1) >= 0 else (start_idx-1, start_idx-1)
         if prev_start_idx == -1:
@@ -2750,14 +3491,22 @@ class MainWindow(QWidget):
         part_middle = self.added_steps_data[prev_start_idx : start_idx]
         part_after = self.added_steps_data[end_idx+1:]
         
+        block_to_move = self.added_steps_data[start_idx : end_idx + 1] # Get this *after* slicing others
+        
         self.added_steps_data = part_before + block_to_move + part_middle + part_after
         self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
 
     def _handle_move_down_request(self, step_data: Dict[str, Any]):
-        try:
-            current_pos = self.added_steps_data.index(step_data)
-        except ValueError:
-            return
+        # --- FIX: Use original_listbox_row_index instead of list.index() ---
+        current_pos = step_data.get("original_listbox_row_index")
+        if current_pos is None or not (0 <= current_pos < len(self.added_steps_data)) or self.added_steps_data[current_pos].get("original_listbox_row_index") != current_pos:
+            # Fallback
+            try:
+                current_pos = self.added_steps_data.index(step_data)
+            except ValueError:
+                 return # Silently fail
+        # --- END FIX ---
+
         start_idx, end_idx = self._find_block_indices(current_pos)
         if end_idx >= len(self.added_steps_data) - 1:
             return
@@ -2781,11 +3530,16 @@ class MainWindow(QWidget):
 
     # --- MODIFIED METHOD ---
     def _handle_save_as_template_request(self, step_data_to_save: Dict[str, Any]):
-        try:
-            start_index = self.added_steps_data.index(step_data_to_save)
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Could not find the step to save as a template.")
-            return
+        # --- FIX: Use original_listbox_row_index instead of list.index() ---
+        start_index = step_data_to_save.get("original_listbox_row_index")
+        if start_index is None or not (0 <= start_index < len(self.added_steps_data)) or self.added_steps_data[start_index].get("original_listbox_row_index") != start_index:
+            # Fallback
+            try:
+                start_index = self.added_steps_data.index(step_data_to_save)
+            except ValueError:
+                 QMessageBox.critical(self, "Error", "Could not find the step to save as a template. Data may be out of sync.")
+                 return
+        # --- END FIX ---
 
         start_idx, end_idx = self._find_block_indices(start_index)
         if start_idx == end_idx:
@@ -2824,11 +3578,17 @@ class MainWindow(QWidget):
         """Executes a single step requested from an ExecutionStepCard button."""
         if not (step_data and isinstance(step_data, dict)):
             return
-        try:
-            current_row = self.added_steps_data.index(step_data)
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Could not find the selected step in the internal data model.")
-            return
+
+        # --- FIX: Use original_listbox_row_index instead of list.index() ---
+        current_row = step_data.get("original_listbox_row_index")
+        if current_row is None or not (0 <= current_row < len(self.added_steps_data)) or self.added_steps_data[current_row].get("original_listbox_row_index") != current_row:
+            # Fallback
+            try:
+                current_row = self.added_steps_data.index(step_data)
+            except ValueError:
+                 QMessageBox.critical(self, "Error", "Could not find the selected step in the internal data model. Data may be out of sync.")
+                 return
+        # --- END FIX ---
 
         self.set_ui_enabled_state(False)
         self.progress_bar.setValue(0)
@@ -3243,6 +4003,12 @@ class MainWindow(QWidget):
             self.gui_communicator.update_module_info_signal.emit("")
             return
         
+        # --- NEW: Add new variable to global list immediately ---
+        if assign_to_variable_name and assign_to_variable_name not in self.global_variables:
+            self.global_variables[assign_to_variable_name] = None
+            self._update_variables_list_display()
+        # --- END NEW ---
+
         new_step_data_dict: Dict[str, Any] = {"type": "step", "class_name": class_name, "method_name": method_name, "module_name": module_name, "parameters_config": parameters_config, "assign_to_variable_name": assign_to_variable_name}
         insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
         if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
@@ -3284,6 +4050,14 @@ class MainWindow(QWidget):
             loop_config = dialog.get_config()
             if loop_config is None:
                 return
+
+            # --- NEW: Add new iteration variable from loop config ---
+            new_iter_var = loop_config.get("assign_iteration_to_variable")
+            if new_iter_var and new_iter_var not in self.global_variables:
+                self.global_variables[new_iter_var] = None
+                self._update_variables_list_display()
+            # --- END NEW ---
+
             self.loop_id_counter += 1
             loop_id = f"loop_{self.loop_id_counter}"
             new_loop_start_data: Dict[str, Any] = {"type": "loop_start", "loop_id": loop_id, "loop_config": loop_config}
@@ -3326,22 +4100,38 @@ class MainWindow(QWidget):
 
         group_name, ok = QInputDialog.getText(self, "Create Group", "Enter a name for the group:")
         if ok and group_name:
-            selected_data = [self._get_item_data(item) for item in selected_items]
             
-            first_item_data = selected_data[0]
+            # --- FIX: Sort the selected data by its actual index ---
+            selected_data = [self._get_item_data(item) for item in selected_items]
+            # Sort the list of dictionaries based on their 'original_listbox_row_index'
             try:
-                start_index = self.added_steps_data.index(first_item_data)
-            except ValueError:
-                QMessageBox.critical(self, "Error", "Could not find the start of the selection.")
+                selected_data.sort(key=lambda x: x.get("original_listbox_row_index", float('inf')))
+            except (AttributeError, TypeError):
+                QMessageBox.critical(self, "Error", "Could not sort selected items. One or more items may be invalid.")
                 return
+            # --- END FIX ---
+
+            first_item_data = selected_data[0]
+
+            start_index = first_item_data.get("original_listbox_row_index")
+            if start_index is None or not (0 <= start_index < len(self.added_steps_data)) or self.added_steps_data[start_index].get("original_listbox_row_index") != start_index:
+                try:
+                    start_index = self.added_steps_data.index(first_item_data)
+                except ValueError:
+                     QMessageBox.critical(self, "Error", "Could not find the start of the selection.")
+                     return
 
             last_item_data = selected_data[-1]
-            try:
-                last_item_start_idx_in_flat_list = self.added_steps_data.index(last_item_data)
-                _, end_index = self._find_block_indices(last_item_start_idx_in_flat_list)
-            except ValueError:
-                QMessageBox.critical(self, "Error", "Could not find the end of the selection.")
-                return
+
+            last_item_start_idx_in_flat_list = last_item_data.get("original_listbox_row_index")
+            if last_item_start_idx_in_flat_list is None or not (0 <= last_item_start_idx_in_flat_list < len(self.added_steps_data)) or self.added_steps_data[last_item_start_idx_in_flat_list].get("original_listbox_row_index") != last_item_start_idx_in_flat_list:
+                try:
+                    last_item_start_idx_in_flat_list = self.added_steps_data.index(last_item_data)
+                except ValueError:
+                    QMessageBox.critical(self, "Error", "Could not find the end of the selection.")
+                    return
+
+            _, end_index = self._find_block_indices(last_item_start_idx_in_flat_list)
 
             self.group_id_counter += 1
             group_id = f"group_{self.group_id_counter}"
@@ -3350,7 +4140,7 @@ class MainWindow(QWidget):
             group_end_data = {"type": "group_end", "group_id": group_id}
 
             self.added_steps_data.insert(start_index, group_start_data)
-            self.added_steps_data.insert(end_index + 2, group_end_data)
+            self.added_steps_data.insert(end_index + 2, group_end_data) # +1 for start_data, +1 to insert *after*
 
             self._rebuild_execution_tree(item_to_focus_data=group_start_data)
 
@@ -3361,11 +4151,18 @@ class MainWindow(QWidget):
             return
         step_type = step_data_dict["type"]
         current_row = -1
-        try:
-            current_row = self.added_steps_data.index(step_data_dict)
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Could not find selected item in internal data model for editing.")
-            return
+
+        # --- FIX: Use original_listbox_row_index instead of list.index() ---
+        current_row = step_data_dict.get("original_listbox_row_index")
+        if current_row is None or not (0 <= current_row < len(self.added_steps_data)) or self.added_steps_data[current_row].get("original_listbox_row_index") != current_row:
+            # Fallback in case of mismatch
+            try:
+                current_row = self.added_steps_data.index(step_data_dict)
+            except ValueError:
+                 QMessageBox.critical(self, "Error", "Could not find selected item in internal data model for editing. Data may be out of sync.")
+                 return
+        # --- END FIX ---
+        
         if step_type == "step":
             class_name, method_name, module_name = step_data_dict["class_name"], step_data_dict["method_name"], step_data_dict["module_name"]
             parameters_config_with_index = step_data_dict["parameters_config"]
@@ -3399,6 +4196,13 @@ class MainWindow(QWidget):
                     self.gui_communicator.update_module_info_signal.emit("")
                     return
                 new_assign_to_variable_name = self.active_param_input_dialog.get_assignment_variable()
+                
+                # --- NEW: Add new variable to global list immediately ---
+                if new_assign_to_variable_name and new_assign_to_variable_name not in self.global_variables:
+                    self.global_variables[new_assign_to_variable_name] = None
+                    self._update_variables_list_display()
+                # --- END NEW ---
+                
                 self.added_steps_data[current_row].update({"parameters_config": new_parameters_config, "assign_to_variable_name": new_assign_to_variable_name})
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
             self.gui_communicator.update_module_info_signal.emit("")
@@ -3410,6 +4214,14 @@ class MainWindow(QWidget):
                 new_loop_config = dialog.get_config()
                 if new_loop_config is None:
                     return
+
+                # --- NEW: Add new iteration variable from loop config ---
+                new_iter_var = new_loop_config.get("assign_iteration_to_variable")
+                if new_iter_var and new_iter_var not in self.global_variables:
+                    self.global_variables[new_iter_var] = None
+                    self._update_variables_list_display()
+                # --- END NEW ---
+
                 self.added_steps_data[current_row]["loop_config"] = new_loop_config
                 loop_id, nesting_level = step_data_dict["loop_id"], 0
                 for idx in range(current_row + 1, len(self.added_steps_data)):
@@ -3479,7 +4291,7 @@ class MainWindow(QWidget):
             self.execution_flow_label.setText("Execution Flow")
             
             self._log_to_console("Internal clear all steps executed.")
-
+            self._update_workflow_tab(switch_to_tab=False) # <-- ADD THIS LINE
     def clear_all_steps(self) -> None:
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Info", "The execution queue and variables are already empty.")
@@ -4489,6 +5301,121 @@ class MainWindow(QWidget):
         
         except Exception as e:
             QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
+
+# In main_app.py, inside the MainWindow class (e.g., after the load_steps_from_file method)
+
+    # In main_app.py, inside the MainWindow class
+# REPLACE show_workflow_dialog with this new method:
+
+    def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
+        """Builds/Refreshes the workflow canvas. Optionally switches to its tab."""
+        
+        # Clear the old canvas
+        old_canvas = self.workflow_scroll_area.takeWidget()
+        if old_canvas:
+            old_canvas.deleteLater()
+
+        if not self.added_steps_data:
+            # Create an empty canvas
+            self.workflow_canvas = WorkflowCanvas([], self)
+            self.workflow_scroll_area.setWidget(self.workflow_canvas)
+            if switch_to_tab:
+                self.main_right_tab_widget.setCurrentWidget(self.workflow_view_widget)
+            return
+
+        try:
+            workflow_tree = self._build_workflow_tree_data()
+            if not workflow_tree:
+                if switch_to_tab:
+                    QMessageBox.warning(self, "Error", "Could not parse the workflow structure.")
+                return
+            
+            # Create a new canvas with the current workflow
+            self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
+            
+            # Set the new canvas as the widget for the scroll area
+            self.workflow_scroll_area.setWidget(self.workflow_canvas)
+            
+            if switch_to_tab:
+                self.main_right_tab_widget.setCurrentWidget(self.workflow_view_widget)
+            
+        except Exception as e:
+            if switch_to_tab:
+                QMessageBox.critical(self, "Workflow Error", f"An error occurred while building the workflow: {e}")
+            self._log_to_console(f"Workflow build error: {e}")
+
+    # In main_app.py, inside the MainWindow class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the MainWindow class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the MainWindow class
+# REPLACE this entire method:
+
+    # In main_app.py, inside the MainWindow class
+    # REPLACE this entire method:
+    def _build_workflow_tree_data(self) -> List[Dict[str, Any]]:
+        """
+        Parses the flat self.added_steps_data into a nested tree structure
+        that supports IF/ELSE and LOOP/END branching.
+        """
+        def parse_block_recursive(flat_steps: List[Dict[str, Any]], index: int) -> Tuple[List[Dict[str, Any]], int]:
+            nodes = []
+            i = index
+            while i < len(flat_steps):
+                step_data = flat_steps[i]
+                step_type = step_data.get("type")
+                
+                # Check for end-of-block markers
+                if step_type in ["group_end", "loop_end", "IF_END", "ELSE"]:
+                    return nodes, i # Return children and the index of the unconsumed end tag
+
+                new_node = {'step_data': step_data, 'children': []}
+                i += 1 # Consume the current (non-end) step
+                
+                if step_type == "group_start":
+                    # --- Group logic (single container) ---
+                    children, end_index = parse_block_recursive(flat_steps, i)
+                    new_node['children'] = children
+                    i = end_index
+                    
+                    if i < len(flat_steps) and flat_steps[i].get("type") == "group_end":
+                        # Consume the end tag, but DO NOT create a node for it.
+                        i += 1 
+                    
+                    # Add only the group_start node, which now contains all children
+                    nodes.append(new_node) 
+                    continue # Skip the default nodes.append() at the end
+                        
+                elif step_type == "IF_START" or step_type == "loop_start":
+                    # --- Shared logic for IF and LOOP ---
+                    children, next_index = parse_block_recursive(flat_steps, i)
+                    new_node['children'] = children
+                    i = next_index
+                    
+                    # Handle ELSE block (only for IF)
+                    if step_type == "IF_START" and i < len(flat_steps) and flat_steps[i].get("type") == "ELSE":
+                        else_node = {'step_data': flat_steps[i], 'children': []}
+                        i += 1 # Consume ELSE
+                        
+                        false_children, end_index = parse_block_recursive(flat_steps, i)
+                        else_node['children'] = false_children 
+                        new_node['false_children'] = [else_node] 
+                        i = end_index
+                        
+                    # Find the matching END node
+                    end_tag = "IF_END" if step_type == "IF_START" else "loop_end"
+                    if i < len(flat_steps) and flat_steps[i].get("type") == end_tag:
+                        new_node['end_node'] = {'step_data': flat_steps[i], 'children': []}
+                        i += 1 # Consume end_tag
+                
+                nodes.append(new_node)
+            
+            return nodes, i
+
+        root_nodes, _ = parse_block_recursive(self.added_steps_data, 0)
+        return root_nodes
 
 # ... (The rest of your MainWindow class and the main execution block)
 if __name__ == "__main__":
