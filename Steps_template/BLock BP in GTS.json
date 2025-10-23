@@ -1,0 +1,31 @@
+__SCHEDULE_INFO__
+"{""enabled"": false, ""start_datetime"": ""2025-10-19T09:00:43"", ""repeat"": ""Do not repeat""}"
+__GLOBAL_VARIABLES__
+SAP_name,"""Q94"""
+number_line,427
+excel_link,"""C:/Users/puu1hc/OneDrive - Bosch Group/vba/BOT block BP V2/BP blocking list.xlsx"""
+excel_content,""""""
+iterate_,0
+cell_value,"""Partner"""
+bot_result_status,"""BP number is not found"""
+workbook,""""""
+saplogon_link,"""C:/Program Files (x86)/SAP/FrontEnd/SAPGUI/saplogon.exe"""
+__BOT_STEPS__
+StepType,DataJSON
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""read_excel"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""file_link"": {""type"": ""variable"", ""value"": ""excel_link""}, ""sheet_name"": {""type"": ""hardcoded"", ""value"": null}}, ""assign_to_variable_name"": ""workbook""}"
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""count_non_empty_rows_in_column"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""workbook""}, ""column_identifier"": {""type"": ""hardcoded"", ""value"": ""A""}}, ""assign_to_variable_name"": ""number_line""}"
+step,"{""type"": ""step"", ""class_name"": ""Bot_SAP"", ""method_name"": ""log_in"", ""module_name"": ""Gui_Automate"", ""parameters_config"": {""SAP"": {""type"": ""variable"", ""value"": ""SAP_name""}, ""saplogon_exe"": {""type"": ""variable"", ""value"": ""saplogon_link""}}, ""assign_to_variable_name"": null}"
+loop_start,"{""type"": ""loop_start"", ""loop_id"": ""loop_1"", ""loop_config"": {""loop_name"": null, ""iteration_count_config"": {""type"": ""variable"", ""value"": ""number_line""}, ""assign_iteration_to_variable"": ""iterate_""}}"
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""read_excel_cells"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""workbook""}, ""col"": {""type"": ""hardcoded"", ""value"": ""A""}, ""row"": {""type"": ""variable"", ""value"": ""iterate_""}}, ""assign_to_variable_name"": ""cell_value""}"
+IF_START,"{""type"": ""IF_START"", ""if_id"": ""if_1"", ""condition_config"": {""block_name"": null, ""condition"": {""left_operand"": {""type"": ""variable"", ""value"": ""cell_value""}, ""operator"": ""is not"", ""right_operand"": {""type"": ""hardcoded"", ""value"": null}}}}"
+step,"{""type"": ""step"", ""class_name"": ""Bot_SAP"", ""method_name"": ""block_BP"", ""module_name"": ""Gui_Automate"", ""parameters_config"": {""partner_code"": {""type"": ""variable"", ""value"": ""cell_value""}, ""reason_block"": {""type"": ""hardcoded"", ""value"": ""\""Hung test\""""}}, ""assign_to_variable_name"": ""bot_result_status""}"
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""write_excel_cells"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""workbook""}, ""col"": {""type"": ""hardcoded"", ""value"": ""D""}, ""row"": {""type"": ""variable"", ""value"": ""iterate_""}, ""value"": {""type"": ""variable"", ""value"": ""bot_result_status""}}, ""assign_to_variable_name"": null}"
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""save_excel"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""workbook""}, ""file_name"": {""type"": ""variable"", ""value"": ""excel_link""}}, ""assign_to_variable_name"": null}"
+ELSE,"{""type"": ""ELSE"", ""if_id"": ""if_1"", ""condition_config"": {""block_name"": null, ""condition"": {""left_operand"": {""type"": ""variable"", ""value"": ""cell_value""}, ""operator"": ""is not"", ""right_operand"": {""type"": ""hardcoded"", ""value"": null}}}}"
+step,"{""type"": ""step"", ""class_name"": ""Bot_utility"", ""method_name"": ""wait_second"", ""module_name"": ""Gui_Automate"", ""parameters_config"": {""value"": {""type"": ""hardcoded"", ""value"": 2}}, ""assign_to_variable_name"": null}"
+IF_END,"{""type"": ""IF_END"", ""if_id"": ""if_1"", ""condition_config"": {""block_name"": null, ""condition"": {""left_operand"": {""type"": ""variable"", ""value"": ""cell_value""}, ""operator"": ""is not"", ""right_operand"": {""type"": ""hardcoded"", ""value"": null}}}}"
+step,"{""type"": ""step"", ""class_name"": ""Bot_utility"", ""method_name"": ""wait_second"", ""module_name"": ""Gui_Automate"", ""parameters_config"": {""value"": {""type"": ""hardcoded"", ""value"": 1}}, ""assign_to_variable_name"": null}"
+loop_end,"{""type"": ""loop_end"", ""loop_id"": ""loop_1"", ""loop_config"": {""loop_name"": null, ""iteration_count_config"": {""type"": ""variable"", ""value"": ""number_line""}, ""assign_iteration_to_variable"": ""iterate_""}}"
+step,"{""type"": ""step"", ""class_name"": ""Bot_utility"", ""method_name"": ""close_window"", ""module_name"": ""Gui_Automate"", ""parameters_config"": {""title"": {""type"": ""variable"", ""value"": ""SAP_name""}}, ""assign_to_variable_name"": null}"
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""save_excel"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""workbook""}, ""file_name"": {""type"": ""variable"", ""value"": ""excel_link""}}, ""assign_to_variable_name"": null}"
+step,"{""type"": ""step"", ""class_name"": ""handle_excel"", ""method_name"": ""close_excel"", ""module_name"": ""File_ReadWrite"", ""parameters_config"": {""workbook"": {""type"": ""variable"", ""value"": ""workbook""}}, ""assign_to_variable_name"": null}"
