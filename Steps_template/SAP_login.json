@@ -24,8 +24,8 @@
         "assign_to_variable_name": "isLogonOpen",
         "original_listbox_row_index": 1,
         "workflow_pos": [
-            494,
-            572
+            290,
+            30
         ]
     },
     {
@@ -47,8 +47,8 @@
         },
         "original_listbox_row_index": 2,
         "workflow_pos": [
-            494,
-            676
+            290,
+            120
         ]
     },
     {
@@ -66,8 +66,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 3,
         "workflow_pos": [
-            338,
-            754
+            170,
+            210
         ]
     },
     {
@@ -112,8 +112,8 @@
         "assign_to_variable_name": "isLogonOpen",
         "original_listbox_row_index": 5,
         "workflow_pos": [
-            702,
-            780
+            410,
+            210
         ]
     },
     {
@@ -135,8 +135,8 @@
         },
         "original_listbox_row_index": 6,
         "workflow_pos": [
-            708,
-            846
+            410,
+            300
         ]
     },
     {
@@ -153,8 +153,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 7,
         "workflow_pos": [
-            579,
-            872
+            290,
+            390
         ]
     },
     {
@@ -194,8 +194,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 9,
         "workflow_pos": [
-            788,
-            926
+            530,
+            390
         ]
     },
     {
@@ -216,8 +216,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 10,
         "workflow_pos": [
-            806,
-            962
+            530,
+            480
         ]
     },
     {
@@ -234,8 +234,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 11,
         "workflow_pos": [
-            806,
-            1014
+            530,
+            570
         ]
     },
     {
@@ -252,8 +252,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 12,
         "workflow_pos": [
-            806,
-            1066
+            530,
+            660
         ]
     },
     {
@@ -270,8 +270,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 13,
         "workflow_pos": [
-            806,
-            1118
+            530,
+            750
         ]
     },
     {
@@ -288,8 +288,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 14,
         "workflow_pos": [
-            806,
-            1170
+            530,
+            840
         ]
     },
     {
@@ -311,8 +311,8 @@
         },
         "original_listbox_row_index": 15,
         "workflow_pos": [
-            702,
-            1248
+            410,
+            970
         ]
     },
     {
@@ -334,8 +334,8 @@
         },
         "original_listbox_row_index": 16,
         "workflow_pos": [
-            468,
-            1326
+            290,
+            1100
         ]
     },
     {
@@ -356,8 +356,8 @@
         "assign_to_variable_name": null,
         "original_listbox_row_index": 17,
         "workflow_pos": [
-            468,
-            1560
+            290,
+            1190
         ]
     },
     {
@@ -366,9 +366,9 @@
         "method_name": "left_click",
         "module_name": "Gui_Automate",
         "parameters_config": {
-            "current_file": {
+            "image_to_click": {
                 "type": "hardcoded_file",
-                "value": "SAP_Logon_filter_box"
+                "value": "SAP GUI/SAP_Logon_filter_box"
             },
             "offset_x": {
                 "type": "hardcoded",
@@ -384,7 +384,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 18
+        "original_listbox_row_index": 18,
+        "workflow_pos": [
+            290,
+            1280
+        ]
     },
     {
         "type": "step",
@@ -398,7 +402,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 19
+        "original_listbox_row_index": 19,
+        "workflow_pos": [
+            290,
+            1370
+        ]
     },
     {
         "type": "step",
@@ -412,7 +420,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 20
+        "original_listbox_row_index": 20,
+        "workflow_pos": [
+            290,
+            1460
+        ]
     },
     {
         "type": "step",
@@ -426,7 +438,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 21
+        "original_listbox_row_index": 21,
+        "workflow_pos": [
+            290,
+            1550
+        ]
     },
     {
         "type": "step",
@@ -440,7 +456,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 22
+        "original_listbox_row_index": 22,
+        "workflow_pos": [
+            290,
+            1640
+        ]
     },
     {
         "type": "step",
@@ -448,9 +468,9 @@
         "method_name": "check_image_exits",
         "module_name": "Gui_Automate",
         "parameters_config": {
-            "current_file": {
+            "image_to_click": {
                 "type": "hardcoded_file",
-                "value": "SAP_check_icone"
+                "value": "SAP GUI/SAP_check_icone"
             },
             "timeout": {
                 "type": "hardcoded",
@@ -458,7 +478,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 23
+        "original_listbox_row_index": 23,
+        "workflow_pos": [
+            290,
+            1730
+        ]
     },
     {
         "type": "step",
@@ -476,7 +500,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 24
+        "original_listbox_row_index": 24,
+        "workflow_pos": [
+            290,
+            1820
+        ]
     },
     {
         "type": "step",
@@ -490,7 +518,11 @@
             }
         },
         "assign_to_variable_name": null,
-        "original_listbox_row_index": 25
+        "original_listbox_row_index": 25,
+        "workflow_pos": [
+            290,
+            1910
+        ]
     },
     {
         "type": "group_end",
