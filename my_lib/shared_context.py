@@ -26,6 +26,7 @@ class ExecutionContext:
         self.logs = []
         self.start_time = datetime.now()
         self.gui_communicator = None
+        self.click_image_base_dir = ""
 
     def set_gui_communicator(self, communicator_obj: GuiCommunicator):
         """
@@ -49,7 +50,15 @@ class ExecutionContext:
     def set_data(self, key, value):
         """Stores general data for subsequent steps."""
         self.data[key] = value
+# --- ADD THESE TWO NEW METHODS ---
+    def set_click_image_base_dir(self, path: str):
+        """Sets the base path to the Click_image folder."""
+        self.click_image_base_dir = path
 
+    def get_click_image_base_dir(self) -> str:
+        """Gets the base path to the Click_image folder."""
+        return self.click_image_base_dir
+    # --- END OF ADDITIONS ---
     def add_log(self, message):
         """
         Adds a log entry to the context and optionally emits a signal
