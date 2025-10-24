@@ -43,24 +43,9 @@ class Bot_utility:
         self.context = context # Store the shared context
         self.log_prefix = f"[{self.__class__.__name__}]"
         self.context.add_log(f"{self.log_prefix} Initialized with context.")
+        
+        self.click_image_folder_path = context.get_click_image_base_dir()
         pass
-    def get_list_file(self,root_folder,key_word,extension):
-        """Searches a directory for files that match a keyword and extension.
-
-        Args:
-            root_folder (str): The absolute path of the directory to search.
-            key_word (str): A string that must be present in the filename.
-            extension (str): The file extension to filter by (e.g., '.txt', '.xlsx').
-
-        Returns:
-            list: A list containing the full paths of all matching files.
-        """
-        files = os.listdir(root_folder) # get list file in folder
-        file_all=[] # Create an empty array
-        for file in files:
-            if extension in file and key_word in file:
-                file_all.append(root_folder+'\\'+file) # add file name to array
-        return file_all
         
     def _base64_pgn(self,text):
         """Decodes a base64 encoded string into a PIL Image object.
@@ -101,21 +86,22 @@ class Bot_utility:
             pyautogui.moveTo(location.x, location.y)
         return location
         
-    def _check_item_existing(self,current_file):
+    def _check_item_existing(self,image_to_click):
         """Checks if a specific UI element (as an image) exists on the screen.
 
         This private helper method reads a base64 encoded image from a specified
         file and searches for it on the screen.
 
         Args:
-            current_file (str): The name of the file (without extension) located in the
+            image_to_click (str): The name of the file (without extension) located in the
                                 'Click_image/' directory, which contains the image data.
 
         Returns:
             bool: True if the image is found on the screen, False otherwise.
         """
-    
-        with open('Click_image/{}.txt'.format(current_file)) as json_file:
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click)
+        full_path_with_ext = full_path_without_ext + ".txt"
+        with open(full_path_with_ext) as json_file:
             image_file = json.load(json_file)
         for key, data in image_file.items():
             image_file = self._base64_pgn(data)
@@ -128,11 +114,11 @@ class Bot_utility:
                 return True
         return False
         
-    def left_click(self,current_file,offset_x=0,offset_y=0,confidence=0.92):
+    def left_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
         """Finds a UI element (as an image) on the screen and performs a left click.
 
         Args:
-            current_file (str): The name of the image file (without extension) to find and click.
+            image_to_click (str): The name of the image file (without extension) to find and click.
             offset_x (int, optional): The horizontal offset in pixels from the image's center
                                       to click. Defaults to 0.
             offset_y (int, optional): The vertical offset in pixels from the image's center
@@ -145,7 +131,12 @@ class Bot_utility:
                  if the image could not be found.
         """
         location=None
-        with open('./Click_image/{}.txt'.format(current_file)) as json_file:
+        file_name= image_to_click
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
             image_file = json.load(json_file)
         for key, data in image_file.items():
             #print (key)
@@ -154,14 +145,14 @@ class Bot_utility:
                 location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
                 if location!=None:
                     pyautogui.click(location.x + offset_x, location.y + offset_y)
-                    self.context.add_log(f"{current_file}")
+                    self.context.add_log(f"{file_name}")
                     return 'left_click_done'
             except:
                 pass
         if location is None:
-            self.context.add_log(f"{current_file}")
-            #print ('left_click_done fail: {}'.format(current_file),str(key))
-        return 'left_click_done fail: {}'.format(current_file)
+            self.context.add_log(f"{file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+        return 'left_click_done fail: {}'.format(file_name)
         
     def activate_window(self,title):
         """Brings a window with a matching title to the foreground.
@@ -305,26 +296,29 @@ class Bot_utility:
             time_run = ed-st
         return False    
         
-    def check_image_exits(self,current_file,timeout=5):
+    def check_image_exits(self,image_to_click,timeout=5):
         """Waits for a specific image to appear on the screen.
 
         This method repeatedly checks for the presence of an image until it is found
         or the timeout duration is exceeded.
 
         Args:
-            current_file (str): The name of the image file (without extension) to wait for.
+            image_to_click (str): The name of the image file (without extension) to wait for.
             timeout (int, optional): The maximum time in seconds to wait for the image.
                                      Defaults to 5.
 
         Returns:
             bool: True if the image appears on screen within the timeout, False otherwise.
         """
+        
+        
+        
         win = False
         st = time.time()
         time_run=0
-        self.context.add_log(f"{current_file}")
+        self.context.add_log(f"{image_to_click}")
         while win is False and time_run<timeout:
-            win = self._check_item_existing(current_file)
+            win = self._check_item_existing(image_to_click)
             if win !=False:
                 time.sleep(1)
                 return True
@@ -332,7 +326,7 @@ class Bot_utility:
             time_run = ed-st
         return False        
                 
-    def wait_image_disappear(self,current_file,timeout=5):
+    def wait_image_disappear(self,image_to_click,timeout=5):
         """Waits for a specific image to disappear from the screen.
 
         This method repeatedly checks for an image, returning True as soon as it is
@@ -350,9 +344,9 @@ class Bot_utility:
         win = True
         st = time.time()
         time_run=0
-        self.context.add_log(f"{current_file}")
+        self.context.add_log(f"{image_to_click}")
         while win is True and time_run<timeout:
-            win = self._check_item_existing(current_file)
+            win = self._check_item_existing(image_to_click)
             if win ==False:
                 return True
             ed = time.time()
@@ -426,12 +420,12 @@ class Bot_SAP:
                 self.bot_utility.activate_window('SAP Logon')
             time.sleep(2)
             
-            self.bot_utility.check_image_exits('SAP_logon_button',timeout=10)
-            if self.bot_utility.check_image_exits('SAP_Logon_filter_box',timeout=5) ==False:
-                self.bot_utility.left_click('SAP_Logon_taskbar_incon')
+            self.bot_utility.check_image_exits('SAP GUI/SAP GUI/SAP_logon_button',timeout=10)
+            if self.bot_utility.check_image_exits('SAP GUI/SAP_Logon_filter_box',timeout=5) ==False:
+                self.bot_utility.left_click('SAP GUI/SAP_Logon_taskbar_incon')
 
             print ('Logon SAP {} system'.format(SAP))
-            self.bot_utility.left_click('SAP_Logon_filter_box',80,0,0.92)
+            self.bot_utility.left_click('SAP GUI/SAP_Logon_filter_box',80,0,0.92)
             time.sleep(1)
             keyboard.press_and_release( 'ctrl+a')
             time.sleep(2)
@@ -462,7 +456,7 @@ class Bot_SAP:
         Returns:
             None
         """
-        self.bot_utility.left_click('SAP_check_icone',80,0,0.92)
+        self.bot_utility.left_click('SAP GUI/SAP_check_icone',80,0,0.92)
         time.sleep(1)
         keyboard.press_and_release( 'ctrl+a')
         time.sleep(1)
@@ -470,8 +464,8 @@ class Bot_SAP:
         time.sleep(1)
         keyboard.send('ENTER')
         time.sleep(1)
-        if self.bot_utility.check_image_exits('SAP_Table_name')==True:
-            self.bot_utility.left_click('SAP_Table_name',250,0,0.92)
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_Table_name')==True:
+            self.bot_utility.left_click('SAP GUI/SAP_Table_name',250,0,0.92)
             time.sleep(1)
             keyboard.press_and_release( 'ctrl+a')
             time.sleep(1)
@@ -490,7 +484,7 @@ class Bot_SAP:
         Returns:
             None
         """
-        self.bot_utility.left_click('SAP_Tcode_box',0,0,0.92)
+        self.bot_utility.left_click('SAP GUI/SAP_Tcode_box',0,0,0.92)
         time.sleep(1)
         keyboard.press_and_release( 'ctrl+a')
         time.sleep(1)
@@ -523,53 +517,53 @@ class Bot_SAP:
         time.sleep(1)
 
 
-        if self.bot_utility.check_image_exits('SAP_Business_partner_box',5):
-            self.bot_utility.left_click('SAP_Business_partner_box',0,0,0.92)
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_Business_partner_box',5):
+            self.bot_utility.left_click('SAP GUI/SAP_Business_partner_box',0,0,0.92)
             keyboard.write(str(partner_code))
             keyboard.send('F8')
         else:
             return 'BOT ERROR step 1'
             
-        if self.bot_utility.check_image_exits('SAP_BP_Block_not_found',2):
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_BP_Block_not_found',2):
             time.sleep(1)
-            self.bot_utility.left_click('SAP_BP_block_reason_check_icon',0,0,0.92)
+            self.bot_utility.left_click('SAP GUI/SAP_BP_block_reason_check_icon',0,0,0.92)
 
             return 'BP number is not found'
 
-        if self.bot_utility.check_image_exits('SAP_Nagative_icon',10):
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_Nagative_icon',10):
             time.sleep(1)
-            self.bot_utility.left_click('SAP_BP_header',0,20,0.92)
+            self.bot_utility.left_click('SAP GUI/SAP_BP_header',0,20,0.92)
             time.sleep(0.2)
-            self.bot_utility.left_click('SAP_Nagative_icon',0,0,0.92)
+            self.bot_utility.left_click('SAP GUI/SAP_Nagative_icon',0,0,0.92)
         else:
             return 'BOT ERROR step 2'
 
-        if self.bot_utility.check_image_exits('SAP_BP_block_reason_header',5):
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_BP_block_reason_header',5):
             time.sleep(1)
-            self.bot_utility.left_click('SAP_BP_block_reason_header',0,30,0.92)
+            self.bot_utility.left_click('SAP GUI/SAP_BP_block_reason_header',0,30,0.92)
             time.sleep(0.2)
             keyboard.write(reason_block)
             time.sleep(1)
-            self.bot_utility.left_click('SAP_BP_block_reason_check_icon',0,0,0.92)
+            self.bot_utility.left_click('SAP GUI/SAP_BP_block_reason_check_icon',0,0,0.92)
             time.sleep(2)
         else:
             return 'BOT ERROR step 3'
         
-        if self.bot_utility.check_image_exits('SAP_BP_block_save_icon',2):  
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_BP_block_save_icon',2):  
             
             count =0
-            while self.bot_utility.check_image_exits('SAP_execute_icon',1) is not True and count < 3:
+            while self.bot_utility.check_image_exits('SAP GUI/SAP_execute_icon',1) is not True and count < 3:
                 count +=1
-                self.bot_utility.left_click('SAP_BP_block_save_icon',0,0,0.92)
+                self.bot_utility.left_click('SAP GUI/SAP_BP_block_save_icon',0,0,0.92)
                 time.sleep(0.1)
-                self.bot_utility.left_click('SAP_BP_block_save_icon',0,0,0.92)
+                self.bot_utility.left_click('SAP GUI/SAP_BP_block_save_icon',0,0,0.92)
                 pyautogui.moveTo(800, 800)
                 time.sleep(1)
             
             
         else:
             return 'BOT ERROR step 4'   
-        if self.bot_utility.check_image_exits('SAP_execute_icon',10):
+        if self.bot_utility.check_image_exits('SAP GUI/SAP_execute_icon',10):
             time.sleep(1)
             return 'BP number is blocked'
         else:
@@ -624,156 +618,3 @@ class Bot_SAP:
         workbook.save(file_link)
         workbook.close()
         return True    
-
-class File_handle():
-    """A class for handling Excel file operations using the openpyxl library."""
-
-    def __init__(self):
-        """Initializes the File_handle class."""
-        pass
-    def read_excel(self,file_link,sheet_name=None):
-        """Opens an Excel file and returns the workbook and a specific sheet object.
-
-        Args:
-            file_link (str): The full path to the Excel file.
-            sheet_name (str, optional): The name of the sheet to access. If None or not
-                                        found, the active sheet is returned. Defaults to None.
-
-        Returns:
-            list or None: A list containing [workbook, sheet] objects on success,
-                          or None if an error occurs (e.g., file not found).
-        """
-        print (file_link)
-        try:
-            workbook = openpyxl.load_workbook(file_link)
-            sheet = workbook.active
-            if sheet_name is not None and sheet_name !='None'  and sheet_name !='':
-                if sheet_name in workbook.sheetnames:
-                    sheet = workbook[sheet_name]
-                    return [workbook, sheet]
-                else:
-                    print(f"Error: Sheet '{sheet_name}' not found in the workbook.")
-                    sheet = workbook.active
-                    return [workbook, sheet]
-            else:
-                sheet = workbook.active  # Get the active (first) sheet
-                return [workbook, sheet]
-    
-    
-        except FileNotFoundError:
-            print(f"Error: File not found at '{file_link}'")
-            return None
-        except Exception as e:
-            print(f"An error occurred while reading the Excel file: {e}")
-            return None
-            
-        return None
-
-    def read_excel_cells(self,workbook,col,row : int):
-        """Reads the value from a single cell in an Excel worksheet.
-
-        Args:
-            workbook (list): The [workbook, sheet] list object returned by `read_excel`.
-            col (str): The column letter of the cell (e.g., 'A', 'B').
-            row (int): The 0-indexed row number. The method adds 1 to match Excel's
-                       1-based row indexing.
-
-        Returns:
-            any: The value contained in the specified cell.
-        """
-        #print (f'"{col}{int(row)+1}"')
-        sheet = workbook[1]
-        
-        return sheet[f"{col}{int(row+1)}"].value
-        
-    def write_excel_cells(self,workbook,col,row,value):
-        """Writes a value to a single cell in an Excel worksheet.
-
-        Args:
-            workbook (list): The [workbook, sheet] list object returned by `read_excel`.
-            col (str): The column letter of the cell.
-            row (int): The 0-indexed row number. The method adds 1 to match Excel's
-                       1-based row indexing.
-            value (any): The value to write into the cell.
-
-        Returns:
-            str: A confirmation message: "assigned Value".
-        """
-        workbook[1][f"{col}{int(row+1)}"] = value
-        return "assigned Value"
-        
-    def save_excel(self,workbook,file_name):
-        """Saves and closes the Excel workbook to a specified file.
-
-        Args:
-            workbook (list): The [workbook, sheet] list object to be saved.
-            file_name (str): The file path (including name) to save the workbook to.
-
-        Returns:
-            str: A confirmation message: "saved excel".
-        """
-        workbook[0].save(file_name)
-        workbook[0].close()
-        return f"saved excel"  
-        
-    def close_excel(self,workbook):
-        """Closes the Excel workbook without saving changes.
-
-        Args:
-            workbook (openpyxl.workbook.workbook.Workbook): The workbook object to close.
-
-        Returns:
-            str: A confirmation message: "closed excel".
-        """
-        workbook[0].close()
-        return f"closed excel" 
-    
-    def count_non_empty_rows_in_column(self,workbook, column_identifier):
-        """Counts the number of non-empty cells in a specific column of a worksheet.
-
-        Args:
-            workbook (list): The [workbook, sheet] list object.
-            column_identifier (str or int): The column to check. Can be a column letter
-                                            (e.g., 'A') or a 1-based integer index (e.g., 1).
-
-        Returns:
-            int: The number of non-empty cells in the specified column, or -1 if an error occurs.
-        """
-        worksheet_object =workbook[1]
-        if not isinstance(worksheet_object, openpyxl.worksheet.worksheet.Worksheet):
-            print("Error: The provided object is not an openpyxl Worksheet.")
-            return -1
-    
-        count = 0
-        try:
-            # Get the max row of the entire sheet to avoid iterating endlessly
-            max_sheet_row = worksheet_object.max_row
-    
-            # Convert column identifier to column letter if it's an integer
-            if isinstance(column_identifier, int):
-                if column_identifier <= 0:
-                    print("Error: Column index must be 1-based.")
-                    return -1
-                column_letter = openpyxl.utils.get_column_letter(column_identifier)
-            elif isinstance(column_identifier, str):
-                column_letter = column_identifier.upper() # Ensure uppercase
-                # Optional: Validate column letter
-                if not column_letter.isalpha():
-                    print(f"Error: Invalid column letter '{column_identifier}'.")
-                    return -1
-            else:
-                print("Error: Column identifier must be a string (letter) or an integer (1-based index).")
-                return -1
-    
-            # Iterate through cells in the specified column up to the max row of the sheet
-            for row_num in range(1, max_sheet_row + 1):
-                cell = worksheet_object[f"{column_letter}{row_num}"]
-                if cell.value is not None:
-                    count += 1
-    
-            print(f"Sheet '{worksheet_object.title}', Column '{column_letter}': Non-empty cells = {count}")
-            return count
-    
-        except Exception as e:
-            print(f"An error occurred while counting column '{column_identifier}': {e}")
-            return -1
