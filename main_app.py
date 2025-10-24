@@ -3153,10 +3153,65 @@ class WorkflowCanvas(QWidget):
                 painter.drawLine(x_mark_x + 8, x_mark_y, x_mark_x, x_mark_y + 8)
                 painter.restore()
 
-            # Draw text with better formatting
+            # --- MODIFICATION TO SHOW RESULT STARTS HERE ---
+            # Draw text with better formatting, including the result if available
             painter.setPen(Qt.GlobalColor.black)
             text_rect = rect.adjusted(5, 5, -5, -5)
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+            
+            # 1. Check for a completed result
+            result_message = step_data.get("execution_result")
+            execution_status = step_data.get("execution_status")
+            
+            if result_message and execution_status == "completed":
+                # 2. Try to parse the result (similar to ExecutionStepCard)
+                display_result_text = ""
+                assign_to_var = step_data.get("assign_to_variable_name")
+                
+                if step_data.get("type") == "step" and assign_to_var and "Result: " in result_message:
+                    try:
+                        # Extract the actual result value
+                        if " (Assigned to @" in result_message:
+                            result_val_str = result_message.split("Result: ")[1].split(" (Assigned to @")[0]
+                        elif " (Assigned to" in result_message:
+                             result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0]
+                        else:
+                            result_val_str = result_message.split("Result: ")[1]
+                        
+                        # Truncate if very long
+                        if len(result_val_str) > 30:
+                            result_val_str = result_val_str[:27] + "..."
+                            
+                        display_result_text = f"@{assign_to_var} = {result_val_str}"
+                    except IndexError:
+                        display_result_text = "✓ Completed" # Fallback
+                
+                else:
+                    # For other types (loops, ifs) or steps without assignment
+                    display_result_text = result_message
+                    if len(display_result_text) > 35:
+                         display_result_text = display_result_text[:32] + "..."
+
+                # 3. Draw the main text (title) in the top half
+                title_rect = QRect(text_rect.x(), text_rect.y(), text_rect.width(), text_rect.height() // 2)
+                painter.drawText(title_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+                
+                # 4. Draw the result text in the bottom half
+                result_rect = QRect(text_rect.x(), text_rect.y() + text_rect.height() // 2, text_rect.width(), text_rect.height() // 2)
+                
+                result_font = QFont("Arial", max(7, int(8 * (self.NODE_WIDTH / 220))))
+                result_font.setItalic(True)
+                painter.setFont(result_font)
+                painter.setPen(QColor("#155724")) # Dark green, like on the card
+                
+                painter.drawText(result_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, display_result_text)
+                
+                # 5. Restore the original font for the next node
+                painter.setFont(font)
+                
+            else:
+                # 6. If no result, just draw the main text centered
+                painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+            # --- MODIFICATION ENDS HERE ---
 
         # Draw edge labels with enhanced styling
         for label, mid_point, label_rect in labels_to_draw:
