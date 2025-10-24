@@ -8,17 +8,15 @@ import io
 from datetime import datetime
 import json
 import base64
-import re # <--- ADD THIS LINE
-import ast # <--- ADD THIS LINE
-import urllib.request # <-- ADD THIS LINE
+import re
+import ast
+import urllib.request
 import zipfile
 import shutil
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
-# In main_app.py
-from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor # <-- ADD QCursor
-# In main_app.py
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor, QAction
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
 from PyQt6 import QtWidgets, QtGui
 from typing import Optional, List, Dict, Any, Tuple, Union
@@ -28,9 +26,9 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 my_lib_dir = os.path.join(script_dir, "my_lib")
 if my_lib_dir not in sys.path:
     sys.path.insert(0, my_lib_dir)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
+
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QMainWindow,
     QComboBox, QListWidget, QLabel, QPushButton, QListWidgetItem,
     QMessageBox, QProgressBar, QFileDialog, QDialog,
     QLineEdit, QVBoxLayout as QVBoxLayoutDialog, QFormLayout,
@@ -38,14 +36,11 @@ from PyQt6.QtWidgets import (
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
     QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator,
-    QScrollArea, QTabWidget # <-- ADD QTabWidget HERE
+    QScrollArea, QTabWidget, QFrame
 )
 
 from PyQt6.QtGui import QIntValidator
-
-from PyQt6.QtGui import QIntValidator
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QPainter, QPen, QTextCursor,QTextFormat,QKeyEvent,QTextDocument
-from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon,QPolygonF
 
 # Use the actual libraries from the my_lib folder
 from my_lib.shared_context import ExecutionContext, GuiCommunicator
@@ -66,7 +61,7 @@ class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer 
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
                 
-        self.setMinimumSize(679, 248) # Set a minimum size to match the original GUI
+        self.setMinimumSize(700, 300) # Set a minimum size to match the original GUI
 
         self.bot_take_image_ui = BotTakeImageWindow(image)
 
@@ -106,12 +101,15 @@ class ExecutionStepCard(QWidget):
         self.step_number = step_number
         self.init_ui()
 
+# In the ExecutionStepCard class, REPLACE the existing init_ui method with this one:
+
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(5)
         self.setObjectName("ExecutionStepCard")
-        self.set_status("#D3D3D3")
+        # The default "resting" border color
+        self.set_status("#dcdcdc") # A slightly darker grey for better definition
 
         top_row_layout = QHBoxLayout()
         step_label_text = self._get_formatted_title()
@@ -132,6 +130,30 @@ class ExecutionStepCard(QWidget):
         self.delete_button = QPushButton("Delete")
         self.save_template_button = QPushButton("Save Template")
         self.execute_this_button = QPushButton("Execute This")
+
+        # --- FIX STARTS HERE: Apply a high-contrast stylesheet to the card's buttons ---
+        card_button_style = """
+            QPushButton {
+                background-color: #f0f0f0; /* Light grey background */
+                color: #333333;             /* Dark grey text */
+                border: 1px solid #c0c0c0;  /* Slightly darker border */
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+                border-color: #a0a0a0;
+            }
+            QPushButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """
+        
+        # Apply the style to all buttons
+        for button in [self.up_button, self.down_button, self.edit_button, self.delete_button, self.save_template_button, self.execute_this_button]:
+            button.setStyleSheet(card_button_style)
+        # --- FIX ENDS HERE ---
 
         button_font = self.up_button.font()
         button_font.setBold(True)
@@ -171,7 +193,7 @@ class ExecutionStepCard(QWidget):
 
         main_layout.addLayout(top_row_layout)
 
-        # NEW: Store original method text and create the label
+        # The rest of the method remains the same...
         self._original_method_text = self._get_formatted_method_name()
         if self._original_method_text:
             self.method_label = QLabel(self._original_method_text)
@@ -179,7 +201,7 @@ class ExecutionStepCard(QWidget):
             self.method_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             main_layout.addWidget(self.method_label)
         else:
-            self.method_label = None # Ensure it exists for other methods to check
+            self.method_label = None
 
         if self.step_data.get("type") == "step":
             parameters_config = self.step_data.get("parameters_config", {})
@@ -191,12 +213,19 @@ class ExecutionStepCard(QWidget):
                     if param_name == "original_listbox_row_index": continue
                     value_str = ""
                     if config.get('type') == 'hardcoded': value_str = repr(config['value'])
-                    elif config.get('type') == 'hardcoded_file': value_str = f"File: '{config['value']}'"
+                    # --- MODIFICATION IS HERE ---
+                    elif config.get('type') == 'hardcoded_file':
+                        # config['value'] is "Folder/image_name"
+                        full_path_value = config['value']
+                        # os.path.basename gets "image_name"
+                        base_name = os.path.basename(full_path_value)
+                        # os.path.splitext is not needed if extension is already stripped
+                        value_str = f"File: '{base_name}'"
+                    # --- END MODIFICATION ---
                     elif config.get('type') == 'variable': value_str = f"Variable: @{config['value']}"
                     param_label = QLabel(f"{param_name}:")
                     value_label = QLineEdit(value_str)
                     value_label.setReadOnly(True)
-                    # NEW: Adjusted style for readability
                     value_label.setStyleSheet("background-color: #FFFFFF; font-size: 9pt; padding: 2px; border: 1px solid #D3D3D3;")
                     params_layout.addRow(param_label, value_label)
                 params_group.setLayout(params_layout)
@@ -245,9 +274,36 @@ class ExecutionStepCard(QWidget):
             return f"{name_display} ({left_str} {op} {right_str})"
         return ""
 
-    def set_status(self, border_color: str, is_running: bool = False):
-        background_color = "#D4EDDA" if is_running else "#F8F8F8"
-        self.setStyleSheet(f"#ExecutionStepCard {{ background-color: {background_color}; border: 2px solid {border_color}; border-radius: 4px; }}")
+    def set_status(self, border_color: str, is_running: bool = False, is_error: bool = False):
+        """Enhanced status setting with dynamic border thickness and colors."""
+        
+        # Determine border thickness based on state
+        if is_running or is_error:
+            border_thickness = 4  # 100% increase from normal 2px
+        else:
+            border_thickness = 2  # Normal thickness
+        
+        # Determine colors based on state
+        if is_running:
+            border_color = "#FFD700"  # Gold/Yellow for running
+            background_color = "#FFFBF0"  # Very light yellow background
+        elif is_error:
+            border_color = "#DC3545"  # Red for error
+            background_color = "#FFF5F5"  # Very light red background
+        elif border_color == "darkGreen" or border_color == "#28a745":
+            border_color = "#28a745"  # Green for success
+            background_color = "#F8FFF8"  # Very light green background
+        else:
+            background_color = "#F8F8F8"  # Default light gray background
+        
+        # Apply the styling
+        self.setStyleSheet(f"""
+            #ExecutionStepCard {{ 
+                background-color: {background_color}; 
+                border: {border_thickness}px solid {border_color}; 
+                border-radius: 6px; 
+            }}
+        """)
 
     def set_result_text(self, result_message: str):
         """Displays the execution result on the card by updating the method label."""
@@ -263,8 +319,14 @@ class ExecutionStepCard(QWidget):
         # Check if this is a standard step with a variable assignment and a valid result message
         if self.step_data.get("type") == "step" and assign_to_var and "Result: " in result_message:
             try:
-                # Extract the actual result value (it's between "Result: " and " (Assigned to")
-                result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0]
+                # Extract the actual result value - handle both possible formats
+                if " (Assigned to @" in result_message:
+                    result_val_str = result_message.split("Result: ")[1].split(" (Assigned to @")[0]
+                elif " (Assigned to" in result_message:
+                    result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0]
+                else:
+                    # Fallback: just get everything after "Result: "
+                    result_val_str = result_message.split("Result: ")[1]
             except IndexError:
                 result_val_str = "Error parsing result"
             
@@ -277,7 +339,6 @@ class ExecutionStepCard(QWidget):
             # For other step types (loops, ifs) or steps without assignment, just show the worker message
             self.method_label.setText(f"✓ {result_message}")
             self.method_label.setStyleSheet("font-size: 10pt; font-style: italic; color: #155724; padding: 5px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 3px;")
-
 
     def clear_result(self):
         """Resets the method label to its pre-execution state."""
@@ -565,11 +626,20 @@ class ParameterInputDialog(QDialog):
         self.assign_to_variable_name: Optional[str] = None
         self.gui_communicator = gui_communicator
         self._parent_main_window = parent
-        self._image_filenames = image_filenames
+        
+        # --- MODIFICATION: Store all paths and derive folder list ---
+        self._all_image_relative_paths = image_filenames 
+        # Get folder names (e.g., "FolderA") from paths ("FolderA/image1")
+        self._folder_list = sorted(list(set([path.split('/')[0] for path in self._all_image_relative_paths if '/' in path])))
+        # --- END MODIFICATION ---
+
         self.param_editors: Dict[str, QLineEdit] = {}
         self.param_var_selectors: Dict[str, QComboBox] = {}
         self.param_value_source_combos: Dict[str, QComboBox] = {}
         self.file_selector_combos: Dict[str, QComboBox] = {}
+        # --- NEW: Add dict for new folder combos ---
+        self.folder_selector_combos: Dict[str, QComboBox] = {}
+        # --- END NEW ---
         self.param_kinds: Dict[str, Any] = {}
 
         main_layout, form_layout = QVBoxLayoutDialog(), QFormLayout()
@@ -598,14 +668,23 @@ class ParameterInputDialog(QDialog):
                 browse_button.clicked.connect(lambda _, p_name=param_name: self._open_file_dialog_for_param(p_name))
                 param_h_layout.addWidget(browse_button)
 
-            if param_name == "current_file" and image_filenames is not None:
+            # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
+            if param_name == "image_to_click":
                 file_source_combo = QComboBox()
                 file_source_combo.addItems(["Select from Files", "Global Variable"])
                 self.param_value_source_combos[param_name] = file_source_combo
 
+                # --- NEW: Create and populate the folder dropdown ---
+                folder_selector_combo = QComboBox()
+                folder_selector_combo.addItem("All Folders")
+                folder_selector_combo.addItems(self._folder_list)
+                self.folder_selector_combos[param_name] = folder_selector_combo
+                # --- END NEW ---
+
                 file_selector_combo = QComboBox()
                 file_selector_combo.addItem("-- Select File --")
-                file_selector_combo.addItems(sorted(self._image_filenames))
+                # --- MODIFICATION: Populate with all files initially ---
+                file_selector_combo.addItems(self._all_image_relative_paths)
                 file_selector_combo.addItem("--- Add new image ---")
                 self.file_selector_combos[param_name] = file_selector_combo
 
@@ -614,11 +693,26 @@ class ParameterInputDialog(QDialog):
                 variable_select_combo.addItems(current_global_var_names)
                 self.param_var_selectors[param_name] = variable_select_combo
 
-                file_source_combo.currentIndexChanged.connect(lambda index, f_sel=file_selector_combo, v_sel=variable_select_combo: self._toggle_file_or_var_input(index, f_sel, v_sel))
+                # --- MODIFICATION: Update connect to handle new folder combo ---
+                file_source_combo.currentIndexChanged.connect(
+                    lambda index, f_fold=folder_selector_combo, f_sel=file_selector_combo, v_sel=variable_select_combo: \
+                    self._toggle_file_or_var_input(index, f_fold, f_sel, v_sel)
+                )
+                # --- END MODIFICATION ---
+
+                # --- NEW: Connect folder combo to filter method ---
+                folder_selector_combo.currentIndexChanged.connect(
+                    self._update_file_list_based_on_folder
+                )
+                # --- END NEW ---
+                
                 file_selector_combo.currentIndexChanged.connect(lambda index, p_name=param_name: self._on_file_selection_changed(p_name, index))
                 self.update_image_filenames.connect(self._refresh_file_selector_combo)
 
                 param_h_layout.addWidget(file_source_combo, 0)
+                # --- NEW: Add folder combo to layout ---
+                param_h_layout.addWidget(folder_selector_combo, 1)
+                # --- END NEW ---
                 param_h_layout.addWidget(file_selector_combo, 2)
                 param_h_layout.addWidget(variable_select_combo, 1)
 
@@ -626,17 +720,36 @@ class ParameterInputDialog(QDialog):
                     config = initial_parameters_config[param_name]
                     if config.get('type') == 'hardcoded_file':
                         file_source_combo.setCurrentIndex(0)
-                        idx = file_selector_combo.findText(config['value'])
+                        
+                        # --- MODIFICATION: Set folder and file dropdowns from saved path ---
+                        saved_path = config['value']
+                        saved_folder = "All Folders"
+                        if '/' in saved_path:
+                            saved_folder = saved_path.split('/')[0]
+                        
+                        folder_idx = folder_selector_combo.findText(saved_folder)
+                        if folder_idx != -1:
+                            folder_selector_combo.setCurrentIndex(folder_idx)
+                            # Manually trigger filter to populate file list
+                            self._update_file_list_based_on_folder(folder_idx) 
+                        
+                        idx = file_selector_combo.findText(saved_path)
                         if idx != -1:
                             file_selector_combo.setCurrentIndex(idx)
                             self._on_file_selection_changed(param_name, idx)
+                        # --- END MODIFICATION ---
+
                     elif config.get('type') == 'variable':
                         file_source_combo.setCurrentIndex(1)
                         idx = variable_select_combo.findText(config['value'])
                         if idx != -1:
                             variable_select_combo.setCurrentIndex(idx)
-                self._toggle_file_or_var_input(file_source_combo.currentIndex(), file_selector_combo, variable_select_combo)
-            else:
+                
+                # --- MODIFICATION: Pass folder combo to toggle function ---
+                self._toggle_file_or_var_input(file_source_combo.currentIndex(), folder_selector_combo, file_selector_combo, variable_select_combo)
+                # --- END MODIFICATION ---
+            
+            else: # Logic for all other parameters (unchanged)
                 if param_name in initial_parameters_config:
                     config = initial_parameters_config[param_name]
                     if config.get('type') == 'hardcoded':
@@ -674,6 +787,8 @@ class ParameterInputDialog(QDialog):
             form_layout.addRow(label, param_h_layout)
 
         main_layout.addLayout(form_layout)
+        
+        # --- Assignment Group Box (Unchanged) ---
         assignment_group_box = QGroupBox("Assign Method Result to Variable")
         assignment_layout = QVBoxLayoutDialog()
 
@@ -720,6 +835,7 @@ class ParameterInputDialog(QDialog):
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
         self.setLayout(main_layout)
+        # --- End Assignment Group Box ---
 
     def _open_file_dialog_for_param(self, param_name: str):
         editor = self.param_editors.get(param_name)
@@ -735,15 +851,71 @@ class ParameterInputDialog(QDialog):
         if not is_hardcoded:
             hardcoded_editor.clear()
 
-    def _toggle_file_or_var_input(self, index: int, file_selector_combo: QComboBox, variable_select_combo: QComboBox) -> None:
+    # --- MODIFICATION: Added folder_selector_combo ---
+    def _toggle_file_or_var_input(self, index: int, folder_selector_combo: QComboBox, file_selector_combo: QComboBox, variable_select_combo: QComboBox) -> None:
         is_file_selection = (index == 0)
+        folder_selector_combo.setVisible(is_file_selection) # Show/hide folder combo
         file_selector_combo.setVisible(is_file_selection)
         variable_select_combo.setVisible(not is_file_selection)
         if not is_file_selection:
+            folder_selector_combo.setCurrentIndex(0) # Reset folder
             file_selector_combo.setCurrentIndex(0)
+    # --- END MODIFICATION ---
+
+    # --- NEW: Method to filter file list based on folder selection ---
+    def _update_file_list_based_on_folder(self, index: int = -1):
+        """Filters the file selector combo based on the folder selector combo."""
+        folder_combo = self.sender()
+        if not isinstance(folder_combo, QComboBox):
+            # Fallback if called manually (e.g., during init)
+            folder_combos = self.folder_selector_combos.values()
+            if not folder_combos:
+                return
+            folder_combo = list(folder_combos)[0]
+
+        param_name = ""
+        for name, combo in self.folder_selector_combos.items():
+            if combo is folder_combo:
+                param_name = name
+                break
+        
+        if not param_name:
+            return
+
+        file_combo = self.file_selector_combos.get(param_name)
+        if not file_combo:
+            return
+
+        selected_folder = folder_combo.currentText()
+        current_file = file_combo.currentText() # Save current selection
+
+        file_combo.blockSignals(True)
+        file_combo.clear()
+        file_combo.addItem("-- Select File --")
+
+        if selected_folder == "All Folders":
+            filtered_files = self._all_image_relative_paths
+        else:
+            # Filter by path prefix
+            prefix = selected_folder + '/'
+            # Also include root files (those without any '/')
+            root_files = [path for path in self._all_image_relative_paths if '/' not in path]
+            folder_files = [path for path in self._all_image_relative_paths if path.startswith(prefix)]
+            filtered_files = root_files + folder_files
+
+        file_combo.addItems(sorted(filtered_files))
+        file_combo.addItem("--- Add new image ---")
+        
+        idx = file_combo.findText(current_file) # Try to restore selection
+        if idx != -1:
+            file_combo.setCurrentIndex(idx)
+        
+        file_combo.blockSignals(False)
+    # --- END NEW ---
 
     def _on_file_selection_changed(self, param_name: str, index: int) -> None:
-        if param_name == "current_file" and param_name in self.file_selector_combos:
+        # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
+        if param_name == "image_to_click" and param_name in self.file_selector_combos:
             file_selector_combo = self.file_selector_combos[param_name]
             selected_text = file_selector_combo.currentText()
             if selected_text == "--- Add new image ---":
@@ -752,28 +924,79 @@ class ParameterInputDialog(QDialog):
                 file_selector_combo.blockSignals(False)
                 self.request_screenshot.emit()
             elif selected_text != "-- Select File --":
+                # selected_text is now the relative path (e.g., "Folder/image")
                 self.gui_communicator.update_module_info_signal.emit(selected_text)
             else:
                 self.gui_communicator.update_module_info_signal.emit("")
 
     def _refresh_file_selector_combo(self, new_filenames: List[str], saved_filename: str = "") -> None:
+        # --- MODIFICATION: This method is now much more complex ---
+        # 1. Update master list
+        self._all_image_relative_paths = new_filenames
+        # 2. Update folder list
+        self._folder_list = sorted(list(set([path.split('/')[0] for path in new_filenames if '/' in path])))
+        
         for param_name, combo_box in self.file_selector_combos.items():
-            if param_name == "current_file":
+            # 3. Check for the correct parameter name
+            if param_name == "image_to_click":
+                folder_combo = self.folder_selector_combos.get(param_name)
+                
+                # 4. Determine which folder should be selected
+                target_folder_name = "All Folders"
+                if saved_filename and '/' in saved_filename:
+                    target_folder_name = saved_filename.split('/')[0]
+                elif folder_combo: # Keep current folder if no new file is specified
+                    target_folder_name = folder_combo.currentText()
+
+                # 5. Re-populate folder combo
+                if folder_combo:
+                    folder_combo.blockSignals(True)
+                    folder_combo.clear()
+                    folder_combo.addItem("All Folders")
+                    folder_combo.addItems(self._folder_list)
+                    
+                    folder_idx = folder_combo.findText(target_folder_name)
+                    if folder_idx != -1:
+                        folder_combo.setCurrentIndex(folder_idx)
+                    else:
+                        folder_combo.setCurrentIndex(0) # Default to All Folders
+                    folder_combo.blockSignals(False)
+
+                # 6. Get the *actual* selected folder (might be "All Folders")
+                selected_folder = folder_combo.currentText() if folder_combo else "All Folders"
+
+                # 7. Filter file list based on selected folder
+                if selected_folder == "All Folders":
+                    filtered_files = self._all_image_relative_paths
+                else:
+                    # Filter by path prefix
+                    prefix = selected_folder + '/'
+                    # Also include root files (those without any '/')
+                    root_files = [path for path in self._all_image_relative_paths if '/' not in path]
+                    folder_files = [path for path in self._all_image_relative_paths if path.startswith(prefix)]
+                    filtered_files = root_files + folder_files
+
+
+                # 8. Re-populate file combo
                 combo_box.blockSignals(True)
                 combo_box.clear()
                 combo_box.addItem("-- Select File --")
-                combo_box.addItems(sorted(new_filenames))
+                combo_box.addItems(sorted(filtered_files))
                 combo_box.addItem("--- Add new image ---")
+
+                # 9. Try to select the newly saved file
                 if saved_filename:
                     idx = combo_box.findText(saved_filename)
                     if idx != -1:
                         combo_box.setCurrentIndex(idx)
                         self.gui_communicator.update_module_info_signal.emit(saved_filename)
+                
                 combo_box.blockSignals(False)
-                if combo_box.currentIndex() == 0:
+                
+                # 10. Emit signal if no file is selected
+                if combo_box.currentIndex() <= 0 and saved_filename == "":
                     self.gui_communicator.update_module_info_signal.emit("")
-                else:
-                    self.gui_communicator.update_module_info_signal.emit(combo_box.currentText())
+        # --- END MODIFICATION ---
 
     def _toggle_assignment_widgets(self) -> None:
         is_assign_enabled = self.assign_checkbox.isChecked()
@@ -788,9 +1011,11 @@ class ParameterInputDialog(QDialog):
     def get_parameters_config(self) -> Optional[Dict[str, Any]]:
         config_data: Dict[str, Any] = {}
         for param_name, source_combo in self.param_value_source_combos.items():
-            if param_name == "current_file" and param_name in self.file_selector_combos:
+            # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
+            if param_name == "image_to_click" and param_name in self.file_selector_combos:
                 value_source_index = source_combo.currentIndex()
                 if value_source_index == 0:
+                    # The file name is now a relative path, e.g., "Folder/image"
                     file_name = self.file_selector_combos[param_name].currentText()
                     if file_name in ["-- Select File --", "--- Add new image ---"]:
                         QMessageBox.warning(self, "Input Error", f"Please select a file for parameter '{param_name}'.")
@@ -803,6 +1028,7 @@ class ParameterInputDialog(QDialog):
                         return None
                     config_data[param_name] = {'type': 'variable', 'value': var_name}
                 continue
+            # --- END MODIFICATION ---
 
             value_source_index = source_combo.currentIndex()
             if value_source_index == 0:
@@ -869,6 +1095,7 @@ class ExecutionWorker(QThread):
     execution_item_finished = pyqtSignal(dict, str, int)
     execution_error = pyqtSignal(dict, str, int)
     execution_finished_all = pyqtSignal(ExecutionContext, bool, int)
+    loop_iteration_started = pyqtSignal(str, int)  # loop_id, iteration_number
 
     def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
                  global_variables_ref: Dict[str, Any], parent: Optional[QWidget] = None,
@@ -887,7 +1114,8 @@ class ExecutionWorker(QThread):
         self.single_step_mode = single_step_mode
         self.selected_start_index = selected_start_index
         self.next_step_index_to_select: int = -1
-
+        self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
+        self._is_paused = False # ADD THIS LINE
     def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
         count_config = loop_config["iteration_count_config"]
         if count_config["type"] == "variable":
@@ -922,46 +1150,78 @@ class ExecutionWorker(QThread):
             else: raise ValueError(f"Unknown operator: {operator}")
         except Exception as e: raise ValueError(f"Error evaluating condition '{left_val} {operator} {right_val}': {e}")
 
+    
     def run(self) -> None:
         self.execution_started.emit("Starting execution...")
-        if not self.steps_to_execute: self.execution_finished_all.emit(self.context, False, -1); return
+        if not self.steps_to_execute: 
+            self.execution_finished_all.emit(self.context, False, -1)
+            return
+            
         total_steps_for_progress = len(self.steps_to_execute) * 2 if not self.single_step_mode else 1
-        if total_steps_for_progress == 0: total_steps_for_progress = 1
+        if total_steps_for_progress == 0: 
+            total_steps_for_progress = 1
+            
         current_execution_item_count = 0
         original_sys_path = sys.path[:]
-        if self.module_directory not in sys.path: sys.path.insert(0, self.module_directory)
+        
+        if self.module_directory not in sys.path: 
+            sys.path.insert(0, self.module_directory)
+            
+        self.context.set_click_image_base_dir(self.click_image_dir)    
         self.loop_stack = []
         self.conditional_stack = []
         step_index = self.selected_start_index if self.single_step_mode else 0
         original_listbox_row_index = 0
+        
         try:
             while step_index < len(self.steps_to_execute):
-                if self._is_stopped: break
-                if self.single_step_mode and current_execution_item_count >= 1: break
-                step_data = self.steps_to_execute[step_index]; step_type = step_data["type"]
+                
+                # --- ADD THIS BLOCK for PAUSE logic ---
+                while self._is_paused:
+                    if self._is_stopped: # Allow stop to break out of pause
+                        break
+                    QThread.msleep(100) # Sleep while paused
+                # --- END ADD ---                
+                
+                if self._is_stopped: 
+                    break
+                if self.single_step_mode and current_execution_item_count >= 1: 
+                    break
+                    
+                step_data = self.steps_to_execute[step_index]
+                step_type = step_data["type"]
                 original_listbox_row_index = step_data.get("original_listbox_row_index", step_index)
                 current_execution_item_count += 1
                 progress_percentage = int((current_execution_item_count / total_steps_for_progress) * 100)
                 self.execution_progress.emit(min(progress_percentage, 100))
+                
+                # Check for conditional skipping logic
                 is_skipping = False
                 if self.conditional_stack:
                     current_if = self.conditional_stack[-1]
-                    # Use .get() to safely access keys that might not exist in a skipped block
                     if not current_if.get('condition_result', True) and not current_if.get('else_taken', False):
-                        if not (step_type == "ELSE" and step_data.get("if_id") == current_if["if_id"]): is_skipping = True
+                        if not (step_type == "ELSE" and step_data.get("if_id") == current_if["if_id"]): 
+                            is_skipping = True
                     elif current_if.get('condition_result', False) and current_if.get('else_taken', False):
-                        if not (step_type == "IF_END" and step_data.get("if_id") == current_if["if_id"]): is_skipping = True
+                        if not (step_type == "IF_END" and step_data.get("if_id") == current_if["if_id"]): 
+                            is_skipping = True
+                
                 if is_skipping:
                     self.execution_item_started.emit(step_data, original_listbox_row_index)
-                    if step_type == "IF_START": self.conditional_stack.append({'if_id': step_data['if_id'], 'skipped_marker': True})
-                    elif step_type == "loop_start": self.loop_stack.append({'loop_id': step_data['loop_id'], 'skipped_marker': True})
+                    if step_type == "IF_START": 
+                        self.conditional_stack.append({'if_id': step_data['if_id'], 'skipped_marker': True})
+                    elif step_type == "loop_start": 
+                        self.loop_stack.append({'loop_id': step_data['loop_id'], 'skipped_marker': True})
                     elif step_type == "IF_END":
-                        if self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'): self.conditional_stack.pop()
+                        if self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'): 
+                            self.conditional_stack.pop()
                     elif step_type == "loop_end":
-                        if self.loop_stack and self.loop_stack[-1].get('skipped_marker'): self.loop_stack.pop()
+                        if self.loop_stack and self.loop_stack[-1].get('skipped_marker'): 
+                            self.loop_stack.pop()
                     self.execution_item_finished.emit(step_data, "SKIPPED", original_listbox_row_index)
                     step_index += 1
                     continue
+                
                 self.execution_item_started.emit(step_data, original_listbox_row_index)
                 QThread.msleep(50)
 
@@ -970,89 +1230,190 @@ class ExecutionWorker(QThread):
                     step_index += 1
                     continue
 
-                if step_type == "step":
-                    class_name, method_name, module_name = step_data["class_name"], step_data["method_name"], step_data["module_name"]
-                    parameters_config = step_data["parameters_config"]; assign_to_variable_name = step_data["assign_to_variable_name"]
-                    resolved_parameters, params_str_debug = {}, []
-                    for param_name, config in parameters_config.items():
-                        if param_name == "original_listbox_row_index": continue
-                        if config['type'] == 'hardcoded': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}={repr(config['value'])}")
-                        elif config['type'] == 'hardcoded_file': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
-                        elif config['type'] == 'variable':
-                            var_name = config['value']
-                            if var_name in self.global_variables: resolved_parameters[param_name] = self.global_variables[var_name]; params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
-                            else: raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
-                    self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
-                    try:
-                        module = importlib.import_module(module_name); importlib.reload(module)
-                        class_obj = getattr(module, class_name); instance_key = (class_name, module_name)
-                        if instance_key not in self.instantiated_objects:
-                            init_kwargs = {};
-                            if 'context' in inspect.signature(class_obj.__init__).parameters: init_kwargs['context'] = self.context
-                            self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
-                        instance = self.instantiated_objects[instance_key]; method_func = getattr(instance, method_name)
-                        method_kwargs = {k:v for k,v in resolved_parameters.items()}
-                        if 'context' in inspect.signature(method_func).parameters: method_kwargs['context'] = self.context
-                        result = method_func(**method_kwargs)
-                        if assign_to_variable_name: self.global_variables[assign_to_variable_name] = result; result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
-                        else: result_msg = f"Result: {result}"
-                        self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
-                    except Exception as e: raise e
+                # ENHANCED LOOP HANDLING WITH RESET LOGIC
                 elif step_type == "loop_start":
                     loop_id, loop_config = step_data["loop_id"], step_data["loop_config"]
                     is_new_loop = not (self.loop_stack and self.loop_stack[-1].get('loop_id') == loop_id)
+                    
                     if is_new_loop:
+                        # First time entering this loop
                         loop_end_index, nesting_level = -1, 0
                         for i in range(step_index + 1, len(self.steps_to_execute)):
                             s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
-                            if s_type in ["loop_start", "IF_START"]: nesting_level += 1
-                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0: loop_end_index = i; break
-                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: nesting_level -= 1
-                        if loop_end_index == -1: raise ValueError(f"Loop '{loop_id}' has no matching 'loop_end' marker.")
+                            if s_type in ["loop_start", "IF_START"]: 
+                                nesting_level += 1
+                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0: 
+                                loop_end_index = i
+                                break
+                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: 
+                                nesting_level -= 1
+                                
+                        if loop_end_index == -1: 
+                            raise ValueError(f"Loop '{loop_id}' has no matching 'loop_end' marker.")
+                            
                         total_iterations = self._resolve_loop_count(loop_config)
-                        current_loop_info = {'loop_id': loop_id, 'start_index': step_index, 'end_index': loop_end_index, 'current_iteration': 1, 'total_iterations': total_iterations, 'loop_config': loop_config}
+                        current_loop_info = {
+                            'loop_id': loop_id, 
+                            'start_index': step_index, 
+                            'end_index': loop_end_index, 
+                            'current_iteration': 1, 
+                            'total_iterations': total_iterations, 
+                            'loop_config': loop_config
+                        }
                         self.loop_stack.append(current_loop_info)
+                        
+                        # Emit signal for first iteration (no reset needed for first iteration)
+                        self.loop_iteration_started.emit(loop_id, 1)
+                        
                     else:
-                        current_loop_info = self.loop_stack[-1]; current_loop_info['current_iteration'] += 1
+                        # Subsequent iterations - RESET LOOP STEPS HERE
+                        current_loop_info = self.loop_stack[-1]
+                        current_loop_info['current_iteration'] += 1
                         current_loop_info['total_iterations'] = self._resolve_loop_count(loop_config)
-                    if current_loop_info['current_iteration'] > current_loop_info['total_iterations']: self.loop_stack.pop(); step_index = current_loop_info['end_index']; self.execution_item_finished.emit(step_data, "Loop Finished", original_listbox_row_index)
+                        
+                        # Emit signal to reset loop steps before continuing
+                        iteration_num = current_loop_info['current_iteration']
+                        self.loop_iteration_started.emit(loop_id, iteration_num)
+
+                    current_loop_info = self.loop_stack[-1]
+                    if current_loop_info['current_iteration'] > current_loop_info['total_iterations']: 
+                        self.loop_stack.pop()
+                        step_index = current_loop_info['end_index']
+                        self.execution_item_finished.emit(step_data, "Loop Finished", original_listbox_row_index)
                     else:
                         assign_var = loop_config.get("assign_iteration_to_variable")
-                        if assign_var: self.global_variables[assign_var] = current_loop_info['current_iteration']; self.context.add_log(f"Assigned iteration {current_loop_info['current_iteration']} to @{assign_var}")
+                        if assign_var: 
+                            self.global_variables[assign_var] = current_loop_info['current_iteration']
+                            self.context.add_log(f"Assigned iteration {current_loop_info['current_iteration']} to @{assign_var}")
                         self.execution_item_finished.emit(step_data, f"Iter {current_loop_info['current_iteration']}/{current_loop_info['total_iterations']}", original_listbox_row_index)
+
                 elif step_type == "loop_end":
-                    if not self.loop_stack or self.loop_stack[-1].get('loop_id') != step_data['loop_id']: raise ValueError(f"Mismatched loop_end for ID: {step_data['loop_id']}")
-                    step_index = self.loop_stack[-1]['start_index'] - 1; self.execution_item_finished.emit(step_data, "Looping...", original_listbox_row_index)
+                    if not self.loop_stack or self.loop_stack[-1].get('loop_id') != step_data['loop_id']: 
+                        raise ValueError(f"Mismatched loop_end for ID: {step_data['loop_id']}")
+                    step_index = self.loop_stack[-1]['start_index'] - 1
+                    self.execution_item_finished.emit(step_data, "Looping...", original_listbox_row_index)
+
+                # ... (keep all other step type handling logic the same) ...
+                
+                elif step_type == "step":
+                    class_name, method_name, module_name = step_data["class_name"], step_data["method_name"], step_data["module_name"]
+                    parameters_config = step_data["parameters_config"]
+                    assign_to_variable_name = step_data["assign_to_variable_name"]
+                    resolved_parameters, params_str_debug = {}, []
+                    
+                    for param_name, config in parameters_config.items():
+                        if param_name == "original_listbox_row_index": 
+                            continue
+                        if config['type'] == 'hardcoded': 
+                            resolved_parameters[param_name] = config['value']
+                            params_str_debug.append(f"{param_name}={repr(config['value'])}")
+                        elif config['type'] == 'hardcoded_file': 
+                            resolved_parameters[param_name] = config['value']
+                            params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
+                        elif config['type'] == 'variable':
+                            var_name = config['value']
+                            if var_name in self.global_variables: 
+                                resolved_parameters[param_name] = self.global_variables[var_name]
+                                params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
+                            else: 
+                                raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
+                    
+                    self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
+                    
+                    try:
+                        module = importlib.import_module(module_name)
+                        importlib.reload(module)
+                        class_obj = getattr(module, class_name)
+                        instance_key = (class_name, module_name)
+                        
+                        if instance_key not in self.instantiated_objects:
+                            init_kwargs = {}
+                            if 'context' in inspect.signature(class_obj.__init__).parameters: 
+                                init_kwargs['context'] = self.context
+                            self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
+                        
+                        instance = self.instantiated_objects[instance_key]
+                        method_func = getattr(instance, method_name)
+                        method_kwargs = {k:v for k,v in resolved_parameters.items()}
+                        
+                        if 'context' in inspect.signature(method_func).parameters: 
+                            method_kwargs['context'] = self.context
+                            
+                        result = method_func(**method_kwargs)
+                        
+                        if assign_to_variable_name: 
+                            self.global_variables[assign_to_variable_name] = result
+                            result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
+                        else: 
+                            result_msg = f"Result: {result}"
+                            
+                        self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
+                        
+                    except Exception as e: 
+                        raise e
+
                 elif step_type == "IF_START":
-                    if_id, condition_config = step_data["if_id"], step_data["condition_config"]
-                    condition_result = self._evaluate_condition(condition_config["condition"]); self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}")
-                    self.conditional_stack.append({'if_id': if_id, 'condition_result': condition_result, 'else_taken': False}); self.execution_item_finished.emit(step_data, f"Condition: {condition_result}", original_listbox_row_index)
+                    condition_config = step_data["condition_config"]
+                    if_id = step_data["if_id"]
+                    condition_result = self._evaluate_condition(condition_config["condition"])
+                    self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}")
+                    self.conditional_stack.append({'if_id': if_id, 'condition_result': condition_result, 'else_taken': False})
+                    self.execution_item_finished.emit(step_data, f"Condition: {condition_result}", original_listbox_row_index)
+
                 elif step_type == "ELSE":
-                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: raise ValueError(f"Mismatched ELSE for ID: {step_data['if_id']}")
-                    current_if = self.conditional_stack[-1]; current_if['else_taken'] = True
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: 
+                        raise ValueError(f"Mismatched ELSE for ID: {step_data['if_id']}")
+                    current_if = self.conditional_stack[-1]
+                    current_if['else_taken'] = True
                     self.execution_item_finished.emit(step_data, "Branching", original_listbox_row_index)
+                    
                     if current_if.get('condition_result', False):
                         nesting_level = 0
                         for i in range(step_index + 1, len(self.steps_to_execute)):
                             s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
-                            if s_type in ["loop_start", "IF_START"]: nesting_level += 1
-                            elif s_type == "IF_END" and s.get("if_id") == current_if["if_id"] and nesting_level == 0: step_index = i-1; break
-                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: nesting_level -= 1
+                            if s_type in ["loop_start", "IF_START"]: 
+                                nesting_level += 1
+                            elif s_type == "IF_END" and s.get("if_id") == current_if["if_id"] and nesting_level == 0: 
+                                step_index = i-1
+                                break
+                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: 
+                                nesting_level -= 1
+
                 elif step_type == "IF_END":
-                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: raise ValueError(f"Mismatched IF_END for ID: {step_data['if_id']}")
-                    self.conditional_stack.pop(); self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: 
+                        raise ValueError(f"Mismatched IF_END for ID: {step_data['if_id']}")
+                    self.conditional_stack.pop()
+                    self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
+
                 step_index += 1
+                
         except Exception as e:
-            error_msg = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"; self.context.add_log(error_msg)
-            self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, error_msg, original_listbox_row_index); self._is_stopped = True
+            error_msg = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"
+            self.context.add_log(error_msg)
+            self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, error_msg, original_listbox_row_index)
+            self._is_stopped = True
+            
         finally:
             sys.path = original_sys_path
             if self.single_step_mode:
                 next_index = -1
-                if not self._is_stopped and step_index < len(self.steps_to_execute): next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
+                if not self._is_stopped and step_index < len(self.steps_to_execute): 
+                    next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
                 self.next_step_index_to_select = next_index
             self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
 
+# Add these new methods anywhere inside the ExecutionWorker class
+    def pause(self):
+        """Sets the pause flag and logs the action."""
+        self._is_paused = True
+        self.context.add_log("Execution PAUSED.")
+        self.execution_started.emit("Execution PAUSED.") # Re-use signal for logging
+
+    def resume(self):
+        """Clears the pause flag and logs the action."""
+        self._is_paused = False
+        self.context.add_log("Execution RESUMED.")
+        self.execution_started.emit("Execution RESUMED.") # Re-use signal for logging
 class StepInsertionDialog(QDialog):
     def __init__(self, execution_tree: QTreeWidget, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -1323,7 +1684,6 @@ class SaveBotDialog(QDialog):
             return None
         return sanitized_name
 
-# In main_app.py, REPLACE your existing GroupedTreeWidget class with this one
 
 # In main_app.py, REPLACE your entire GroupedTreeWidget class with this:
 
@@ -2055,263 +2415,455 @@ class UpdateDialog(QDialog):
                 all_children_list.append(child_path)
             else:
                 self.get_all_children(child, child_path, all_children_list)
-# In main_app.py, after the SecondWindow class or similar
 
 # In main_app.py
 # REPLACE the entire WorkflowCanvas class with this:
 
-class WorkflowCanvas(QWidget):
-    """A custom widget that draws the bot's workflow."""
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
+# In main_app.py
+# REPLACE the entire WorkflowCanvas class with this enhanced version:
 
-    def __init__(self, workflow_tree: List[Dict[str, Any]], parent: Optional[QWidget] = None):
+class WorkflowCanvas(QWidget):
+    """A custom widget that draws the bot's workflow with smart layout and navigation."""
+    
+    def __init__(self, workflow_tree: List[Dict[str, Any]], main_window, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.workflow_tree = workflow_tree
+        self.main_window = main_window  # Add this line
         
-        # --- MODIFIED: Store step_data in the node ---
-        # self.nodes: List[Tuple[QRect, str, str, Dict[str, Any]]]
         # (rect, text, shape, step_data)
         self.nodes: List[Tuple[QRect, str, str, Dict[str, Any]]] = [] 
         
         self.edges: List[Tuple[Optional[str], Tuple[int, str], Tuple[int, str]]] = []
         self.merge_lines: List[Tuple[int, int]] = []
         
-        self.NODE_WIDTH = 250
-        self.NODE_HEIGHT = 60
-        self.V_SPACING = 50
-        self.H_SPACING = 100 
-        self.GRID_SIZE = 50
+        # Smart layout parameters
+        self.NODE_WIDTH = 220
+        self.NODE_HEIGHT = 50
+        self.V_SPACING = 40
+        self.H_SPACING = 120
+        self.GRID_SIZE = 20
+        
+        # Canvas navigation
+        self.canvas_offset = QPoint(0, 0)
+        self.dragging_canvas = False
+        self.last_pan_point = QPoint()
         
         self.total_width = 0
         self.total_height = 0
 
         self.dragging_node_index: Optional[int] = None
         self.drag_offset: QPoint = QPoint()
-        self.setMouseTracking(True) 
+        self.setMouseTracking(True)
         
-        self._build_layout()
+        # Auto-layout on initialization
+        self._smart_redraw_layout()
         self._adjust_canvas_size()
         self.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding)
         
+    def _should_show_group_collapsed(self, group_start_index: int) -> bool:
+        """
+        Determines if a group should be shown as collapsed (single box) or expanded (individual steps).
         
-    # In main_app.py, add this new method inside the WorkflowCanvas class
-# (A good place is after the mouseReleaseEvent)
-    # In main_app.py, inside the WorkflowCanvas class
-    # ADD this new helper method:
+        Returns True if group should be collapsed (show as single box)
+        Returns False if group should be expanded (show individual steps)
+        """
+        # Get the main window reference to access added_steps_data
+        main_window = self.main_window
+        if not hasattr(main_window, 'added_steps_data'):
+            return True  # Default to collapsed if we can't access the data
+        
+        added_steps_data = main_window.added_steps_data
+        
+        # Check if there are any steps before this group
+        has_steps_before = group_start_index > 0
+        
+        # Find the end of this group to check what comes after
+        if group_start_index >= len(added_steps_data):
+            return True
+            
+        group_step = added_steps_data[group_start_index]
+        group_id = group_step.get("group_id")
+        group_end_index = group_start_index
+        
+        # Find the matching group_end
+        nesting_level = 0
+        for i in range(group_start_index + 1, len(added_steps_data)):
+            step = added_steps_data[i]
+            step_type = step.get("type")
+            
+            if step_type == "group_start":
+                nesting_level += 1
+            elif step_type == "group_end":
+                if nesting_level == 0 and step.get("group_id") == group_id:
+                    group_end_index = i
+                    break
+                else:
+                    nesting_level -= 1
+        
+        # Check if there are any steps after this group
+        has_steps_after = group_end_index < len(added_steps_data) - 1
+        
+        # If there are steps before OR after, show as collapsed (single box)
+        # If there are NO steps before AND NO steps after, show expanded (individual steps)
+        return has_steps_before or has_steps_after       
+        
+    def _smart_redraw_layout(self):
+        """Intelligently redraws the entire workflow with optimal spacing and positioning."""
+        # Clear existing user positions to force smart layout
+        self._clear_all_user_positions()
+        
+        # Clear existing layout
+        self.nodes.clear()
+        self.edges.clear()
+        self.merge_lines.clear()
+        
+        # Calculate optimal starting position (centered at top)
+        canvas_center_x = max(800, self.width()) // 2
+        start_x = canvas_center_x - self.NODE_WIDTH // 2
+        start_y = 30
+        
+        # Build the new layout
+        self._build_smart_layout(start_x, start_y)
+        
+        # Center the workflow vertically if it fits in view
+        self._center_workflow_if_possible()
+        
+        self.update()
+        
+    def _clear_all_user_positions(self):
+        """Removes all user-defined positions to allow smart auto-layout."""
+        def clear_positions_recursive(nodes: List[Dict]):
+            for node in nodes:
+                step_data = node['step_data']
+                if "workflow_pos" in step_data:
+                    del step_data["workflow_pos"]
+                    
+                clear_positions_recursive(node.get('children', []))
+                clear_positions_recursive(node.get('false_children', []))
+                
+                if node.get('end_node'):
+                    end_step_data = node['end_node']['step_data']
+                    if "workflow_pos" in end_step_data:
+                        del end_step_data["workflow_pos"]
+        
+        clear_positions_recursive(self.workflow_tree)
+        
+    def _build_smart_layout(self, start_x: int, start_y: int):
+        """Builds the layout with smart spacing and positioning."""
+        self._recursive_smart_layout(self.workflow_tree, start_x, start_y, -1)
+        
+    def _center_workflow_if_possible(self):
+        """Centers the workflow vertically in the canvas if it fits."""
+        if not self.nodes:
+            return
+            
+        # Find the bounds of all nodes
+        min_y = min(rect.y() for rect, _, _, _ in self.nodes)
+        max_y = max(rect.bottom() for rect, _, _, _ in self.nodes)
+        workflow_height = max_y - min_y
+        
+        available_height = self.height()
+        if workflow_height < available_height:
+            # Center vertically
+            offset_y = (available_height - workflow_height) // 2 - min_y
+            if offset_y > 0:
+                # Move all nodes down by offset_y
+                new_nodes = []
+                for rect, text, shape, step_data in self.nodes:
+                    new_rect = QRect(rect.x(), rect.y() + offset_y, rect.width(), rect.height())
+                    step_data["workflow_pos"] = (new_rect.x(), new_rect.y())
+                    new_nodes.append((new_rect, text, shape, step_data))
+                self.nodes = new_nodes
 
+    def _recursive_smart_layout(self, nodes: List[Dict], x: int, y: int, 
+                               last_node_idx: int) -> Tuple[int, int, int]:
+        """Smart recursive layout with optimal spacing."""
+        current_y = y
+        last_node_idx_in_level = last_node_idx
+        max_x = x
+
+        for node in nodes:
+            step_data = node['step_data']
+            step_type = step_data.get("type")
+
+            current_step_num = step_data.get("original_listbox_row_index", -1) + 1
+            text = self._get_node_text(step_data, current_step_num)
+            
+            # Determine node shape and color
+            node_shape = self._get_node_shape(step_type)
+            # ADD THIS NEW LOGIC FOR GROUPS
+            if step_type == "group_start":
+                group_start_index = step_data.get("original_listbox_row_index", -1)
+                
+                if self._should_show_group_collapsed(group_start_index):
+                    # Show as single collapsed box (EXISTING behavior)
+                    node_y = current_y
+                    node_idx = len(self.nodes)
+                    
+                    # Add the group node as a single box
+                    self.nodes.append((QRect(x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT), text, node_shape, step_data))
+                    step_data["workflow_pos"] = (x, node_y)
+                    
+                    if last_node_idx_in_level != -1:
+                        self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
+                    
+                    last_node_idx_in_level = node_idx
+                    current_y += self.NODE_HEIGHT + self.V_SPACING
+                    max_x = max(max_x, x + self.NODE_WIDTH)
+                else:
+                    # Show individual steps within the group (NEW behavior)
+                    # Skip the group_start node itself and process children directly
+                    children = node.get('children', [])
+                    if children:
+                        child_y, child_last_idx, child_max_x = self._recursive_smart_layout(
+                            children, x, current_y, last_node_idx_in_level
+                        )
+                        current_y = child_y
+                        last_node_idx_in_level = child_last_idx
+                        max_x = max(max_x, child_max_x)
+                    # Skip group_end as well since we're showing individual steps
+                
+                # Continue to next node
+                continue
+            if step_type in ["IF_START", "loop_start"]:
+                node_y = current_y
+                node_idx = len(self.nodes)
+                
+                # Add the control node
+                self.nodes.append((QRect(x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT), text, node_shape, step_data))
+                step_data["workflow_pos"] = (x, node_y)
+                
+                if last_node_idx_in_level != -1:
+                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
+
+                # Layout branches with smart spacing
+                true_children = node.get('children', [])
+                false_children = node.get('false_children', [])
+                end_node_data = node.get('end_node')
+                
+                branch_start_y = node_y + self.NODE_HEIGHT + self.V_SPACING
+                
+                # Calculate branch positions with better spacing
+                if true_children and false_children:
+                    # Both branches exist - spread them out
+                    true_x = x - self.H_SPACING
+                    false_x = x + self.H_SPACING
+                elif true_children:
+                    # Only true branch - keep it centered under the control node
+                    true_x = x
+                    false_x = x
+                else:
+                    # No branches - continue straight down
+                    true_x = x
+                    false_x = x
+                
+                # Layout true branch
+                first_true_node_idx = len(self.nodes)
+                true_y_end, last_true_node_idx, true_max_x = self._recursive_smart_layout(
+                    true_children, true_x, branch_start_y, -1
+                )
+                
+                if true_children:
+                    true_label = "True" if step_type == "IF_START" else "Loop Body"
+                    true_port = "left" if step_type == "IF_START" and false_children else "bottom"
+                    self.edges.append((true_label, (node_idx, true_port), (first_true_node_idx, "top")))
+
+                # Layout false branch (for IF statements)
+                false_y_end = branch_start_y
+                last_false_node_idx = -1
+                false_max_x = false_x
+                
+                if step_type == "IF_START" and false_children:
+                    first_false_node_idx = len(self.nodes)
+                    false_y_end, last_false_node_idx, false_max_x = self._recursive_smart_layout(
+                        false_children, false_x, branch_start_y, -1
+                    )
+                    self.edges.append(("False", (node_idx, "right"), (first_false_node_idx, "top")))
+
+                # Position end node smartly
+                if end_node_data:
+                    end_step_num = end_node_data['step_data'].get("original_listbox_row_index", -1) + 1
+                    end_text = self._get_node_text(end_node_data['step_data'], end_step_num)
+                    
+                    # Smart positioning of end node
+                    end_y = max(true_y_end, false_y_end) + self.V_SPACING
+                    end_x = x  # Center under the control node
+                    
+                    end_node_rect = QRect(end_x, end_y, self.NODE_WIDTH, self.NODE_HEIGHT)
+                    end_node_data['step_data']["workflow_pos"] = (end_x, end_y)
+                    
+                    end_node_idx = len(self.nodes)
+                    end_node_shape = self._get_node_shape("IF_END" if step_type == "IF_START" else "loop_end")
+                    self.nodes.append((end_node_rect, end_text, end_node_shape, end_node_data['step_data']))
+                    
+                    # Connect branches to end node
+                    if last_true_node_idx != -1:
+                        self.merge_lines.append((last_true_node_idx, end_node_idx))
+                    if last_false_node_idx != -1:
+                        self.merge_lines.append((last_false_node_idx, end_node_idx))
+                    
+                    # Add loop-back edge for loops
+                    if step_type == "loop_start":
+                        self.edges.append(("Loop Again", (end_node_idx, "right"), (node_idx, "top")))
+
+                    last_node_idx_in_level = end_node_idx
+                    current_y = end_y + self.NODE_HEIGHT + self.V_SPACING
+                else:
+                    current_y = max(true_y_end, false_y_end)
+                    if last_true_node_idx != -1:
+                        last_node_idx_in_level = last_true_node_idx
+                
+                max_x = max(max_x, true_max_x, false_max_x)
+                
+            else:
+                # Regular step - simple vertical layout
+                current_node_idx = len(self.nodes)
+                rect = QRect(x, current_y, self.NODE_WIDTH, self.NODE_HEIGHT)
+                step_data["workflow_pos"] = (x, current_y)
+                
+                self.nodes.append((rect, text, node_shape, step_data))
+                
+                if last_node_idx_in_level != -1:
+                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (current_node_idx, "top")))
+                
+                last_node_idx_in_level = current_node_idx
+                current_y += self.NODE_HEIGHT + self.V_SPACING
+                max_x = max(max_x, x + self.NODE_WIDTH)
+            
+            self.total_height = max(self.total_height, current_y)
+
+        self.total_width = max(self.total_width, max_x)
+        return current_y, last_node_idx_in_level, max_x
+
+    def _get_node_shape(self, step_type: str) -> str:
+        """Returns the appropriate shape for a given step type."""
+        if step_type == "IF_START":
+            return "diamond"
+        elif step_type in ["loop_start", "loop_end"]:
+            return "loop_rect"
+        elif step_type in ["ELSE", "IF_END"]:
+            return "rect_gray"
+        elif step_type == "group_start":
+            return "rect_group"
+        else:
+            return "rect"
         
     def _draw_grid(self, painter: QPainter):
-        """Draws a light gray dotted grid."""
-        pen = QPen(QColor("#E0E0E0"))
+        """Draws a subtle grid."""
+        pen = QPen(QColor("#F0F0F0"))
         pen.setStyle(Qt.PenStyle.DotLine)
         painter.setPen(pen)
+        
+        # Adjust grid based on canvas offset
+        offset_x = self.canvas_offset.x() % self.GRID_SIZE
+        offset_y = self.canvas_offset.y() % self.GRID_SIZE
         
         width = self.width()
         height = self.height()
         
-        # Draw vertical lines
-        for x in range(0, width, self.GRID_SIZE):
+        for x in range(-offset_x, width, self.GRID_SIZE):
             painter.drawLine(x, 0, x, height)
             
-        # Draw horizontal lines
-        for y in range(0, height, self.GRID_SIZE):
+        for y in range(-offset_y, height, self.GRID_SIZE):
             painter.drawLine(0, y, width, y)
-            
 
-    # --- ADD NEW MOUSE EVENTS ---
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
     def wheelEvent(self, event: QtGui.QWheelEvent):
-        """Handles mouse wheel events for zooming the canvas."""
+        """Enhanced wheel event with better zoom and pan."""
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+            # Zoom functionality
             delta = event.angleDelta().y()
-            zoom_factor = 1.1 if delta > 0 else (1 / 1.1)
+            zoom_factor = 1.15 if delta > 0 else (1 / 1.15)
             
-            # Get the mouse position as the anchor point for zooming
             anchor_point = event.position()
-            
             self._scale_layout(zoom_factor, anchor_point)
             self._adjust_canvas_size()
             self.update()
-            event.accept() # Consume the event
+            event.accept()
         else:
-            # Allow the QScrollArea to handle normal scrolling
-            event.ignore()
+            # Pan with mouse wheel (shift for horizontal)
+            delta = event.angleDelta().y()
+            pan_speed = 30
+            
+            if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
+                # Horizontal pan
+                self.canvas_offset.setX(self.canvas_offset.x() + (pan_speed if delta > 0 else -pan_speed))
+            else:
+                # Vertical pan
+                self.canvas_offset.setY(self.canvas_offset.y() + (pan_speed if delta > 0 else -pan_speed))
+            
+            self.update()
+            event.accept()
 
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
-    def _scale_layout(self, factor: float, anchor: QPointF):
-        """
-        Scales layout parameters and user-defined positions, then rebuilds the layout.
-        """
-        # 1. Scale the base layout parameters
-        self.NODE_WIDTH = max(50, int(self.NODE_WIDTH * factor))
-        self.NODE_HEIGHT = max(30, int(self.NODE_HEIGHT * factor))
-        self.V_SPACING = max(10, int(self.V_SPACING * factor))
-        self.H_SPACING = max(20, int(self.H_SPACING * factor))
-        self.GRID_SIZE = max(5, int(self.GRID_SIZE * factor))
-
-        # 2. Scale USER-DEFINED positions stored in the persistent workflow_tree data
-        #    This preserves the relative positions set by dragging.
-        def scale_user_pos_recursive(nodes: List[Dict]):
-            for node in nodes:
-                step_data = node['step_data']
-                if "workflow_pos" in step_data and step_data["workflow_pos"]:
-                    try:
-                        # --- FIX: Ensure workflow_pos is treated as tuple/list ---
-                        current_pos_tuple = step_data["workflow_pos"]
-                        if isinstance(current_pos_tuple, (list, tuple)) and len(current_pos_tuple) == 2:
-                             current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
-                             new_pos_f = (current_pos - anchor) * factor + anchor
-                             # Store back as tuple of ints
-                             step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
-                        else:
-                             # Handle potential malformed data gracefully - remove invalid position
-                              del step_data["workflow_pos"]
-                    except (TypeError, ValueError, IndexError):
-                         # Handle potential errors during conversion/scaling - remove invalid position
-                         if "workflow_pos" in step_data:
-                              del step_data["workflow_pos"]
-
-                # Recurse into children and false children
-                scale_user_pos_recursive(node.get('children', []))
-                scale_user_pos_recursive(node.get('false_children', []))
-                # Also scale the end node if it exists
-                if node.get('end_node'):
-                     end_node_step_data = node['end_node']['step_data']
-                     if "workflow_pos" in end_node_step_data and end_node_step_data["workflow_pos"]:
-                         try:
-                              # --- FIX: Ensure workflow_pos is treated as tuple/list ---
-                              current_pos_tuple = end_node_step_data["workflow_pos"]
-                              if isinstance(current_pos_tuple, (list, tuple)) and len(current_pos_tuple) == 2:
-                                    current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
-                                    new_pos_f = (current_pos - anchor) * factor + anchor
-                                    # Store back as tuple of ints
-                                    end_node_step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
-                              else:
-                                    del end_node_step_data["workflow_pos"] # Remove invalid
-                         except (TypeError, ValueError, IndexError):
-                               if "workflow_pos" in end_node_step_data:
-                                    del end_node_step_data["workflow_pos"] # Remove invalid
-
-
-        scale_user_pos_recursive(self.workflow_tree) # Apply scaling to the source data tree
-
-        # 3. Clear existing calculated layout
-        self.nodes.clear()
-        self.edges.clear()
-        self.merge_lines.clear()
-        self.total_width = 0 # Reset dimensions
-        self.total_height = 0
-
-        # 4. Rebuild the entire layout using new parameters and scaled user positions
-        self._build_layout()
-        # self._adjust_canvas_size() # This will be called by the wheelEvent handler after _scale_layout
-
-    def _adjust_canvas_size(self):
-        """Recalculates the minimum size of the canvas to fit all nodes."""
-        if not self.nodes:
-            self.setMinimumSize(800, 600) # Default size
-            return
-
-        max_x = 0
-        max_y = 0
-        for rect, _, _, _ in self.nodes:
-            max_x = max(max_x, rect.right())
-            max_y = max(max_y, rect.bottom())
-        
-        # Add some padding
-        self.total_width = max_x + 100
-        self.total_height = max_y + 100
-        self.setMinimumSize(self.total_width, self.total_height)
-        
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
+            # Check if clicking on a node first
+            clicked_pos = event.pos() - self.canvas_offset
+            node_clicked = False
+            
             for i in range(len(self.nodes) - 1, -1, -1):
-                # --- MODIFIED: Unpack 4 items ---
                 rect, _, _, _ = self.nodes[i]
-                if rect.contains(event.pos()):
+                if rect.contains(clicked_pos):
                     self.dragging_node_index = i
-                    self.drag_offset = event.pos() - rect.topLeft()
+                    self.drag_offset = clicked_pos - rect.topLeft()
                     self.setCursor(Qt.CursorShape.ClosedHandCursor)
                     
+                    # Move clicked node to front
                     node = self.nodes.pop(i)
                     self.nodes.append(node)
                     self._remap_edges_for_drag(i, len(self.nodes) - 1)
                     self.dragging_node_index = len(self.nodes) - 1
                     self.update()
+                    node_clicked = True
                     break
-        super().mousePressEvent(event)
-
-    def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
-        """Updates all edge indices when a node is moved in the list."""
-        new_edges = []
-        for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
-            new_from_idx = from_idx
-            new_to_idx = to_idx
             
-            if from_idx == old_idx: new_from_idx = new_idx
-            elif from_idx > old_idx: new_from_idx -= 1
-            
-            if to_idx == old_idx: new_to_idx = new_idx
-            elif to_idx > old_idx: new_to_idx -= 1
-                
-            new_edges.append((label, (new_from_idx, from_port), (new_to_idx, to_port)))
-        self.edges = new_edges
+            # If no node was clicked, start canvas panning
+            if not node_clicked:
+                self.dragging_canvas = True
+                self.last_pan_point = event.pos()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
         
-        new_merges = []
-        for from_idx, to_idx in self.merge_lines:
-            new_from_idx = from_idx
-            new_to_idx = to_idx
-
-            if from_idx == old_idx: new_from_idx = new_idx
-            elif from_idx > old_idx: new_from_idx -= 1
-            
-            if to_idx == old_idx: new_to_idx = new_idx
-            elif to_idx > old_idx: new_to_idx -= 1
-            
-            new_merges.append((new_from_idx, new_to_idx))
-        self.merge_lines = new_merges
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
+        elif event.button() == Qt.MouseButton.RightButton:
+            # Right-click context menu
+            self._show_context_menu(event.pos())
+        
+        super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMoveEvent):
         if self.dragging_node_index is not None:
-            new_top_left = event.pos() - self.drag_offset
+            # Node dragging
+            new_top_left = event.pos() - self.canvas_offset - self.drag_offset
             
-            # --- MODIFIED: Unpack 4 items ---
             _, text, shape, step_data = self.nodes[self.dragging_node_index]
             old_rect = self.nodes[self.dragging_node_index][0]
             
-            # --- MODIFIED: Re-pack 4 items ---
             self.nodes[self.dragging_node_index] = (QRect(new_top_left, old_rect.size()), text, shape, step_data)
-            self.update() # Trigger a repaint
+            self.update()
+            
+        elif self.dragging_canvas:
+            # Canvas panning
+            delta = event.pos() - self.last_pan_point
+            self.canvas_offset += delta
+            self.last_pan_point = event.pos()
+            self.update()
+            
         else:
+            # Update cursor based on what's under the mouse
             cursor = Qt.CursorShape.ArrowCursor
-            # --- MODIFIED: Unpack 4 items ---
+            clicked_pos = event.pos() - self.canvas_offset
+            
             for rect, _, _, _ in self.nodes:
-                if rect.contains(event.pos()):
+                if rect.contains(clicked_pos):
                     cursor = Qt.CursorShape.OpenHandCursor
                     break
+            
             self.setCursor(cursor)
+        
         super().mouseMoveEvent(event)
 
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE your mouseReleaseEvent method with this one:
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
-
             if self.dragging_node_index is not None:
+                # Snap node to grid
                 rect, text, shape, step_data = self.nodes[self.dragging_node_index]
                 top_left = rect.topLeft()
 
@@ -2321,17 +2873,316 @@ class WorkflowCanvas(QWidget):
                 new_top_left = QPoint(snapped_x, snapped_y)
                 snapped_rect = QRect(new_top_left, rect.size())
 
-                # --- MODIFIED: Ensure position is saved as a tuple of ints ---
                 step_data["workflow_pos"] = (snapped_rect.x(), snapped_rect.y())
-
                 self.nodes[self.dragging_node_index] = (snapped_rect, text, shape, step_data)
                 self.update()
 
             self.dragging_node_index = None
+            self.dragging_canvas = False
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
         super().mouseReleaseEvent(event)
 
+    def _show_context_menu(self, pos: QPoint):
+        """Shows a context menu with workflow options."""
+        context_menu = QMenu(self)
+        
+        redraw_action = context_menu.addAction("🔄 Smart Redraw Layout")
+        context_menu.addSeparator()
+        reset_zoom_action = context_menu.addAction("🔍 Reset Zoom")
+        center_action = context_menu.addAction("🎯 Center Workflow")
+        
+        action = context_menu.exec(self.mapToGlobal(pos))
+        
+        if action == redraw_action:
+            self._smart_redraw_layout()
+        elif action == reset_zoom_action:
+            self._reset_zoom()
+        elif action == center_action:
+            self._center_workflow()
+
+    def _reset_zoom(self):
+        """Resets zoom to default size."""
+        self.NODE_WIDTH = 220
+        self.NODE_HEIGHT = 50
+        self.V_SPACING = 40
+        self.H_SPACING = 120
+        self.GRID_SIZE = 20
+        self._smart_redraw_layout()
+
+    def _center_workflow(self):
+        """Centers the workflow in the current view."""
+        if not self.nodes:
+            return
+        
+        # Calculate workflow bounds
+        min_x = min(rect.x() for rect, _, _, _ in self.nodes)
+        max_x = max(rect.right() for rect, _, _, _ in self.nodes)
+        min_y = min(rect.y() for rect, _, _, _ in self.nodes)
+        max_y = max(rect.bottom() for rect, _, _, _ in self.nodes)
+        
+        workflow_center_x = (min_x + max_x) // 2
+        workflow_center_y = (min_y + max_y) // 2
+        
+        canvas_center_x = self.width() // 2
+        canvas_center_y = self.height() // 2
+        
+        # Calculate offset to center the workflow
+        offset_x = canvas_center_x - workflow_center_x
+        offset_y = canvas_center_y - workflow_center_y
+        
+        self.canvas_offset = QPoint(offset_x, offset_y)
+        self.update()
+
+    # ... (keep all the existing methods like _scale_layout, _get_port_pos, _draw_right_angle_line, etc.)
+    # I'll include the essential ones that might need updates:
+    
+    def _scale_layout(self, factor: float, anchor: QPointF):
+        """Enhanced scaling with better anchor point handling."""
+        # Adjust anchor point for canvas offset
+        adjusted_anchor = anchor - QPointF(self.canvas_offset)
+        
+        # Scale the base layout parameters
+        self.NODE_WIDTH = max(50, int(self.NODE_WIDTH * factor))
+        self.NODE_HEIGHT = max(30, int(self.NODE_HEIGHT * factor))
+        self.V_SPACING = max(10, int(self.V_SPACING * factor))
+        self.H_SPACING = max(20, int(self.H_SPACING * factor))
+        self.GRID_SIZE = max(5, int(self.GRID_SIZE * factor))
+
+        # Scale USER-DEFINED positions
+        def scale_user_pos_recursive(nodes: List[Dict]):
+            for node in nodes:
+                step_data = node['step_data']
+                if "workflow_pos" in step_data and step_data["workflow_pos"]:
+                    try:
+                        current_pos_tuple = step_data["workflow_pos"]
+                        if isinstance(current_pos_tuple, (list, tuple)) and len(current_pos_tuple) == 2:
+                            current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
+                            new_pos_f = (current_pos - adjusted_anchor) * factor + adjusted_anchor
+                            step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
+                        else:
+                            del step_data["workflow_pos"]
+                    except (TypeError, ValueError, IndexError):
+                        if "workflow_pos" in step_data:
+                            del step_data["workflow_pos"]
+
+                scale_user_pos_recursive(node.get('children', []))
+                scale_user_pos_recursive(node.get('false_children', []))
+                
+                if node.get('end_node'):
+                    end_node_step_data = node['end_node']['step_data']
+                    if "workflow_pos" in end_node_step_data and end_node_step_data["workflow_pos"]:
+                        try:
+                            current_pos_tuple = end_node_step_data["workflow_pos"]
+                            if isinstance(current_pos_tuple, (list, tuple)) and len(current_pos_tuple) == 2:
+                                current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
+                                new_pos_f = (current_pos - adjusted_anchor) * factor + adjusted_anchor
+                                end_node_step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
+                            else:
+                                del end_node_step_data["workflow_pos"]
+                        except (TypeError, ValueError, IndexError):
+                            if "workflow_pos" in end_node_step_data:
+                                del end_node_step_data["workflow_pos"]
+
+        scale_user_pos_recursive(self.workflow_tree)
+
+        # Clear and rebuild layout
+        self.nodes.clear()
+        self.edges.clear()
+        self.merge_lines.clear()
+        self.total_width = 0
+        self.total_height = 0
+
+        # Rebuild with new parameters
+        canvas_center_x = max(800, self.width()) // 2
+        start_x = canvas_center_x - self.NODE_WIDTH // 2
+        start_y = 30
+        self._recursive_smart_layout(self.workflow_tree, start_x, start_y, -1)
+
+    def paintEvent(self, event: QtGui.QPaintEvent):
+        """Enhanced paint event with execution status visualization."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Apply canvas offset
+        painter.translate(self.canvas_offset)
+        
+        self._draw_grid(painter)
+        
+        font = QFont("Arial", max(8, int(9 * (self.NODE_WIDTH / 220))))
+        painter.setFont(font)
+
+        labels_to_draw = []
+
+        # Draw edges with enhanced styling
+        for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
+            try:
+                p1 = self._get_port_pos(from_idx, from_port)
+                p2 = self._get_port_pos(to_idx, to_port)
+            except IndexError:
+                continue
+
+            # Use different colors for different edge types
+            if label == "True":
+                painter.setPen(QPen(QColor("#28a745"), 2))  # Green for True
+            elif label == "False":
+                painter.setPen(QPen(QColor("#dc3545"), 2))  # Red for False  
+            elif label and "Loop" in label:
+                painter.setPen(QPen(QColor("#007bff"), 2))  # Blue for Loop
+            else:
+                painter.setPen(QPen(Qt.GlobalColor.black, 2))  # Black for normal flow
+
+            line_points = self._draw_right_angle_line(painter, p1, p2, from_port, to_port)
+
+            if label:
+                # Enhanced label positioning
+                if from_port == "left":
+                    mid_point = line_points[0] + QPoint(-40, -15)
+                    label_rect = QRect(-30, -10, 60, 20)
+                elif from_port == "right":
+                    mid_point = line_points[0] + QPoint(40, -15)
+                    label_rect = QRect(-30, -10, 60, 20)
+                elif label == "Loop Again":
+                    mid_point = (line_points[1] + line_points[2]) / 2 + QPoint(0, -15)
+                    label_rect = QRect(-40, -10, 80, 20)
+                else:
+                    mid_point = line_points[0] + QPoint(40, 15)
+                    label_rect = QRect(-40, -10, 80, 20)
+                
+                labels_to_draw.append((label, mid_point, label_rect))
+
+        # Draw merge lines
+        painter.setPen(QPen(Qt.GlobalColor.gray, 2, Qt.PenStyle.DashLine))
+        for from_idx, to_idx in self.merge_lines:
+            try:
+                from_rect, _, _, _ = self.nodes[from_idx]
+                to_rect, _, _, _ = self.nodes[to_idx]
+            except IndexError:
+                continue
+
+            from_port = "bottom"
+            if self.nodes[from_idx][2] == "diamond":
+                from_port = "left" if from_rect.center().x() >= to_rect.center().x() else "right"
+            
+            p1 = self._get_port_pos(from_idx, from_port)
+            p2 = self._get_port_pos(to_idx, "top")
+            
+            merge_y = p2.y() - self.V_SPACING // 2
+            points = [p1, QPoint(p1.x(), merge_y), QPoint(p2.x(), merge_y), p2]
+            
+            for i in range(len(points) - 1):
+                painter.drawLine(points[i], points[i+1])
+
+        # Draw nodes with execution status visualization
+        for rect, text, shape, step_data in self.nodes:
+            
+            # Determine execution status from step_data
+            execution_status = step_data.get("execution_status", "normal")  # normal, running, completed, error
+            
+            # Set border properties based on execution status
+            if execution_status == "running":
+                border_color = QColor("#FFD700")  # Gold/Yellow
+                border_width = 4  # 100% thicker
+                fill_color = QColor("#FFFBF0")  # Light yellow background
+            elif execution_status == "error":
+                border_color = QColor("#DC3545")  # Red
+                border_width = 4  # 100% thicker  
+                fill_color = QColor("#FFF5F5")  # Light red background
+            elif execution_status == "completed":
+                border_color = QColor("#28a745")  # Green
+                border_width = 2  # Normal thickness
+                fill_color = QColor("#F8FFF8")  # Light green background
+            else:
+                # Default styling based on node type
+                border_color = QColor("#333333")
+                border_width = 2
+                if shape == "rect":
+                    fill_color = QColor("#f8f9fa")
+                elif shape == "diamond":
+                    fill_color = QColor("#e3f2fd")
+                elif shape == "loop_rect":
+                    fill_color = QColor("#e8f5e8")
+                elif shape == "rect_gray":
+                    fill_color = QColor("#f5f5f5")
+                elif shape == "rect_group":
+                    fill_color = QColor("#fce4ec")
+                else:
+                    fill_color = QColor("#f8f9fa")
+            
+            # Draw node with dynamic styling
+            painter.setPen(QPen(border_color, border_width))
+            painter.setBrush(fill_color)
+            
+            # Draw node shape
+            if shape == "diamond":
+                poly = QPolygonF([
+                    QPointF(rect.center() - QPoint(rect.width() // 2, 0)),
+                    QPointF(rect.center() - QPoint(0, rect.height() // 2)),
+                    QPointF(rect.center() + QPoint(rect.width() // 2, 0)),
+                    QPointF(rect.center() + QPoint(0, rect.height() // 2))
+                ])
+                painter.drawPolygon(poly)
+            else:
+                painter.drawRoundedRect(rect, 8, 8)
+
+            # Add execution status indicator (optional - small icon in corner)
+            if execution_status == "running":
+                # Draw a small spinning indicator or pulse effect
+                painter.save()
+                painter.setPen(QPen(QColor("#FF8C00"), 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                indicator_rect = QRect(rect.right() - 15, rect.top() + 5, 10, 10)
+                painter.drawEllipse(indicator_rect)
+                painter.restore()
+            elif execution_status == "completed":
+                # Draw a small checkmark
+                painter.save()
+                painter.setPen(QPen(QColor("#28a745"), 3))
+                check_x = rect.right() - 15
+                check_y = rect.top() + 10
+                painter.drawLine(check_x, check_y, check_x + 3, check_y + 3)
+                painter.drawLine(check_x + 3, check_y + 3, check_x + 8, check_y - 2)
+                painter.restore()
+            elif execution_status == "error":
+                # Draw a small X mark
+                painter.save()
+                painter.setPen(QPen(QColor("#DC3545"), 3))
+                x_mark_x = rect.right() - 15
+                x_mark_y = rect.top() + 5
+                painter.drawLine(x_mark_x, x_mark_y, x_mark_x + 8, x_mark_y + 8)
+                painter.drawLine(x_mark_x + 8, x_mark_y, x_mark_x, x_mark_y + 8)
+                painter.restore()
+
+            # Draw text with better formatting
+            painter.setPen(Qt.GlobalColor.black)
+            text_rect = rect.adjusted(5, 5, -5, -5)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+
+        # Draw edge labels with enhanced styling
+        for label, mid_point, label_rect in labels_to_draw:
+            painter.save()
+            painter.translate(mid_point)
+            painter.setPen(QPen(Qt.GlobalColor.darkGray, 1))
+            painter.setBrush(QColor("#ffffff"))
+            painter.drawRoundedRect(label_rect, 3, 3)
+            
+            # Color-coded text
+            if label == "True":
+                painter.setPen(QColor("#28a745"))
+            elif label == "False":
+                painter.setPen(QColor("#dc3545"))
+            elif "Loop" in label:
+                painter.setPen(QColor("#007bff"))
+            else:
+                painter.setPen(Qt.GlobalColor.black)
+                
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
+            painter.restore()
+            
+    # Keep all other existing methods like _get_port_pos, _draw_right_angle_line, 
+    # _get_node_text, _adjust_canvas_size, _remap_edges_for_drag, etc.
+    # [Previous methods remain the same]
+    
     def _get_port_pos(self, node_idx: int, port: str) -> QPoint:
         """Gets the QPoint for a given port on a node."""
         rect = self.nodes[node_idx][0]
@@ -2345,9 +3196,6 @@ class WorkflowCanvas(QWidget):
             return rect.center() + QPoint(rect.width() // 2, 0)
         return rect.center()
 
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
     def _draw_right_angle_line(self, painter: QPainter, p1: QPoint, p2: QPoint, from_port: str, to_port: str):
         """Draws a rectilinear line between two points."""
         
@@ -2356,29 +3204,23 @@ class WorkflowCanvas(QWidget):
             mid_y = p1.y() + self.V_SPACING // 2
             points = [p1, QPoint(p1.x(), mid_y), QPoint(p2.x(), mid_y), p2]
         
-        # --- THIS BLOCK IS MODIFIED ---
         elif from_port in ("left", "right") and to_port == "top":
             # IF branch connection (True or False)
-            # This logic draws horizontal first (left or right), then vertical (down or up)
             points = [p1, QPoint(p2.x(), p1.y()), p2]
-        # --- END MODIFICATION ---
         
         elif from_port == "right" and to_port == "top":
             # Loop Recycle (loop_end -> loop_start)
-            # This is now only used if the other logic is overridden,
-            # but we keep it as a fallback.
             mid_x = p1.x() + self.H_SPACING // 2
             points = [p1, QPoint(mid_x, p1.y()), QPoint(mid_x, p2.y() - self.V_SPACING // 2),
                       QPoint(p2.x(), p2.y() - self.V_SPACING // 2), p2]
         
         else:
-            # Default fallback (e.g., drag-and-drop)
+            # Default fallback
             points = [p1, QPoint(p1.x(), p2.y()), p2]
             
         for i in range(len(points) - 1):
             painter.drawLine(points[i], points[i+1])
         return points
-        
 
     def _get_node_text(self, step_data: Dict[str, Any], step_num: int) -> str:
         """Generates a concise text for the workflow node."""
@@ -2417,361 +3259,79 @@ class WorkflowCanvas(QWidget):
         elif step_type == "group_start":
             return f"{title_prefix}Group: {step_data.get('group_name', 'Unnamed')}"
         elif step_type in ["loop_end", "IF_END", "group_end"]:
-            # Don't number the end blocks
             return f"End {step_type.split('_')[0].capitalize()}"
             
         return f"{title_prefix}{step_type.replace('_', ' ').title()}"
 
-    def _build_layout(self):
-        """Recursively builds the node and edge lists."""
-        x = 50
-        y = 50
-        self._recursive_layout(self.workflow_tree, x, y, -1)
+    def _adjust_canvas_size(self):
+        """Recalculates the minimum size of the canvas to fit all nodes."""
+        if not self.nodes:
+            self.setMinimumSize(800, 600)
+            return
 
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
-    def _recursive_layout(self, nodes: List[Dict], x: int, y: int, 
-                          last_node_idx: int) -> Tuple[int, int, int]:
-        """
-        Lays out nodes vertically, handling branches for IFs and LOOPs.
-        Returns the (next_available_y, last_node_index, max_x_in_subtree)
-        """
-        current_y = y
-        last_node_idx_in_level = last_node_idx
-        max_x = x
-
-        for node in nodes:
-            step_data = node['step_data']
-            step_type = step_data.get("type")
-
-            current_step_num = step_data.get("original_listbox_row_index", -1) + 1
-            text = self._get_node_text(step_data, current_step_num)
-            
-            node_shape = "rect"
-            if step_type == "IF_START": node_shape = "diamond"
-            elif step_type == "loop_start": node_shape = "loop_rect"
-            elif step_type == "loop_end": node_shape = "loop_rect"
-            elif step_type in ["ELSE", "IF_END"]:
-                node_shape = "rect_gray"
-            # --- NEW SHAPE for collapsed group ---
-            elif step_type == "group_start":
-                node_shape = "rect_group_collapsed"
-
-            saved_pos = step_data.get("workflow_pos")
-            
-            # --- IF_START / LOOP_START Logic ---
-            if step_type == "IF_START" or step_type == "loop_start":
-                node_y = saved_pos[1] if saved_pos else current_y
-                
-                # Default Y for branches is *after* this node
-                branch_default_y = max(current_y, node_y) + self.NODE_HEIGHT + self.V_SPACING
-
-                node_idx = len(self.nodes)
-                # Add placeholder rect, will be updated
-                self.nodes.append((QRect(x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT), text, node_shape, step_data)) 
-                
-                if last_node_idx_in_level != -1:
-                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
-
-                true_children = node.get('children', [])
-                false_children = node.get('false_children', []) # Only for IF
-                end_node_data = node.get('end_node')
-                
-                # --- Layout TRUE branch (Loop Body) ---
-                true_x = x
-                true_y_start = branch_default_y
-                first_true_node_idx = len(self.nodes)
-                true_y_end, last_true_node_idx, true_max_x = self._recursive_layout(
-                    true_children, true_x, true_y_start, -1
-                )
-                
-                if true_children:
-                    true_label = "True" if step_type == "IF_START" else "Loop Body"
-                    true_port = "left" if step_type == "IF_START" else "bottom"
-                    self.edges.append((true_label, (node_idx, true_port), (first_true_node_idx, "top")))
-
-                # --- Layout FALSE branch (Else) ---
-                false_x = (true_max_x + self.H_SPACING) if true_children else x + self.NODE_WIDTH + self.H_SPACING
-                if not true_children: 
-                    false_x = x + self.H_SPACING 
-                
-                false_y_start = branch_default_y
-                first_false_node_idx = len(self.nodes)
-                false_y_end, last_false_node_idx, false_max_x = self._recursive_layout(
-                    false_children, false_x, false_y_start, -1
-                )
-                
-                if step_type == "IF_START" and false_children:
-                    self.edges.append(("False", (node_idx, "right"), (first_false_node_idx, "top")))
-
-                # --- Update START_NODE Rect ---
-                if not false_children: false_max_x = true_max_x
-                if not true_children: true_max_x = x
-                
-                node_x = saved_pos[0] if saved_pos else (true_x + false_max_x - self.NODE_WIDTH) // 2
-                if not true_children and not false_children and not saved_pos:
-                    node_x = x 
-                    
-                rect = QRect(node_x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
-                self.nodes[node_idx] = (rect, text, node_shape, step_data) # Update placeholder
-                current_max_x = max(true_max_x, false_max_x)
-
-                # --- Layout END node ---
-                next_y_after_branches = max(true_y_end, false_y_end)
-                if not true_children and not false_children:
-                    next_y_after_branches = branch_default_y
-                
-                current_y = next_y_after_branches # Default y for the end node
-                
-                if end_node_data:
-                    end_step_num = end_node_data['step_data'].get("original_listbox_row_index", -1) + 1
-                    end_text = self._get_node_text(end_node_data['step_data'], end_step_num)
-                    
-                    end_saved_pos = end_node_data['step_data'].get("workflow_pos")
-                    end_node_x = end_saved_pos[0] if end_saved_pos else node_x 
-                    end_node_y = end_saved_pos[1] if end_saved_pos else current_y
-                    end_node_rect = QRect(end_node_x, end_node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
-                    
-                    end_node_idx = len(self.nodes)
-                    end_node_shape = "rect_gray" if step_type == "IF_START" else "loop_rect"
-                    self.nodes.append((end_node_rect, end_text, end_node_shape, end_node_data['step_data']))
-                    
-                    # Connect end of TRUE branch (or loop body) to END node
-                    if last_true_node_idx != -1:
-                        self.merge_lines.append((last_true_node_idx, end_node_idx))
-                    else: 
-                        self.merge_lines.append((node_idx, end_node_idx)) 
-
-                    if step_type == "IF_START":
-                        # Connect end of FALSE branch to END node
-                        if last_false_node_idx != -1:
-                            self.merge_lines.append((last_false_node_idx, end_node_idx))
-                        else: 
-                            self.merge_lines.append((node_idx, end_node_idx)) 
-                    
-                    elif step_type == "loop_start":
-                        self.edges.append(("Loop Again", (end_node_idx, "right"), (node_idx, "top")))
-
-                    last_node_idx_in_level = end_node_idx # Next node connects to END node
-                    current_y = max(next_y_after_branches, end_node_rect.y()) + self.NODE_HEIGHT + self.V_SPACING
-                
-                else:
-                    if last_true_node_idx != -1 and last_false_node_idx != -1:
-                         last_node_idx_in_level = last_true_node_idx if true_y_end > false_y_end else last_false_node_idx
-                    elif last_true_node_idx != -1:
-                        last_node_idx_in_level = last_true_node_idx
-                    elif last_false_node_idx != -1:
-                        last_node_idx_in_level = last_false_node_idx
-                    else:
-                        last_node_idx_in_level = node_idx 
-                
-                if end_node_data:
-                    last_node_idx_in_level = end_node_idx
-                elif last_true_node_idx != -1 and last_false_node_idx != -1:
-                    last_node_idx_in_level = last_true_node_idx if true_y_end > false_y_end else last_false_node_idx
-                elif last_true_node_idx != -1:
-                    last_node_idx_in_level = last_true_node_idx
-                elif last_false_node_idx != -1:
-                    last_node_idx_in_level = last_false_node_idx
-                else: 
-                    last_node_idx_in_level = node_idx
-            
-            # --- MODIFIED BLOCK: Handle Group as a SINGLE node ---
-            elif step_type == "group_start":
-                # This logic is now the same as a standard step.
-                # We create one node for the group and DO NOT recurse into children.
-                current_node_idx = len(self.nodes)
-                
-                node_x = saved_pos[0] if saved_pos else x
-                node_y = saved_pos[1] if saved_pos else current_y
-                rect = QRect(node_x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
-                current_max_x = node_x + self.NODE_WIDTH
-                
-                # Add the single group node
-                self.nodes.append((rect, text, node_shape, step_data))
-                
-                if last_node_idx_in_level != -1:
-                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (current_node_idx, "top")))
-                
-                last_node_idx_in_level = current_node_idx
-                current_y = max(current_y, node_y) + self.NODE_HEIGHT + self.V_SPACING
-                
-                # We explicitly DO NOT call _recursive_layout for node.get('children', [])
-                # This hides all the children steps from the diagram.
-            
-            else:
-                # --- Standard Logic (STEP, ELSE, IF_END, loop_end) ---
-                current_node_idx = len(self.nodes)
-                
-                node_x = saved_pos[0] if saved_pos else x
-                node_y = saved_pos[1] if saved_pos else current_y
-                rect = QRect(node_x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT)
-                current_max_x = node_x + self.NODE_WIDTH
-                
-                self.nodes.append((rect, text, node_shape, step_data))
-                
-                if last_node_idx_in_level != -1:
-                    self.edges.append((None, (last_node_idx_in_level, "bottom"), (current_node_idx, "top")))
-                
-                last_node_idx_in_level = current_node_idx
-                current_y = max(current_y, node_y) + self.NODE_HEIGHT + self.V_SPACING
-            
-            self.total_height = max(self.total_height, current_y)
-            max_x = max(max_x, current_max_x)
-
-        self.total_width = max(self.total_width, max_x)
-        return current_y, last_node_idx_in_level, max_x
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
-    # In main_app.py, inside the WorkflowCanvas class
-    # REPLACE this entire method:
-    def paintEvent(self, event: QtGui.QPaintEvent):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        max_x = 0
+        max_y = 0
+        for rect, _, _, _ in self.nodes:
+            max_x = max(max_x, rect.right())
+            max_y = max(max_y, rect.bottom())
         
-        self._draw_grid(painter)
-        
-        pen = QPen(Qt.GlobalColor.black, 2)
-        font = QFont("Arial", 9)
-        painter.setFont(font)
+        # Add padding
+        self.total_width = max_x + 200
+        self.total_height = max_y + 200
+        self.setMinimumSize(self.total_width, self.total_height)
 
-        # --- Draw lines first, but store labels to draw later ---
-        painter.setPen(pen)
-        labels_to_draw = [] # Stores (label, mid_point, label_rect)
-
+    def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
+        """Updates all edge indices when a node is moved in the list."""
+        new_edges = []
         for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
-            try:
-                p1 = self._get_port_pos(from_idx, from_port)
-                p2 = self._get_port_pos(to_idx, to_port)
-            except IndexError:
-                continue 
-
-            line_points = self._draw_right_angle_line(painter, p1, p2, from_port, to_port)
-
-            if label:
-                if from_port == "left":
-                    mid_point = line_points[0] + QPoint(-40, -15)
-                    label_rect = QRect(-30, -10, 60, 20)
-                elif from_port == "right":
-                    mid_point = line_points[0] + QPoint(40, -15)
-                    label_rect = QRect(-30, -10, 60, 20)
-                elif label == "Loop Again":
-                    mid_point = (line_points[1] + line_points[2]) / 2 + QPoint(0, -15)
-                    label_rect = QRect(-40, -10, 80, 20)
-                else: 
-                    mid_point = line_points[0] + QPoint(40, 15)
-                    label_rect = QRect(-40, -10, 80, 20)
+            new_from_idx = from_idx
+            new_to_idx = to_idx
+            
+            if from_idx == old_idx: 
+                new_from_idx = new_idx
+            elif from_idx > old_idx: 
+                new_from_idx -= 1
+            
+            if to_idx == old_idx: 
+                new_to_idx = new_idx
+            elif to_idx > old_idx: 
+                new_to_idx -= 1
                 
-                labels_to_draw.append((label, mid_point, label_rect))
-
-        # Draw Merge Lines
+            new_edges.append((label, (new_from_idx, from_port), (new_to_idx, to_port)))
+        self.edges = new_edges
+        
+        new_merges = []
         for from_idx, to_idx in self.merge_lines:
-            try:
-                from_rect, _, _, _ = self.nodes[from_idx]
-                to_rect, _, _, _ = self.nodes[to_idx]
-            except IndexError:
-                continue
+            new_from_idx = from_idx
+            new_to_idx = to_idx
 
-            from_port = "bottom"
-            if self.nodes[from_idx][2] == "diamond": 
-                from_port = "left" if from_rect.center().x() >= to_rect.center().x() else "right"
+            if from_idx == old_idx: 
+                new_from_idx = new_idx
+            elif from_idx > old_idx: 
+                new_from_idx -= 1
             
-            p1 = self._get_port_pos(from_idx, from_port)
-            p2 = self._get_port_pos(to_idx, "top")
+            if to_idx == old_idx: 
+                new_to_idx = new_idx
+            elif to_idx > old_idx: 
+                new_to_idx -= 1
             
-            merge_y = p2.y() - self.V_SPACING // 2
-            points = [p1, QPoint(p1.x(), merge_y), QPoint(p2.x(), merge_y), p2]
-            
-            for i in range(len(points) - 1):
-                painter.drawLine(points[i], points[i+1])
-
-        # --- Draw Nodes (Single Pass) ---
-        for rect, text, shape, _ in self.nodes:
-            painter.setPen(QPen(Qt.GlobalColor.black, 2))
-            
-            # Set Brush Color
-            if shape == "rect": painter.setBrush(QColor("#EAEAEA"))
-            elif shape == "diamond": painter.setBrush(QColor("#D6EAF8"))
-            elif shape == "loop_rect": painter.setBrush(QColor("#D4EDDA"))
-            elif shape == "rect_gray": painter.setBrush(QColor("#F0F0F0"))
-            # --- NEW COLOR for collapsed group ---
-            elif shape == "rect_group_collapsed": painter.setBrush(QColor("#E8DAEF")) # Light purple
-            
-            if shape == "diamond":
-                poly = QPolygonF([
-                    QPointF(rect.center() - QPoint(rect.width() // 2, 0)), # Left
-                    QPointF(rect.center() - QPoint(0, rect.height() // 2)), # Top
-                    QPointF(rect.center() + QPoint(rect.width() // 2, 0)), # Right
-                    QPointF(rect.center() + QPoint(0, rect.height() // 2))  # Bottom
-                ])
-                painter.drawPolygon(poly)
-            else:
-                painter.drawRoundedRect(rect, 5, 5)
-
-            painter.setPen(Qt.GlobalColor.black)
-            # --- MODIFICATION: Add "(+)" to group titles ---
-            if shape == "rect_group_collapsed":
-                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, f"{text} (+)")
-            else:
-                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
-
-        # --- Draw labels LAST so they are on top ---
-        for label, mid_point, label_rect in labels_to_draw:
-            painter.save()
-            painter.translate(mid_point)
-            painter.setPen(Qt.GlobalColor.darkGray)
-            painter.setBrush(Qt.GlobalColor.white) 
-            painter.drawRect(label_rect)
-            painter.setPen(Qt.GlobalColor.black)
-            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
-            painter.restore()
-
-
-            
-class MainWindow(QWidget):
-# In main_app.py, replace the __init__ method in the MainWindow class
-
+            new_merges.append((new_from_idx, new_to_idx))
+        self.merge_lines = new_merges
+        
+# --- MAIN APPLICATION WINDOW ---
+class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setWindowTitle("Automate Your Task By simple Bot - Designed and Programmed by Phung Tuan Hung")
-        
-
-
+        self.setWindowTitle("Automate Your Task By Simple Bot - Designed by Phung Tuan Hung")
         
         # Get the geometry of the primary screen
         screen = QApplication.primaryScreen().geometry()
-        # Calculate 90% of the screen's width and height
         width = int(screen.width() * 0.9)
         height = int(screen.height() * 0.9)
-        
-        # Calculate the top-left position to center the window
         x = int((screen.width() - width) / 2)
         y = int((screen.height() - height) / 2)
-        
-        # Set the window's geometry
         self.setGeometry(x, y, width, height)
-        # --- END NEW CODE ---
+
         # --- Initialize attributes ---
         self.gui_communicator = GuiCommunicator()
         self.base_directory = os.path.dirname(os.path.abspath(__file__))
@@ -2779,10 +3339,8 @@ class MainWindow(QWidget):
         self.module_directory = os.path.join(self.base_directory, self.module_subfolder)
         self.click_image_dir = os.path.join(self.base_directory, "Click_image")
         os.makedirs(self.click_image_dir, exist_ok=True)
-        # --- ADD THESE TWO LINES ---
         self.schedules_directory = os.path.join(self.base_directory, "Schedules")
         self.schedules = {}
-        # --- END OF ADDED LINES ---
         
         icon_path = os.path.join(self.base_directory, "app_icon.png")
         if os.path.exists(icon_path):
@@ -2806,7 +3364,8 @@ class MainWindow(QWidget):
         self.original_geometry = None
         self.widget_homes = {}
         self.is_bot_running = False
-
+        self.is_paused = False # ADD THIS
+        self.worker: Optional[ExecutionWorker] = None # ADD THIS
         # --- Create UI ---
         self.init_ui()
 
@@ -2825,25 +3384,332 @@ class MainWindow(QWidget):
         self.load_saved_steps_to_tree()
         self._update_variables_list_display()
     
+    def init_ui(self) -> None:
+        """Initialize the new UI with left menu, center content, and right panels."""
+        os.makedirs(self.steps_template_directory, exist_ok=True)
+        
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        self.create_left_menu()
+        self.create_center_content()
+        self.create_right_panels()
+        
+        self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
+        self.log_widget.setVisible(False)
+        
+        main_layout.addWidget(self.left_menu)
+        main_layout.addWidget(self.center_content)
+        main_layout.addWidget(self.right_panels)
+        
+        main_layout.setStretch(0, 0)
+        main_layout.setStretch(1, 1)
+        main_layout.setStretch(2, 0)
+
+    def create_left_menu(self):
+        """Creates the collapsible left-side menu."""
+        self.left_menu = QWidget()
+        self.left_menu.setFixedWidth(250)
+        self.left_menu.setStyleSheet("""
+            QWidget {
+                background-color: #ecf0f1;
+                border-right: 1px solid #bdc3c7;
+            }
+            QPushButton {
+                text-align: left;
+                padding: 8px 12px;
+                border: none;
+                border-radius: 4px;
+                margin: 2px 8px;
+                font-size: 13px;
+                color: #2c3e50;
+                background-color: #ffffff;
+            }
+            QPushButton:hover {
+                background-color: #e8f4fd;
+                border-left: 3px solid #3498db;
+            }
+            QPushButton:disabled {
+                background-color: #f8f9f9;
+                color: #95a5a6;
+            }
+            QPushButton.section-header {
+                font-weight: bold;
+                color: #34495e;
+                background-color: transparent;
+                border-bottom: 1px solid #dadedf;
+                border-radius: 0;
+                margin: 8px 0 4px 0;
+            }
+            QCheckBox {
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+        """)
+        menu_layout = QVBoxLayout(self.left_menu)
+        
+        # --- Brand ---
+        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: #3498db; text-decoration: none; font-size: 18pt; font-weight: bold;">AutomateTask</a>')
+        self.website_label.setOpenExternalLinks(True)
+        self.website_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        menu_layout.addWidget(self.website_label)
+        
+        # Helper function for sections
+        def create_section(title, buttons):
+            menu_layout.addWidget(QLabel(title, objectName="section-header"))
+            for btn in buttons:
+                menu_layout.addWidget(btn)
+
+        # --- Execution ---
+        self.execute_all_button = QPushButton("🚀 Execute All")
+        self.execute_one_step_button = QPushButton("▶️ Execute Selected")
+        create_section("Execution", [self.execute_all_button, self.execute_one_step_button])
+
+        # --- Bot Management ---
+        self.save_steps_button = QPushButton("💾 Save Bot")
+        self.change_bot_folder_button = QPushButton("📂 Change Folder")
+        create_section("Bot Management", [self.save_steps_button, self.change_bot_folder_button])
+
+        # --- Step Editing ---
+        self.add_loop_button = QPushButton("🔄 Add Loop")
+        self.add_conditional_button = QPushButton("❓ Add Conditional")
+        self.group_steps_button = QPushButton("📦 Group Selected")
+        self.clear_selected_button = QPushButton("🗑️ Clear Selected")
+        self.remove_all_steps_button = QPushButton("❌ Remove All")
+        create_section("Step Editing", [self.add_loop_button, self.add_conditional_button, self.group_steps_button, self.clear_selected_button, self.remove_all_steps_button])
+        
+        # --- Tools & Settings ---
+        self.open_screenshot_tool_button = QPushButton("📷 Screenshot Tool")
+        self.view_workflow_button = QPushButton("📈 View Workflow")
+        self.update_app_btn = QPushButton("🔄 Update App")
+        self.always_on_top_button = QPushButton("📌 Always On Top: Off")
+        self.toggle_log_checkbox = QCheckBox("📋 Show Log")
+        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
+        
+        # Connections
+        #self.execute_all_button.clicked.connect(self.execute_all_steps)
+        self.execute_all_button.clicked.connect(self._handle_execute_pause_resume)
+        self.execute_one_step_button.clicked.connect(self.execute_one_step)
+        self.save_steps_button.clicked.connect(self.save_bot_steps_dialog)
+        self.change_bot_folder_button.clicked.connect(self.select_bot_steps_folder)
+        self.add_loop_button.clicked.connect(self.add_loop_block)
+        self.add_conditional_button.clicked.connect(self.add_conditional_block)
+        self.group_steps_button.clicked.connect(self.group_selected_steps)
+        self.clear_selected_button.clicked.connect(self.clear_selected_steps)
+        self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
+        self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
+        self.view_workflow_button.clicked.connect(lambda: self._update_workflow_tab(switch_to_tab=True))
+        self.update_app_btn.clicked.connect(self.update_application)
+        self.always_on_top_button.setCheckable(True)
+        self.always_on_top_button.clicked.connect(self.toggle_always_on_top)
+
+        menu_layout.addStretch()
+
+        # Progress Bar & Exit
+        self.progress_bar = QProgressBar(); self.progress_bar.hide(); menu_layout.addWidget(self.progress_bar)
+        self.exit_button = QPushButton("🚪 Exit"); self.exit_button.clicked.connect(QApplication.instance().quit); menu_layout.addWidget(self.exit_button)
+        
+    def create_center_content(self):
+        """Creates the main tabbed interface."""
+        self.center_content = QWidget()
+        center_layout = QVBoxLayout(self.center_content)
+        
+        # 1. Create the tab widget
+        self.main_tab_widget = QTabWidget()
+        
+        # 2. Call the methods to populate the tabs in the desired order
+        self.create_saved_bots_tab()
+        self.create_execution_flow_tab()
+        self.create_workflow_tab()
+        self.create_log_tab()
+        
+        # 3. Add the tab widget to the layout
+        center_layout.addWidget(self.main_tab_widget)
+        
+        # --- FIX STARTS HERE: Create and add the info labels below the tabs ---
+        # Create a container for the shared info labels
+        info_widget = QFrame()
+        info_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        info_layout = QHBoxLayout(info_widget)
+        
+        self.label_info1 = QLabel("Info:")
+        info_layout.addWidget(self.label_info1)
+
+        self.label_info2 = QLabel("Image Preview")
+        self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label_info2.setFixedSize(200, 30)
+        self.label_info2.setStyleSheet("""
+            QLabel {
+                background-color: #f0f0f0;
+                border: 1px solid #dcdcdc;
+                border-radius: 4px;
+                color: #888;
+            }
+        """)
+        info_layout.addWidget(self.label_info2)
+        
+        self.label_info3 = QLabel("Image Name")
+        self.label_info3.setAlignment(Qt.AlignmentFlag.AlignRight)
+        info_layout.addWidget(self.label_info3)
+        
+        # Add the entire info widget to the main center layout, below the tabs
+        center_layout.addWidget(info_widget)
+        # --- FIX ENDS HERE ---
+
+    def create_right_panels(self):
+        """Creates the right-side panels for modules and variables."""
+        self.right_panels = QWidget()
+        self.right_panels.setFixedWidth(400)
+        self.right_panels.setStyleSheet("background-color: #f4f6f7;")
+        right_layout = QVBoxLayout(self.right_panels)
+        
+        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # Module Browser
+        module_panel = QWidget()
+        module_layout = QVBoxLayout(module_panel)
+        module_layout.addWidget(QLabel("🔧 Module Browser", objectName="section-header"))
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter:"))
+        self.module_filter_dropdown = QComboBox(); self.module_filter_dropdown.addItem("-- Show All --"); filter_layout.addWidget(self.module_filter_dropdown)
+        module_layout.addLayout(filter_layout)
+        self.search_box = QLineEdit(); self.search_box.setPlaceholderText("Search modules..."); module_layout.addWidget(self.search_box)
+        self.module_tree = QTreeWidget(); self.module_tree.setHeaderHidden(True); module_layout.addWidget(self.module_tree)
+        
+        # Variables Panel
+        vars_panel = QWidget()
+        vars_layout = QVBoxLayout(vars_panel)
+        vars_layout.addWidget(QLabel("📊 Global Variables", objectName="section-header"))
+        self.variables_list = QListWidget(); vars_layout.addWidget(self.variables_list)
+        btn_layout = QHBoxLayout()
+        
+        # --- Example Custom Styling ---
+        # You can change these values as you like.
+        button_style = """
+            QPushButton {
+                color: #000000;                 /* Text color (white) */
+                background-color: #3498db;     /* A blue background */
+                font-size: 13px;               /* Text size */
+                padding: 5px 8px;              /* Vertical (5px) and horizontal (8px) padding */
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;     /* Darker blue on hover */
+            }
+            QPushButton:pressed {
+                background-color: #2471a3;     /* Even darker blue when pressed */
+            }
+        """
+
+        # Create the buttons
+        self.add_var_button = QPushButton("➕ Add")
+        self.edit_var_button = QPushButton("✏️ Edit")
+        self.delete_var_button = QPushButton("❌ Delete")
+        self.clear_vars_button = QPushButton("🔄 Reset")
+
+        # Apply the style to all four buttons
+        self.add_var_button.setStyleSheet(button_style)
+        self.edit_var_button.setStyleSheet(button_style)
+        
+        # --- Example of a different style for Delete/Reset ---
+        # Just copy the 'button_style' string, change the colors, and apply it.
+        # For example, to make Delete and Reset red:
+        danger_style = button_style.replace("#3498db", "#e74c3c")  # Replace blue with red
+                                  #.replace("#2980b9", "#c0392b")
+                                  #.replace("#2471a3", "#a93226")
+                                  
+        self.delete_var_button.setStyleSheet(button_style)
+        self.clear_vars_button.setStyleSheet(button_style)
+
+
+        # Add buttons to the layout
+        btn_layout.addWidget(self.add_var_button)
+        btn_layout.addWidget(self.edit_var_button)
+        btn_layout.addWidget(self.delete_var_button)
+        btn_layout.addWidget(self.clear_vars_button)
+        
+        vars_layout.addLayout(btn_layout)
+
+        right_splitter.addWidget(module_panel)
+        right_splitter.addWidget(vars_panel)
+        right_splitter.setSizes([500, 250])
+        right_layout.addWidget(right_splitter)
+
+        # Connections
+        self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
+        self.search_box.textChanged.connect(self.search_module_tree)
+        self.module_tree.itemDoubleClicked.connect(self.add_item_to_execution_tree)
+        self.module_tree.itemClicked.connect(self.update_selected_method_info)
+        self.module_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.module_tree.customContextMenuRequested.connect(self.show_context_menu)
+        self.add_var_button.clicked.connect(self.add_variable)
+        self.edit_var_button.clicked.connect(self.edit_variable)
+        self.delete_var_button.clicked.connect(self.delete_variable)
+        self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
+        
+    def create_execution_flow_tab(self):
+        """
+        Creates the 'Execution Flow' tab, containing only the title label
+        and the main execution tree widget. The info labels have been moved out.
+        """
+        # Create the main widget for this tab
+        exec_widget = QWidget()
+        layout = QVBoxLayout(exec_widget)
+        layout.setContentsMargins(5, 5, 5, 5) # Add some padding
+
+        # Create and add the title label for this tab
+        self.execution_flow_label = QLabel("Execution Flow")
+        self.execution_flow_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #2c3e50;")
+        layout.addWidget(self.execution_flow_label)
+
+        # Create and add the tree widget for displaying steps
+        self.execution_tree = GroupedTreeWidget(self)
+        self.execution_tree.setHeaderHidden(True)
+        self.execution_tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
+        layout.addWidget(self.execution_tree)
+
+        # The info labels (label_info1, label_info2, label_info3) are
+        # intentionally NOT created or added here anymore. They are now
+        # handled in the `create_center_content` method to be globally visible.
+
+        # Add the completed widget as a new tab
+        self.main_tab_widget.addTab(exec_widget, "📋 Execution Flow")
+
+    def create_saved_bots_tab(self):
+        bots_widget = QWidget()
+        layout = QVBoxLayout(bots_widget)
+        layout.addWidget(QLabel("Saved Bots"))
+        self.saved_steps_tree = QTreeWidget(); self.saved_steps_tree.setHeaderLabels(["Bot", "Schedule", "Status"]); self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected); self.saved_steps_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); self.saved_steps_tree.customContextMenuRequested.connect(self.show_saved_bot_context_menu); layout.addWidget(self.saved_steps_tree)
+        self.main_tab_widget.addTab(bots_widget, "🤖 Saved Bots")
+
+    def create_workflow_tab(self):
+        flow_widget = QWidget()
+        layout = QVBoxLayout(flow_widget)
+        layout.addWidget(QLabel("Bot Workflow"))
+        self.workflow_scroll_area = QScrollArea(); self.workflow_scroll_area.setWidgetResizable(True); layout.addWidget(self.workflow_scroll_area)
+
+        self.workflow_tab_index = self.main_tab_widget.indexOf(flow_widget)
+        self.main_tab_widget.addTab(flow_widget, "📈 Workflow")
+        self.workflow_tab_index = self.main_tab_widget.indexOf(flow_widget)
+
+    def create_log_tab(self):
+        self.log_widget = QWidget()
+        layout = QVBoxLayout(self.log_widget)
+        layout.addWidget(QLabel("Execution Log"))
+        self.log_console = QTextEdit(); self.log_console.setReadOnly(True); layout.addWidget(self.log_console)
+        self.clear_log_button = QPushButton("Clear Log"); self.clear_log_button.clicked.connect(self.log_console.clear); layout.addWidget(self.clear_log_button)
+        self.main_tab_widget.addTab(self.log_widget, "📜 Log")
+
+    # All other methods from the original MainWindow go here...
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
         return data.value() if isinstance(data, QVariant) else data
-
-    def _get_image_filenames(self) -> List[str]:
-        filenames: List[str] = []
-        if os.path.exists(self.click_image_dir):
-            for filename in os.listdir(self.click_image_dir):
-                if filename.lower().endswith(".txt"):
-                    filenames.append(os.path.splitext(filename)[0])
-        return sorted(filenames)
-
-    def _log_to_console(self, message: str) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_console.append(f"[{timestamp}] {message}")
-# In main_app.py, inside the MainWindow class
-
-    # ... (other methods like _log_to_console)
 
     def select_bot_steps_folder(self):
         """Opens a dialog to allow the user to select a different folder for saved bots."""
@@ -2855,258 +3721,12 @@ class MainWindow(QWidget):
             self.load_saved_steps_to_tree() # Refresh the tree from the new location
             self._log_to_console(f"Changed bot steps folder to: {new_dir}")
 
-    # ... (the rest of the MainWindow methods)
     def _handle_screenshot_request_from_param_dialog(self) -> None:
         if self.active_param_input_dialog:
             self.active_param_input_dialog.hide()
         self._log_to_console("ParameterInputDialog hidden, opening screenshot tool.")
         self.open_screenshot_tool()
 
-    # In main_app.py, REPLACE your entire init_ui method with this one:
-    # Add this new method to the MainWindow class
-    
-    def select_bot_steps_folder(self):
-        """Opens a dialog to allow the user to select a different folder for saved bots."""
-        current_dir = self.bot_steps_directory
-        new_dir = QFileDialog.getExistingDirectory(self, "Select Bot Steps Folder", current_dir)
-        
-        if new_dir and new_dir != current_dir:
-            self.bot_steps_directory = new_dir
-            self.load_saved_steps_to_tree() # Refresh the tree from the new location    
-    # In main_app.py, REPLACE your entire init_ui method with this one:
-    
-    # In main_app.py, REPLACE your entire init_ui method with this one:
-    
-# In main_app.py, inside the MainWindow class
-
-    # REPLACE your existing init_ui method with this one
-# In main_app.py, inside the MainWindow class
-
-    # REPLACE your existing init_ui method with this one
-    def init_ui(self) -> None:
-        os.makedirs(self.steps_template_directory, exist_ok=True)
-        
-        master_layout = QVBoxLayout(self)
-        master_layout.setContentsMargins(0, 0, 0, 0)
-        self.stacked_layout = QStackedLayout()
-        
-        self.full_view_container = QWidget()
-        main_grid_layout = QGridLayout(self.full_view_container)
-        main_grid_layout.setContentsMargins(5, 5, 5, 5)
-        
-        # --- Create Top Row Widgets ---
-        saved_bots_label = QLabel("Saved Bots")
-        saved_bots_label.setStyleSheet("font-weight: bold;")
-        
-        self.execution_flow_label = QLabel("Execution Flow")
-        self.execution_flow_label.setStyleSheet("font-weight: bold;")
-        
-        # --- REPLACEMENT LINE ---
-        # --- REPLACEMENT CODE BLOCK ---
-        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: #4A37A5; text-decoration: none; font-size: 16pt; font-weight: bold;">AutomateTask</a>')
-        self.website_label.setOpenExternalLinks(True)
-        # The alignment is now handled by the layout, so this line can be removed or commented out.
-        # self.website_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        
-        # Create a horizontal layout for the right-most cell of the grid
-        top_right_layout = QHBoxLayout()
-        top_right_layout.setContentsMargins(0, 0, 50, 0) # left, top, right, bottom
-        top_right_layout.addStretch() # This spacer pushes the label to the left addStretch()
-
-        top_right_layout.addWidget(self.website_label)
-        
-        main_grid_layout.addWidget(saved_bots_label, 0, 0)
-        main_grid_layout.addWidget(self.execution_flow_label, 0, 1)
-        main_grid_layout.addLayout(top_right_layout, 0, 2) # Add the new layout to the grid
-
-        # --- LEFT PANEL CONTENT ---
-        left_panel_container = QWidget()
-        left_panel_layout = QVBoxLayout(left_panel_container)
-        left_panel_layout.setContentsMargins(0,0,0,0)
-
-        # --- Main Left Splitter (for resizing Global Variables) ---
-        main_left_splitter = QSplitter(Qt.Orientation.Vertical)
-        main_left_splitter.setStyleSheet("QSplitter::handle:vertical { background-color: #B0BEC5; height: 5px; }")
-
-        # Container for the top part of the left panel
-        top_left_container = QWidget()
-        top_left_layout = QVBoxLayout(top_left_container)
-        top_left_layout.setContentsMargins(0,0,0,0)
-
-        # -- Nested Splitter (for Saved Bots vs Modules) --
-        nested_left_splitter = QSplitter(Qt.Orientation.Vertical)
-        nested_left_splitter.setStyleSheet("QSplitter::handle:vertical { background-color: #E0E0E0; height: 4px; }")
-
-        saved_bots_widget = QWidget()
-        # ... (setup for saved_bots_widget is the same)
-        saved_bots_layout = QVBoxLayout(saved_bots_widget)
-        saved_bots_layout.setContentsMargins(0,0,0,0)
-        self.saved_steps_tree = QTreeWidget()
-        self.saved_steps_tree.setHeaderLabels(["Bot Name", "Schedule", "Status"])
-        self.saved_steps_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected)
-        self.saved_steps_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.saved_steps_tree.customContextMenuRequested.connect(self.show_saved_bot_context_menu)
-        self.change_bot_folder_button = QPushButton("Change your working folder")
-        self.change_bot_folder_button.clicked.connect(self.select_bot_steps_folder)
-        saved_bots_layout.addWidget(self.saved_steps_tree)
-        saved_bots_layout.addWidget(self.change_bot_folder_button)
-        nested_left_splitter.addWidget(saved_bots_widget)
-
-        module_browser_container = QWidget()
-        # ... (setup for module_browser_container is the same)
-        module_browser_layout = QVBoxLayout(module_browser_container)
-        module_browser_layout.setContentsMargins(0,5,0,0)
-        filter_layout = QHBoxLayout()
-        self.filter_label = QLabel("Filter Module:")
-        self.module_filter_dropdown = QComboBox()
-        self.module_filter_dropdown.addItem("-- Show All Modules --")
-        self.module_filter_dropdown.currentIndexChanged.connect(self.filter_module_tree)
-        filter_layout.addWidget(self.filter_label)
-        filter_layout.addWidget(self.module_filter_dropdown)
-        module_browser_layout.addLayout(filter_layout)
-        self.tree_section_layout = QVBoxLayout()
-        self.tree_label = QLabel("Available Modules, Classes, and Methods (Double-click to add):")
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search for methods or templates...")
-        self.search_box.textChanged.connect(self.search_module_tree)
-        self.tree_section_layout.addWidget(self.tree_label)
-        self.tree_section_layout.addWidget(self.search_box)
-        self.module_tree = QTreeWidget()
-        self.module_tree.setHeaderLabels(["Module/Class/Method"])
-        self.module_tree.itemDoubleClicked.connect(self.add_item_to_execution_tree)
-        self.module_tree.itemClicked.connect(self.update_selected_method_info)
-        self.module_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.module_tree.customContextMenuRequested.connect(self.show_context_menu)
-        self.tree_section_layout.addWidget(self.module_tree)
-        module_browser_layout.addLayout(self.tree_section_layout)
-        nested_left_splitter.addWidget(module_browser_container)
-        nested_left_splitter.setSizes([150, 300]) # Initial sizes for top/bottom trees
-        top_left_layout.addWidget(nested_left_splitter)
-        
-        # Add the top part to the main left splitter
-        main_left_splitter.addWidget(top_left_container)
-        
-        # -- Global Variables Group (now inside the main splitter) --
-        self.variables_group_box = QGroupBox("Global Variables")
-        variables_layout = QVBoxLayout()
-        self.variables_list = QListWidget()
-        variables_layout.addWidget(self.variables_list)
-        var_buttons_layout = QHBoxLayout()
-        self.add_var_button = QPushButton("Add"); var_buttons_layout.addWidget(self.add_var_button)
-        self.edit_var_button = QPushButton("Edit"); var_buttons_layout.addWidget(self.edit_var_button)
-        self.delete_var_button = QPushButton("Delete"); var_buttons_layout.addWidget(self.delete_var_button)
-        self.clear_vars_button = QPushButton("Reset Values"); var_buttons_layout.addWidget(self.clear_vars_button)
-        variables_layout.addLayout(var_buttons_layout)
-        self.variables_group_box.setLayout(variables_layout)
-        main_left_splitter.addWidget(self.variables_group_box)
-        main_left_splitter.setSizes([400, 200]) # Set initial sizes for the main splitter
-
-        left_panel_layout.addWidget(main_left_splitter)
-
-        # --- Rest of the left panel controls ---
-        # ... (This part remains the same)
-        execute_buttons_layout = QVBoxLayout()
-        execute_row_layout = QHBoxLayout()
-        self.execute_all_button = QPushButton("Execute All Steps"); execute_row_layout.addWidget(self.execute_all_button)
-        self.execute_one_step_button = QPushButton("Execute 1 Step"); self.execute_one_step_button.setEnabled(False); execute_row_layout.addWidget(self.execute_one_step_button)
-        execute_buttons_layout.addLayout(execute_row_layout)
-        block_buttons_layout = QHBoxLayout()
-        self.add_loop_button = QPushButton("Add Loop"); block_buttons_layout.addWidget(self.add_loop_button)
-        self.add_conditional_button = QPushButton("Add Conditional"); block_buttons_layout.addWidget(self.add_conditional_button)
-        execute_buttons_layout.addLayout(block_buttons_layout)
-        left_panel_layout.addLayout(execute_buttons_layout)
-        button_row_layout_1 = QHBoxLayout()
-        self.save_steps_button = QPushButton("Save Bot"); button_row_layout_1.addWidget(self.save_steps_button)
-        self.group_steps_button = QPushButton("Group Selected"); button_row_layout_1.addWidget(self.group_steps_button)
-        self.clear_selected_button = QPushButton("Clear Selected"); button_row_layout_1.addWidget(self.clear_selected_button)
-        self.remove_all_steps_button = QPushButton("Remove All"); button_row_layout_1.addWidget(self.remove_all_steps_button)
-        left_panel_layout.addLayout(button_row_layout_1)
-        self.progress_bar = QProgressBar(); self.progress_bar.hide(); left_panel_layout.addWidget(self.progress_bar)
-        utility_buttons_layout = QHBoxLayout()
-        self.utility_buttons_layout_2 = QHBoxLayout()
-        self.always_on_top_button = QPushButton("Always On Top: Off"); self.always_on_top_button.setCheckable(True); utility_buttons_layout.addWidget(self.always_on_top_button)
-        self.update_app_btn = QPushButton("Update App"); utility_buttons_layout.addWidget(self.update_app_btn);self.update_app_btn.setToolTip("Update the main_app.py file from the GitHub repository");self.update_app_btn.clicked.connect(self.update_application)
-        self.view_workflow_button = QPushButton("View Workflow"); 
-        utility_buttons_layout.addWidget(self.view_workflow_button)
-        self.open_screenshot_tool_button = QPushButton("Screenshot Tool"); utility_buttons_layout.addWidget(self.open_screenshot_tool_button)
-        self.toggle_log_checkbox = QCheckBox("Show Log"); self.toggle_log_checkbox.setChecked(False); self.utility_buttons_layout_2.addWidget(self.toggle_log_checkbox)
-        self.exit_button = QPushButton("Exit GUI"); self.utility_buttons_layout_2.addWidget(self.exit_button)
-        left_panel_layout.addLayout(utility_buttons_layout)
-        left_panel_layout.addLayout(self.utility_buttons_layout_2)
-        self.add_var_button.clicked.connect(self.add_variable); self.edit_var_button.clicked.connect(self.edit_variable); self.delete_var_button.clicked.connect(self.delete_variable); self.clear_vars_button.clicked.connect(self.reset_all_variable_values); self.execute_all_button.clicked.connect(self.execute_all_steps); self.execute_one_step_button.clicked.connect(self.execute_one_step); self.add_loop_button.clicked.connect(self.add_loop_block); self.add_conditional_button.clicked.connect(self.add_conditional_block); self.save_steps_button.clicked.connect(self.save_bot_steps_dialog); self.group_steps_button.clicked.connect(self.group_selected_steps); self.clear_selected_button.clicked.connect(self.clear_selected_steps); self.remove_all_steps_button.clicked.connect(self.clear_all_steps); self.always_on_top_button.clicked.connect(self.toggle_always_on_top); self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool); self.exit_button.clicked.connect(QApplication.instance().quit)
-        self.view_workflow_button.clicked.connect(lambda: self._update_workflow_tab(switch_to_tab=True))
-        # --- RIGHT SIDE CONTENT ---
-        right_panel_container = QWidget()
-        right_panel_layout = QVBoxLayout(right_panel_container)
-        right_panel_layout.setContentsMargins(0,0,0,0)
-        
-        self.right_splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # --- Create Tab Widget ---
-        self.main_right_tab_widget = QTabWidget()
-        
-        # --- Tab 1: Execution Flow ---
-        self.execution_tree_widget = QWidget()
-        self.execution_tree_layout = QVBoxLayout(self.execution_tree_widget)
-        self.execution_tree_layout.setContentsMargins(0,0,0,0)
-        self.execution_tree = GroupedTreeWidget(self)
-        self.execution_tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.execution_tree.setHeaderHidden(True)
-        self.execution_tree_layout.addWidget(self.execution_tree)
-        self.info_labels_layout = QHBoxLayout()
-        self.label_info1 = QLabel("Module Info:"); self.info_labels_layout.addWidget(self.label_info1)
-        self.label_info2 = QLabel("Image Preview"); self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter); self.info_labels_layout.addWidget(self.label_info2)
-        self.label_info3 = QLabel("Image Name"); self.label_info3.setAlignment(Qt.AlignmentFlag.AlignRight); self.info_labels_layout.addWidget(self.label_info3)
-        self.execution_tree_layout.addLayout(self.info_labels_layout)
-        self.main_right_tab_widget.addTab(self.execution_tree_widget, "Execution Flow")
-
-        # --- Tab 2: Bot Workflow ---
-        self.workflow_view_widget = QWidget()
-        workflow_layout = QVBoxLayout(self.workflow_view_widget)
-        workflow_layout.setContentsMargins(0,0,0,0)
-        self.workflow_scroll_area = QScrollArea()
-        self.workflow_scroll_area.setWidgetResizable(True)
-        # We'll create and set the canvas when the button is clicked
-        workflow_layout.addWidget(self.workflow_scroll_area)
-        self.main_right_tab_widget.addTab(self.workflow_view_widget, "Bot Workflow")
-
-        # --- Log Widget (outside tabs) ---
-        self.log_widget = QWidget()
-        log_layout = QVBoxLayout(self.log_widget)
-        log_group_box = QGroupBox("Execution Log"); log_layout.addWidget(log_group_box)
-        log_group_layout = QVBoxLayout(log_group_box)
-        self.log_console = QTextEdit(); self.log_console.setReadOnly(True); log_group_layout.addWidget(self.log_console)
-        self.clear_log_button = QPushButton("Clear Log"); self.clear_log_button.clicked.connect(self.log_console.clear); log_group_layout.addWidget(self.clear_log_button)
-        self.toggle_log_checkbox.toggled.connect(self.log_widget.setVisible)
-        self.log_widget.setVisible(False)
-        
-        # --- Add tabs and log to splitter ---
-        self.right_splitter.addWidget(self.main_right_tab_widget) # Add tab widget here
-        self.right_splitter.addWidget(self.log_widget)
-        self.right_splitter.setSizes([700, 300])
-        right_panel_layout.addWidget(self.right_splitter)
-
-        # --- Add main panel containers to the grid ---
-        main_grid_layout.addWidget(left_panel_container, 1, 0)
-        main_grid_layout.addWidget(right_panel_container, 1, 1, 1, 2)
-        main_grid_layout.setColumnStretch(0, 1)
-        main_grid_layout.setColumnStretch(1, 2)
-
-        # --- MINI VIEW ---
-        self.mini_view_container = QWidget()
-        self.mini_view_layout = QVBoxLayout(self.mini_view_container)
-        self.mini_view_layout.setContentsMargins(5,5,5,5)
-        self.stacked_layout.addWidget(self.full_view_container)
-        self.stacked_layout.addWidget(self.mini_view_container)
-        master_layout.addLayout(self.stacked_layout)
-        self.execution_tree.itemSelectionChanged.connect(self._toggle_execute_one_step_button)
-        self.widget_homes = {
-            self.execution_tree: (self.execution_tree_layout, 0),
-            self.label_info2: (self.info_labels_layout, 1),
-            self.progress_bar: (left_panel_layout, 2), # Adjusted index
-            self.exit_button: (self.utility_buttons_layout_2, 1)
-        }
     def show_saved_bot_context_menu(self, position: QPoint):
         item = self.saved_steps_tree.itemAt(position)
         if not item or item.text(0) == "No saved bots found.":
@@ -3138,11 +3758,36 @@ class MainWindow(QWidget):
 
     def schedule_bot(self, bot_name: str):
         """Opens the scheduling dialog for the selected bot."""
+        # This correctly reads from the central 'schedules.json' for the dialog
         schedule_data = self.schedules.get(bot_name)
         dialog = ScheduleTaskDialog(bot_name, schedule_data, self)
+        
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.schedules[bot_name] = dialog.get_schedule_data()
+            # Get the new schedule data from the dialog
+            new_schedule_data = dialog.get_schedule_data()
+
+            # --- FIX STARTS HERE ---
+
+            # 1. Write to System 1 (schedules.json) - This part is the same as before
+            self.schedules[bot_name] = new_schedule_data
             self.save_schedules()
+
+            # 2. Write to System 2 (the bot's .csv file) - This is the new, required logic
+            bot_file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+            
+            if not os.path.exists(bot_file_path):
+                QMessageBox.warning(self, "Error", f"Could not find bot file '{bot_name}.csv' to save schedule.")
+                return
+
+            # Use the existing helper function to write the schedule into the .csv
+            if not self._write_schedule_to_csv(bot_file_path, new_schedule_data):
+                QMessageBox.critical(self, "Schedule Save Error", f"Failed to write schedule data to {bot_name}.csv.")
+            else:
+                self._log_to_console(f"Schedule for '{bot_name}' saved to .json and .csv")
+                
+            # --- FIX ENDS HERE ---
+
+            # Refresh the "Saved Bots" tab display
             self.load_saved_steps_to_tree()
 
     def delete_saved_bot(self, bot_name: str):
@@ -3212,42 +3857,7 @@ class MainWindow(QWidget):
                 self.schedules = {}
         else:
             self.schedules = {}
-    def _toggle_minimized_view(self, minimize: bool):
-        if minimize:
-            self.minimized_for_execution = True
-            self.original_geometry = self.geometry()
-
-            self.mini_view_layout.addWidget(self.execution_tree)
-            self.mini_view_layout.addWidget(self.label_info2)
-            self.mini_view_layout.addWidget(self.progress_bar)
-            self.mini_view_layout.addWidget(self.exit_button)
-            
-            self.progress_bar.show()
-
-            self.stacked_layout.setCurrentWidget(self.mini_view_container)
-
-            new_width, new_height = 350, 400
-            screen_geometry = QApplication.primaryScreen().geometry()
-            self.move(screen_geometry.width() - new_width, 0)
-            self.setFixedSize(new_width, new_height)
-
-        else:
-            if self.original_geometry:
-                self.setFixedSize(QSize(16777215, 16777215))
-                self.setGeometry(self.original_geometry)
-
-            for widget, (layout, index) in self.widget_homes.items():
-                if isinstance(layout, QBoxLayout):
-                    layout.insertWidget(index, widget)
-                else:
-                    layout.addWidget(widget)
-
-            self.progress_bar.hide()
-            
-            self.stacked_layout.setCurrentWidget(self.full_view_container)
-            self.minimized_for_execution = False
-
-
+    
     def _toggle_execute_one_step_button(self) -> None:
         self.execute_one_step_button.setEnabled(len(self.execution_tree.selectedItems()) > 0)
 
@@ -3273,10 +3883,6 @@ class MainWindow(QWidget):
             if step_data["type"] == "step" and "parameters_config" in step_data and step_data["parameters_config"] is not None:
                 step_data["parameters_config"]["original_listbox_row_index"] = i
 
-# Add these two new methods inside the MainWindow class
-
-# In the MainWindow class, replace your existing method with this one
-
     def _get_expansion_state(self) -> set:
         """Recursively finds all expanded block items and returns their unique IDs."""
         expanded_ids = set()
@@ -3284,14 +3890,12 @@ class MainWindow(QWidget):
         def traverse(parent_item):
             for i in range(parent_item.childCount()):
                 child_item = parent_item.child(i)
-                # --- THIS IS THE CORRECTED LINE ---
                 if child_item.isExpanded():
                     item_data = self._get_item_data(child_item)
                     if item_data:
                         item_id = item_data.get("group_id") or item_data.get("loop_id") or item_data.get("if_id")
                         if item_id:
                             expanded_ids.add(item_id)
-                # Recurse into children
                 if child_item.childCount() > 0:
                     traverse(child_item)
     
@@ -3314,20 +3918,10 @@ class MainWindow(QWidget):
         
         traverse(self.execution_tree.invisibleRootItem())
     
-    # In the MainWindow class, REPLACE your existing method with this one
-    
     def _rebuild_execution_tree(self, item_to_focus_data: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Rebuilds the entire execution tree from the flat `added_steps_data` list.
-        - Handles nesting of blocks correctly.
-        - Selects and scrolls to a specified item.
-        - PRESERVES the expansion state of blocks.
-        - Populates the data_to_item_map for visual guides.
-        """
         expanded_state = self._get_expansion_state()
     
         self.execution_tree.clear()
-        # --- ADD THIS LINE to clear the map ---
         self.data_to_item_map.clear()
         
         current_parent_stack: List[QTreeWidgetItem] = [self.execution_tree.invisibleRootItem()]
@@ -3337,7 +3931,6 @@ class MainWindow(QWidget):
             step_data_dict["original_listbox_row_index"] = i
             step_type = step_data_dict.get("type")
     
-            # Stack Popping Logic
             if step_type == "group_end":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
@@ -3360,12 +3953,10 @@ class MainWindow(QWidget):
                     elif last_parent_data and last_parent_data.get("type") == "IF_START" and last_parent_data.get("if_id") == step_data_dict.get("if_id"):
                         current_parent_stack.pop()
     
-            # Item Creation
             parent_for_current_item = current_parent_stack[-1]
             tree_item = QTreeWidgetItem(parent_for_current_item)
             tree_item.setData(0, Qt.ItemDataRole.UserRole, QVariant(step_data_dict))
             
-            # --- ADD THIS LINE to populate the map ---
             self.data_to_item_map[i] = tree_item
     
             card = ExecutionStepCard(step_data_dict, i + 1)
@@ -3381,7 +3972,6 @@ class MainWindow(QWidget):
             if item_to_focus_data and step_data_dict == item_to_focus_data:
                 item_to_focus = tree_item
     
-            # Stack Pushing Logic
             if step_type in ["loop_start", "IF_START", "ELSE", "group_start"]:
                 current_parent_stack.append(tree_item)
     
@@ -3391,14 +3981,13 @@ class MainWindow(QWidget):
     
         self.update_status_column_for_all_items()
         self._restore_expansion_state(expanded_state)
-        self._update_workflow_tab(switch_to_tab=False) # <-- ADD THIS LINE
+        self._update_workflow_tab(switch_to_tab=False)
 
     def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
         item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
         if item_to_edit:
             self.edit_step_in_execution_tree(item_to_edit, 0)
         else:
-            # Fallback for safety, try to find by index
             idx = step_data_to_edit.get("original_listbox_row_index")
             if idx is not None and 0 <= idx < len(self.added_steps_data):
                 item_from_map = self.data_to_item_map.get(idx)
@@ -3411,16 +4000,13 @@ class MainWindow(QWidget):
         step_type = step_to_delete.get("type")
         start_index = -1
         
-        # --- FIX: Use original_listbox_row_index instead of list.index() ---
         start_index = step_to_delete.get("original_listbox_row_index")
         if start_index is None or not (0 <= start_index < len(self.added_steps_data)) or self.added_steps_data[start_index].get("original_listbox_row_index") != start_index:
-            # Fallback in case of mismatch
             try:
                 start_index = self.added_steps_data.index(step_to_delete)
             except ValueError:
                  QMessageBox.critical(self, "Error", "Could not find step to delete in data list. Data may be out of sync.")
                  return
-        # --- END FIX ---
 
         if step_type in ["loop_start", "IF_START", "group_start"]:
             start_idx, end_idx = self._find_block_indices(start_index)
@@ -3469,15 +4055,12 @@ class MainWindow(QWidget):
         return start_index, start_index
 
     def _handle_move_up_request(self, step_data: Dict[str, Any]):
-        # --- FIX: Use original_listbox_row_index instead of list.index() ---
         current_pos = step_data.get("original_listbox_row_index")
         if current_pos is None or not (0 <= current_pos < len(self.added_steps_data)) or self.added_steps_data[current_pos].get("original_listbox_row_index") != current_pos:
-            # Fallback
             try:
                 current_pos = self.added_steps_data.index(step_data)
             except ValueError:
-                 return # Silently fail
-        # --- END FIX ---
+                 return
         
         if current_pos == 0:
             return
@@ -3491,21 +4074,18 @@ class MainWindow(QWidget):
         part_middle = self.added_steps_data[prev_start_idx : start_idx]
         part_after = self.added_steps_data[end_idx+1:]
         
-        block_to_move = self.added_steps_data[start_idx : end_idx + 1] # Get this *after* slicing others
+        block_to_move = self.added_steps_data[start_idx : end_idx + 1]
         
         self.added_steps_data = part_before + block_to_move + part_middle + part_after
         self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
 
     def _handle_move_down_request(self, step_data: Dict[str, Any]):
-        # --- FIX: Use original_listbox_row_index instead of list.index() ---
         current_pos = step_data.get("original_listbox_row_index")
         if current_pos is None or not (0 <= current_pos < len(self.added_steps_data)) or self.added_steps_data[current_pos].get("original_listbox_row_index") != current_pos:
-            # Fallback
             try:
                 current_pos = self.added_steps_data.index(step_data)
             except ValueError:
-                 return # Silently fail
-        # --- END FIX ---
+                 return
 
         start_idx, end_idx = self._find_block_indices(current_pos)
         if end_idx >= len(self.added_steps_data) - 1:
@@ -3522,24 +4102,19 @@ class MainWindow(QWidget):
         self.added_steps_data = part_before + part_middle + block_to_move + part_after
         self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
 
-    # --- NEW HELPER METHOD ---
     def _get_template_names(self) -> List[str]:
         """Returns a sorted list of template names without extensions."""
         os.makedirs(self.steps_template_directory, exist_ok=True)
         return sorted([os.path.splitext(f)[0] for f in os.listdir(self.steps_template_directory) if f.endswith(".json")])
 
-    # --- MODIFIED METHOD ---
     def _handle_save_as_template_request(self, step_data_to_save: Dict[str, Any]):
-        # --- FIX: Use original_listbox_row_index instead of list.index() ---
         start_index = step_data_to_save.get("original_listbox_row_index")
         if start_index is None or not (0 <= start_index < len(self.added_steps_data)) or self.added_steps_data[start_index].get("original_listbox_row_index") != start_index:
-            # Fallback
             try:
                 start_index = self.added_steps_data.index(step_data_to_save)
             except ValueError:
                  QMessageBox.critical(self, "Error", "Could not find the step to save as a template. Data may be out of sync.")
                  return
-        # --- END FIX ---
 
         start_idx, end_idx = self._find_block_indices(start_index)
         if start_idx == end_idx:
@@ -3554,9 +4129,8 @@ class MainWindow(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             template_name = dialog.get_template_name()
             if not template_name:
-                return # Dialog already showed an error message
+                return
 
-            # Check for overwrite
             if template_name in existing_templates:
                 reply = QMessageBox.question(self, "Confirm Overwrite", 
                                              f"A template named '{template_name}' already exists. Do you want to overwrite it?",
@@ -3570,7 +4144,7 @@ class MainWindow(QWidget):
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump(block_to_save, f, indent=4)
                 QMessageBox.information(self, "Success", f"Template '{template_name}' saved successfully.")
-                self.load_all_modules_to_tree() # Refresh the tree to show the new/updated template
+                self.load_all_modules_to_tree()
             except Exception as e:
                 QMessageBox.critical(self, "Save Error", f"Failed to save the template:\n{e}")
 
@@ -3579,16 +4153,13 @@ class MainWindow(QWidget):
         if not (step_data and isinstance(step_data, dict)):
             return
 
-        # --- FIX: Use original_listbox_row_index instead of list.index() ---
         current_row = step_data.get("original_listbox_row_index")
         if current_row is None or not (0 <= current_row < len(self.added_steps_data)) or self.added_steps_data[current_row].get("original_listbox_row_index") != current_row:
-            # Fallback
             try:
                 current_row = self.added_steps_data.index(step_data)
             except ValueError:
                  QMessageBox.critical(self, "Error", "Could not find the selected step in the internal data model. Data may be out of sync.")
                  return
-        # --- END FIX ---
 
         self.set_ui_enabled_state(False)
         self.progress_bar.setValue(0)
@@ -3607,30 +4178,32 @@ class MainWindow(QWidget):
         self.worker.start()
 
     def update_status_column_for_all_items(self):
+        """Enhanced method to clear all execution status."""
+        self._clear_all_execution_status()
         self._clear_status_recursive(self.execution_tree.invisibleRootItem())
 
     def _clear_status_recursive(self, parent_item: QTreeWidgetItem):
+        """Enhanced method to clear visual status in tree."""
         for i in range(parent_item.childCount()):
             child = parent_item.child(i)
             card = self.execution_tree.itemWidget(child, 0)
             if card:
-                card.set_status("#D3D3D3")
+                card.set_status("#D3D3D3")  # Normal gray border, normal thickness
                 card.clear_result()
             self._clear_status_recursive(child)
 
     def toggle_always_on_top(self) -> None:
         if self.always_on_top_button.isChecked():
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-            self.always_on_top_button.setText("Always On Top: On")
+            self.always_on_top_button.setText("📌 Always On Top: On")
         else:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
-            self.always_on_top_button.setText("Always On Top: Off")
+            self.always_on_top_button.setText("📌 Always On Top: Off")
         self.show()
 
     def open_screenshot_tool(self, initial_image_name: str = "") -> None:
         self.hide()
         current_image_name_for_tool = self.label_info3.text() if self.label_info3.text() != "Image Name" else ""
-        # Pass the base_directory when creating the window
         self.screenshot_window = SecondWindow(current_image_name_for_tool, base_dir=self.base_directory, parent=self)
         self.screenshot_window.screenshot_saved.connect(self._handle_screenshot_tool_closed)
         self.screenshot_window.show()
@@ -3646,7 +4219,6 @@ class MainWindow(QWidget):
              new_filenames = self._get_image_filenames()
              self.active_param_input_dialog.update_image_filenames.emit(new_filenames, saved_filename)
     
-    # --- MODIFIED METHOD ---
     def load_all_modules_to_tree(self) -> None:
         self.module_tree.clear()
         self.module_filter_dropdown.clear()
@@ -3716,7 +4288,6 @@ class MainWindow(QWidget):
                 except Exception as e:
                     self._log_to_console(f"Error loading module '{module_name}': {e}")
 
-            # --- NEW: Load templates into the tree ---
             template_root_item = QTreeWidgetItem(self.module_tree)
             template_root_item.setText(0, "Bot Templates")
             template_root_item.setFlags(template_root_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
@@ -3732,7 +4303,6 @@ class MainWindow(QWidget):
                 error_item = QTreeWidgetItem(template_root_item)
                 error_item.setText(0, "(Error loading templates)")
 
-            # --- MODIFIED: Collapse all items by default ---
             self.module_tree.collapseAll()
             self.label_info1.setText("Module Info: All modules loaded.")
 
@@ -3746,46 +4316,38 @@ class MainWindow(QWidget):
         root = self.module_tree.invisibleRootItem()
         for i in range(root.childCount()):
             module_item = root.child(i)
-            # Also hide/show the templates root item based on filter
             is_template_item = module_item.text(0) == "Bot Templates"
             if is_template_item:
                 module_item.setHidden(not (selected_module_name == "-- Show All Modules --"))
             else:
                 module_item.setHidden(not (selected_module_name == "-- Show All Modules --" or module_item.text(0) == selected_module_name))
         
-        # --- MODIFIED: Collapse all instead of expanding all ---
         self.module_tree.collapseAll()
 
-    # --- NEW METHOD: search_module_tree ---
     def search_module_tree(self, text: str) -> None:
         """Filters the module tree based on the search text."""
         search_text = text.lower()
         root = self.module_tree.invisibleRootItem()
 
         def filter_recursive(item: QTreeWidgetItem) -> bool:
-            # Check if any child matches
             child_matches = False
             for i in range(item.childCount()):
                 if filter_recursive(item.child(i)):
                     child_matches = True
             
-            # Check if the item itself matches
             item_text = item.text(0).lower()
             item_matches = search_text in item_text
             
-            # The item should be visible if it matches OR if any of its children match
             should_be_visible = item_matches or child_matches
             item.setHidden(not should_be_visible)
 
-            # Expand parents of matching items, but not the matching item itself unless it has children
             if should_be_visible and not item_matches and child_matches:
                  item.setExpanded(True)
-            elif not search_text: # Collapse all when search is cleared
+            elif not search_text:
                 item.setExpanded(False)
 
             return should_be_visible
 
-        # Iterate over top-level items (modules and templates category)
         for i in range(root.childCount()):
             filter_recursive(root.child(i))
 
@@ -3797,30 +4359,28 @@ class MainWindow(QWidget):
         
             file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
             if os.path.exists(file_path):
-                # Pass the bot_name to the loading function
                 self.load_steps_from_file(file_path, bot_name)
+                workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
+                if self.added_steps_data and self.main_tab_widget.currentIndex() != workflow_tab_index: # Only switch if loading was successful
+                    self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())                
+                
             else:
                 QMessageBox.warning(self, "File Not Found", f"The selected bot file was not found:\n{file_path}")
-                self.load_saved_steps_to_tree() # Refresh the tree if a file is missing
+                self.load_saved_steps_to_tree()
 
-
-    # --- NEW HELPER: _extract_variables_from_steps ---
     def _extract_variables_from_steps(self, steps: List[Dict[str, Any]]) -> set:
         """Recursively finds all variable names used in a list of steps."""
         found_variables = set()
 
         def search_dict(d: Dict[str, Any]):
-            # Check for variable assignment
             if "assign_to_variable_name" in d and d["assign_to_variable_name"]:
                 found_variables.add(d["assign_to_variable_name"])
             if "assign_iteration_to_variable" in d and d.get("assign_iteration_to_variable"):
                  found_variables.add(d["assign_iteration_to_variable"])
             
-            # Check for variable usage in standard structures
             if d.get("type") == "variable" and "value" in d:
                 found_variables.add(d["value"])
 
-            # Recurse into nested structures
             for key, value in d.items():
                 if isinstance(value, dict):
                     search_dict(value)
@@ -3837,25 +4397,19 @@ class MainWindow(QWidget):
         search_list(steps)
         return found_variables
     
-    # --- NEW HELPER: _apply_variable_mapping ---
     def _apply_variable_mapping(self, steps: List[Dict[str, Any]], mapping: Dict[str, str]) -> List[Dict[str, Any]]:
         """Recursively replaces variable names in steps based on the provided mapping."""
-        
-        # Create a deep copy to avoid modifying the original template data
         steps_copy = json.loads(json.dumps(steps))
 
         def replace_in_dict(d: Dict[str, Any]):
-            # Replace assigned variables
             if "assign_to_variable_name" in d and d["assign_to_variable_name"] in mapping:
                 d["assign_to_variable_name"] = mapping[d["assign_to_variable_name"]]
             if "assign_iteration_to_variable" in d and d.get("assign_iteration_to_variable") in mapping:
                 d["assign_iteration_to_variable"] = mapping[d["assign_iteration_to_variable"]]
 
-            # Replace used variables
             if d.get("type") == "variable" and d.get("value") in mapping:
                 d["value"] = mapping[d["value"]]
 
-            # Recurse
             for key, value in d.items():
                 if isinstance(value, dict):
                     replace_in_dict(value)
@@ -3872,7 +4426,6 @@ class MainWindow(QWidget):
         replace_in_list(steps_copy)
         return steps_copy
 
-    # --- REFACTORED/RENAMED METHOD ---
     def _load_template_by_name(self, template_name: str) -> None:
         """Loads a template file, handles variable mapping, and inserts it into the execution tree."""
         file_path = os.path.join(self.steps_template_directory, f"{template_name}.json")
@@ -3885,7 +4438,6 @@ class MainWindow(QWidget):
                 QMessageBox.warning(self, "Empty Template", "The selected template is empty.")
                 return
 
-            # --- Variable Mapping Logic ---
             template_variables = self._extract_variables_from_steps(template_steps)
             mapped_steps = template_steps
 
@@ -3894,23 +4446,20 @@ class MainWindow(QWidget):
                 var_dialog = TemplateVariableMappingDialog(template_variables, list(self.global_variables.keys()), self)
                 if var_dialog.exec() == QDialog.DialogCode.Accepted:
                     mapping_result = var_dialog.get_mapping()
-                    if mapping_result is None: # User error in dialog
+                    if mapping_result is None:
                         return 
                 
                     variable_map, new_vars = mapping_result
                     
-                    # Apply the mapping to the steps
                     mapped_steps = self._apply_variable_mapping(template_steps, variable_map)
                     
-                    # Add new variables to global context
                     if new_vars:
                         self.global_variables.update(new_vars)
                         self._update_variables_list_display()
                         self._log_to_console(f"Added new global variables: {list(new_vars.keys())}")
-                else: # User cancelled the mapping
+                else:
                     self._log_to_console("Template loading cancelled by user at variable mapping stage.")
                     return
-            # --- END: Variable Logic ---
 
             re_id_d_steps = self._re_id_template_blocks(mapped_steps)
 
@@ -3923,6 +4472,9 @@ class MainWindow(QWidget):
                 
                 self._rebuild_execution_tree(item_to_focus_data=re_id_d_steps[0])
                 self._log_to_console(f"Loaded template '{template_name}' with {len(re_id_d_steps)} steps.")
+                workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
+                if self.main_tab_widget.currentIndex() != workflow_tab_index:
+                    self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())
 
         except FileNotFoundError:
             QMessageBox.critical(self, "Load Error", f"Template file not found:\n{file_path}")
@@ -3967,27 +4519,21 @@ class MainWindow(QWidget):
         self.label_info2.clear()
         if method_info_tuple and isinstance(method_info_tuple, tuple) and len(method_info_tuple) == 5:
             display_text, class_name, method_name, module_name, params_for_dialog = method_info_tuple
-            #self._log_to_console(f"Selected Method: {class_name}.{method_name} (from {module_name})")
             self.gui_communicator.update_module_info_signal.emit("")
         else:
             pass
-            #self._log_to_console("Selected item is not a method or template.")
-            #self.gui_communicator.update_module_info_signal.emit("")
 
-    # --- MODIFIED METHOD ---
     def add_item_to_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
         item_data = self._get_item_data(item)
 
-        # --- Handle template loading ---
         if isinstance(item_data, dict) and item_data.get('type') == 'template':
             template_name = item_data.get('name')
             if template_name:
                 self._load_template_by_name(template_name)
             return
 
-        # --- Handle method adding ---
         if not (item_data and isinstance(item_data, tuple) and len(item_data) == 5):
-            return # Not a clickable method or template
+            return
             
         display_text, class_name, method_name, module_name, params_for_dialog = item_data
         
@@ -4003,11 +4549,9 @@ class MainWindow(QWidget):
             self.gui_communicator.update_module_info_signal.emit("")
             return
         
-        # --- NEW: Add new variable to global list immediately ---
         if assign_to_variable_name and assign_to_variable_name not in self.global_variables:
             self.global_variables[assign_to_variable_name] = None
             self._update_variables_list_display()
-        # --- END NEW ---
 
         new_step_data_dict: Dict[str, Any] = {"type": "step", "class_name": class_name, "method_name": method_name, "module_name": module_name, "parameters_config": parameters_config, "assign_to_variable_name": assign_to_variable_name}
         insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
@@ -4016,6 +4560,9 @@ class MainWindow(QWidget):
             insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
             self.added_steps_data.insert(insert_data_index, new_step_data_dict)
             self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
+            workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
+            if self.main_tab_widget.currentIndex() != workflow_tab_index:
+                self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())
         
         self.gui_communicator.update_module_info_signal.emit("")
         self.active_param_input_dialog = None
@@ -4051,12 +4598,10 @@ class MainWindow(QWidget):
             if loop_config is None:
                 return
 
-            # --- NEW: Add new iteration variable from loop config ---
             new_iter_var = loop_config.get("assign_iteration_to_variable")
             if new_iter_var and new_iter_var not in self.global_variables:
                 self.global_variables[new_iter_var] = None
                 self._update_variables_list_display()
-            # --- END NEW ---
 
             self.loop_id_counter += 1
             loop_id = f"loop_{self.loop_id_counter}"
@@ -4092,6 +4637,8 @@ class MainWindow(QWidget):
                 self._update_original_listbox_row_indices()
                 self._rebuild_execution_tree(item_to_focus_data=new_if_start_data)
 
+# In the MainWindow class, REPLACE the existing group_selected_steps method with this one:
+
     def group_selected_steps(self) -> None:
         selected_items = self.execution_tree.selectedItems()
         if not selected_items:
@@ -4101,37 +4648,26 @@ class MainWindow(QWidget):
         group_name, ok = QInputDialog.getText(self, "Create Group", "Enter a name for the group:")
         if ok and group_name:
             
-            # --- FIX: Sort the selected data by its actual index ---
+            # --- FIX STARTS HERE: Correct logic for multi-selection ---
             selected_data = [self._get_item_data(item) for item in selected_items]
-            # Sort the list of dictionaries based on their 'original_listbox_row_index'
+            
+            # Find the min and max original_listbox_row_index from the selection
             try:
-                selected_data.sort(key=lambda x: x.get("original_listbox_row_index", float('inf')))
-            except (AttributeError, TypeError):
-                QMessageBox.critical(self, "Error", "Could not sort selected items. One or more items may be invalid.")
-                return
-            # --- END FIX ---
-
-            first_item_data = selected_data[0]
-
-            start_index = first_item_data.get("original_listbox_row_index")
-            if start_index is None or not (0 <= start_index < len(self.added_steps_data)) or self.added_steps_data[start_index].get("original_listbox_row_index") != start_index:
-                try:
-                    start_index = self.added_steps_data.index(first_item_data)
-                except ValueError:
-                     QMessageBox.critical(self, "Error", "Could not find the start of the selection.")
-                     return
-
-            last_item_data = selected_data[-1]
-
-            last_item_start_idx_in_flat_list = last_item_data.get("original_listbox_row_index")
-            if last_item_start_idx_in_flat_list is None or not (0 <= last_item_start_idx_in_flat_list < len(self.added_steps_data)) or self.added_steps_data[last_item_start_idx_in_flat_list].get("original_listbox_row_index") != last_item_start_idx_in_flat_list:
-                try:
-                    last_item_start_idx_in_flat_list = self.added_steps_data.index(last_item_data)
-                except ValueError:
-                    QMessageBox.critical(self, "Error", "Could not find the end of the selection.")
+                indices = [d.get("original_listbox_row_index") for d in selected_data if d and d.get("original_listbox_row_index") is not None]
+                if not indices:
+                    QMessageBox.critical(self, "Error", "Could not identify the selected items. Data may be out of sync.")
                     return
+                
+                start_index = min(indices)
+                last_item_index_in_selection = max(indices)
 
-            _, end_index = self._find_block_indices(last_item_start_idx_in_flat_list)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not process selected items for grouping: {e}")
+                return
+
+            # Find the full block of the last selected item to ensure we wrap the whole thing
+            _, end_index = self._find_block_indices(last_item_index_in_selection)
+            # --- FIX ENDS HERE ---
 
             self.group_id_counter += 1
             group_id = f"group_{self.group_id_counter}"
@@ -4139,8 +4675,12 @@ class MainWindow(QWidget):
             group_start_data = {"type": "group_start", "group_id": group_id, "group_name": group_name}
             group_end_data = {"type": "group_end", "group_id": group_id}
 
+            # Insert the 'group_start' data before the first selected item
             self.added_steps_data.insert(start_index, group_start_data)
-            self.added_steps_data.insert(end_index + 2, group_end_data) # +1 for start_data, +1 to insert *after*
+            
+            # Insert the 'group_end' data after the last selected item.
+            # We must add 1 because we already inserted the start item, shifting all subsequent indices.
+            self.added_steps_data.insert(end_index + 2, group_end_data)
 
             self._rebuild_execution_tree(item_to_focus_data=group_start_data)
 
@@ -4152,16 +4692,13 @@ class MainWindow(QWidget):
         step_type = step_data_dict["type"]
         current_row = -1
 
-        # --- FIX: Use original_listbox_row_index instead of list.index() ---
         current_row = step_data_dict.get("original_listbox_row_index")
         if current_row is None or not (0 <= current_row < len(self.added_steps_data)) or self.added_steps_data[current_row].get("original_listbox_row_index") != current_row:
-            # Fallback in case of mismatch
             try:
                 current_row = self.added_steps_data.index(step_data_dict)
             except ValueError:
                  QMessageBox.critical(self, "Error", "Could not find selected item in internal data model for editing. Data may be out of sync.")
                  return
-        # --- END FIX ---
         
         if step_type == "step":
             class_name, method_name, module_name = step_data_dict["class_name"], step_data_dict["method_name"], step_data_dict["module_name"]
@@ -4197,11 +4734,9 @@ class MainWindow(QWidget):
                     return
                 new_assign_to_variable_name = self.active_param_input_dialog.get_assignment_variable()
                 
-                # --- NEW: Add new variable to global list immediately ---
                 if new_assign_to_variable_name and new_assign_to_variable_name not in self.global_variables:
                     self.global_variables[new_assign_to_variable_name] = None
                     self._update_variables_list_display()
-                # --- END NEW ---
                 
                 self.added_steps_data[current_row].update({"parameters_config": new_parameters_config, "assign_to_variable_name": new_assign_to_variable_name})
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
@@ -4215,12 +4750,10 @@ class MainWindow(QWidget):
                 if new_loop_config is None:
                     return
 
-                # --- NEW: Add new iteration variable from loop config ---
                 new_iter_var = new_loop_config.get("assign_iteration_to_variable")
                 if new_iter_var and new_iter_var not in self.global_variables:
                     self.global_variables[new_iter_var] = None
                     self._update_variables_list_display()
-                # --- END NEW ---
 
                 self.added_steps_data[current_row]["loop_config"] = new_loop_config
                 loop_id, nesting_level = step_data_dict["loop_id"], 0
@@ -4287,11 +4820,11 @@ class MainWindow(QWidget):
             self.if_id_counter = 0
             self.group_id_counter = 0
             
-            # RESET the label
             self.execution_flow_label.setText("Execution Flow")
             
             self._log_to_console("Internal clear all steps executed.")
-            self._update_workflow_tab(switch_to_tab=False) # <-- ADD THIS LINE
+            self._update_workflow_tab(switch_to_tab=False)
+            
     def clear_all_steps(self) -> None:
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Info", "The execution queue and variables are already empty.")
@@ -4300,33 +4833,61 @@ class MainWindow(QWidget):
             self._internal_clear_all_steps()
             self._log_to_console("All steps cleared by user.")
 
-# --- MODIFY execute_all_steps ---
-    def execute_all_steps(self) -> None:
-        # --- ADD THIS CHECK AT THE BEGINNING ---
-        if self.is_bot_running:
-            QMessageBox.warning(self, "Execution in Progress", "A bot is already running. Please wait for it to complete.")
-            return
-        # --- END ---
-
-        if not self.added_steps_data:
-            QMessageBox.information(self, "No Steps", "No steps have been added.")
-            return
-        if not self._validate_block_structure_on_execution():
-            return
+    def _handle_execute_pause_resume(self):
+        """Handles the Start, Pause, and Resume logic for the main execution button."""
         
-        # --- SET THE FLAG TO TRUE ---
-        self.is_bot_running = True
-        
-        if self.always_on_top_button.isChecked():
-            self._toggle_minimized_view(True)
+        if not self.is_bot_running:
+            # --- This is the START case ---
+            if not self.added_steps_data:
+                QMessageBox.information(self, "No Steps", "No steps have been added.")
+                return
+            if not self._validate_block_structure_on_execution():
+                return
+            
+            self.is_bot_running = True
+            self.is_paused = False # Ensure pause is reset
+            
+            # --- ACTIVATE WORKFLOW TAB (Request 1) ---
+            if hasattr(self, 'workflow_tab_index'):
+                self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
+            else:
+                self._log_to_console("Could not find workflow tab to switch to.")
+            # --- END ---
 
-        self.set_ui_enabled_state(False)
-        self.progress_bar.setValue(0)
-        self.progress_bar.show()
-        self.update_status_column_for_all_items()
-        self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables)
-        self._connect_worker_signals()
-        self.worker.start()
+            # --- CHANGE BUTTON TO PAUSE (Request 2) ---
+            self.execute_all_button.setText("⏸️ Pause")
+            self.execute_all_button.setToolTip("Pause the running execution")
+            # --- END ---
+            
+            self.set_ui_enabled_state(False) # Disables other UI elements
+            
+            self.progress_bar.setValue(0)
+            self.progress_bar.show()
+            self.update_status_column_for_all_items()
+            
+            self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables)
+            self._connect_worker_signals()
+            self.worker.start()
+
+        elif self.is_bot_running and not self.is_paused:
+            # --- This is the PAUSE case ---
+            if self.worker:
+                self.worker.pause()
+                self.is_paused = True
+                self.execute_all_button.setText("▶️ Resume")
+                self.execute_all_button.setToolTip("Resume the paused execution")
+                # Re-enable UI components that should be usable during pause
+                self.set_ui_enabled_state(True) 
+                
+        elif self.is_bot_running and self.is_paused:
+            # --- This is the RESUME case ---
+            if self.worker:
+                self.worker.resume()
+                self.is_paused = False
+                self.execute_all_button.setText("⏸️ Pause")
+                self.execute_all_button.setToolTip("Pause the running execution")
+                # Disable UI again
+                self.set_ui_enabled_state(False)
 
     def _validate_block_structure_on_execution(self) -> bool:
         open_blocks = []
@@ -4391,8 +4952,12 @@ class MainWindow(QWidget):
             self.worker.execution_item_finished.disconnect()
             self.worker.execution_error.disconnect()
             self.worker.execution_finished_all.disconnect()
+            # Disconnect the new signal if it exists
+            if hasattr(self.worker, 'loop_iteration_started'):
+                self.worker.loop_iteration_started.disconnect()
         except TypeError:
             pass
+            
         self.worker.execution_started.connect(lambda msg: self._log_to_console(f"GUI: {msg}"))
         self.worker.execution_progress.connect(self.progress_bar.setValue)
         self.worker.execution_item_started.connect(self.update_execution_tree_item_status_started)
@@ -4400,7 +4965,15 @@ class MainWindow(QWidget):
         self.worker.execution_error.connect(self.update_execution_tree_item_status_error)
         self.worker.execution_finished_all.connect(self.on_execution_finished)
         self.worker.execution_finished_all.connect(lambda: self._update_variables_list_display())
-
+        
+        # Connect the new loop iteration signal
+        if hasattr(self.worker, 'loop_iteration_started'):
+            self.worker.loop_iteration_started.connect(self._on_loop_iteration_started)
+            
+    def _on_loop_iteration_started(self, loop_id: str, iteration_number: int):
+        """Handle loop iteration start - reset status of steps within the loop."""
+        if iteration_number > 1:  # Only reset for iterations after the first one
+            self._reset_nested_loop_steps_status(loop_id)
     def _find_qtreewidget_item(self, target_step_data_dict: Dict[str, Any], parent_item: Optional[QTreeWidgetItem] = None) -> Optional[QTreeWidgetItem]:
         if parent_item is None:
             parent_item = self.execution_tree.invisibleRootItem()
@@ -4413,96 +4986,247 @@ class MainWindow(QWidget):
             if found_in_children:
                 return found_in_children
         return None
-
+    def _find_parent_group_data(self, step_index: int) -> Optional[Dict[str, Any]]:
+        """
+        Finds the 'group_start' data for the group that the step at step_index is inside.
+        Returns None if the step is not inside a group.
+        """
+        if step_index < 0 or step_index >= len(self.added_steps_data):
+            return None
+            
+        group_stack: List[Dict[str, Any]] = []
+        
+        # Iterate from the beginning up to (but not including) the step itself
+        for i in range(step_index):
+            step_data = self.added_steps_data[i]
+            step_type = step_data.get("type")
+            
+            if step_type == "group_start":
+                group_stack.append(step_data)
+            elif step_type == "group_end":
+                if group_stack:
+                    # Pop if the ID matches. In a valid structure, it always should.
+                    if group_stack[-1].get("group_id") == step_data.get("group_id"):
+                        group_stack.pop()
+                        
+        # If the stack is not empty, the step is inside the group at the top
+        if group_stack:
+            return group_stack[-1]
+            
+        return None
     def update_execution_tree_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int) -> None:
+        """Enhanced method with workflow visualization support."""
+        # Set execution status
+        self._set_step_execution_status(step_data_dict, "running")
+        
+        # --- NEW: Update parent group status ---
+        parent_group_data = self._find_parent_group_data(original_listbox_row_index)
+        if parent_group_data:
+            # Check if parent group is already in an error state. If so, don't reset to "running".
+            if parent_group_data.get("execution_status") != "error":
+                self._set_step_execution_status(parent_group_data, "running")
+        # --- END NEW ---
+        
+        # Update the execution tree card
         item_widget = self._find_qtreewidget_item(step_data_dict)
         if item_widget:
             card = self.execution_tree.itemWidget(item_widget, 0)
             if card:
-                card.set_status("blue", is_running=True)
+                card.set_status("", is_running=True)  # Yellow border, thick
                 self._log_to_console(f"Executing: {card._get_formatted_title()}")
             self.execution_tree.setCurrentItem(item_widget)
             self.execution_tree.scrollToItem(item_widget, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
+            
+        # --- LOGIC TO CENTER WORKFLOW CANVAS ---
+        
+        # 1. Check if the workflow canvas exists and is the visible tab
+        if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+            workflow_tab_widget = self.workflow_scroll_area.parentWidget()
+            
+            # 2. Only scroll if the user is actually watching the workflow tab
+            if self.main_tab_widget.currentWidget() == workflow_tab_widget:
+                
+                # 3. Find the corresponding node in the canvas's node list
+                target_node_rect: Optional[QRect] = None
+                for rect, _, _, node_step_data in self.workflow_canvas.nodes:
+                    # Compare using the data dictionary itself (fast identity check)
+                    if node_step_data is step_data_dict: 
+                        target_node_rect = rect
+                        break
+                
+                # 4. If found, calculate and set the scroll position
+                if target_node_rect:
+                    try:
+                        # Get the center of the node
+                        node_center = target_node_rect.center()
+                        
+                        # Get the visible size of the scroll area
+                        viewport_size = self.workflow_scroll_area.viewport().size()
+                        
+                        # Calculate the new top-left scroll value to center the node
+                        target_x = node_center.x() - (viewport_size.width() // 2)
+                        target_y = node_center.y() - (viewport_size.height() // 2)
+                        
+                        # Set the scroll bars
+                        self.workflow_scroll_area.horizontalScrollBar().setValue(target_x)
+                        self.workflow_scroll_area.verticalScrollBar().setValue(target_y)
+                        
+                    except Exception as e:
+                        # Log if something goes wrong, but don't crash execution
+                        self._log_to_console(f"Workflow scroll error: {e}")
+        # --- END LOGIC ---
+
 
     def update_execution_tree_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int) -> None:
-        item_widget = self._find_qtreewidget_item(step_data_dict)
-        if item_widget:
-            card = self.execution_tree.itemWidget(item_widget, 0)
-            if card:
-                card.set_status("darkGreen", is_running=False)
-                card.set_result_text(message)
-            self._log_to_console(f"Finished: {card._get_formatted_title()} | {message}")
-            self._update_variables_list_display()
+        """Enhanced method with workflow visualization support."""
+        
+        # --- NEW: Find parent group *before* processing ---
+        parent_group_data = self._find_parent_group_data(original_listbox_row_index)
+        
+        # --- NEW: Check if the *current step* is a group_end ---
+        is_group_end = step_data_dict.get("type") == "group_end"
+        
+        if is_group_end:
+            # This is a group_end step. Find its matching group_start.
+            group_id = step_data_dict.get("group_id")
+            group_start_data = None
+            for step in self.added_steps_data: # Search the whole list
+                if step.get("type") == "group_start" and step.get("group_id") == group_id:
+                    group_start_data = step
+                    break
+            
+            # Set the status of the group_start node
+            if group_start_data and group_start_data.get("execution_status") != "error":
+                self._set_step_execution_status(group_start_data, "completed")
+                # Also set the group_end step itself to completed
+                self._set_step_execution_status(step_data_dict, "completed")
+        
+        elif message == "SKIPPED":
+            # --- Step was SKIPPED ---
+            self._set_step_execution_status(step_data_dict, "normal")
+            if "execution_result" in step_data_dict:
+                 del step_data_dict["execution_result"]
+            
+            # If inside a group, keep the group "running"
+            if parent_group_data and parent_group_data.get("execution_status") != "error":
+                self._set_step_execution_status(parent_group_data, "running")
+            
+        else:
+            # --- Step COMPLETED normally (and is not a group_end) ---
+            self._set_step_execution_status(step_data_dict, "completed")
+            step_data_dict["execution_result"] = message
+            
+            # If inside a group, keep the group "running"
+            if parent_group_data and parent_group_data.get("execution_status") != "error":
+                self._set_step_execution_status(parent_group_data, "running")
+
+        # --- Update the Card for the current step (regardless of type) ---
+        if message == "SKIPPED":
+            item_widget = self._find_qtreewidget_item(step_data_dict)
+            if item_widget:
+                card = self.execution_tree.itemWidget(item_widget, 0)
+                if card:
+                    card.set_status("#D3D3D3", is_running=False)
+                    card.clear_result()
+                self._log_to_console(f"Skipped: {card._get_formatted_title()}")
+        else:
+            item_widget = self._find_qtreewidget_item(step_data_dict)
+            if item_widget:
+                card = self.execution_tree.itemWidget(item_widget, 0)
+                if card:
+                    card.set_status("darkGreen", is_running=False)
+                    card.set_result_text(message)
+                self._log_to_console(f"Finished: {card._get_formatted_title()} | {message}")
+                self._update_variables_list_display()
 
     def update_execution_tree_item_status_error(self, step_data_dict: Dict[str, Any], error_message: str, original_listbox_row_index: int) -> None:
+        """Enhanced method with workflow visualization support."""
+        # Set execution status
+        self._set_step_execution_status(step_data_dict, "error")
+        
+        # --- NEW: Propagate error to parent group ---
+        parent_group_data = self._find_parent_group_data(original_listbox_row_index)
+        if parent_group_data:
+            self._set_step_execution_status(parent_group_data, "error")
+        # --- END NEW ---
+
+        # Update the execution tree card
         item_widget = self._find_qtreewidget_item(step_data_dict)
         if item_widget:
             card = self.execution_tree.itemWidget(item_widget, 0)
             if card:
-                card.set_status("red", is_running=False)
+                card.set_status("", is_running=False, is_error=True)  # Red border, thick
             self._log_to_console(f"ERROR on {card._get_formatted_title()}: {error_message}")
             self._update_variables_list_display()
 
-# --- MODIFY on_execution_finished ---
     def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
-        # --- SET THE FLAG BACK TO FALSE ---
         self.is_bot_running = False
+        self.is_paused = False # ADD THIS
+        self.worker = None # ADD THIS
+
+        # --- RESET BUTTON (Request 2) ---
+        self.execute_all_button.setText("🚀 Execute All")
+        self.execute_all_button.setToolTip("Execute all steps from the beginning")
         # --- END ---
 
         self.progress_bar.setValue(100)
         self.set_ui_enabled_state(True)
         self.last_executed_context = context
-        
-        if self.minimized_for_execution:
-            self._toggle_minimized_view(False)
 
-        if stopped_by_error:
-            QMessageBox.critical(self, "Execution Halted", "Execution stopped due to an error.")
-            self._log_to_console("Execution STOPPED due to an error.")
-        else:
-            # Making this message less intrusive for scheduled tasks
-            if not self.minimized_for_execution:
-                 QMessageBox.information(self, "Execution Complete", "All steps processed.")
-            self._log_to_console("Execution finished successfully.")
-        
-        if next_step_index_to_select != -1 and 0 <= next_step_index_to_select < len(self.added_steps_data):
-            target_item = self._find_qtreewidget_item(self.added_steps_data[next_step_index_to_select])
-            if target_item:
-                self.execution_tree.setCurrentItem(target_item)
-                self.execution_tree.scrollToItem(target_item)
-        
-        # --- REFRESH THE TREE VIEW ---
-        # This ensures schedule status is updated after a run
-        self.load_saved_steps_to_tree()
-        # --- END ---
+# In the MainWindow class, REPLACE the existing update_label_info_from_module method with this one:
 
     def update_label_info_from_module(self, message: str) -> None:
-        if message and not message.startswith("Module Info:") and not message.startswith("Last Module Log:"):
-            image_filepath = os.path.join(self.click_image_dir, f"{message}.txt")
-            if os.path.exists(image_filepath):
-                self.label_info3.setText(message)
-                try:
-                    with open(image_filepath, 'r') as json_file:
-                        img_data = json.load(json_file)
-                        base64_string = next(iter(img_data.values()), None)
-                    if base64_string:
-                        pic_png = self.base64_pgn(base64_string)
-                        qimage = ImageQt(pic_png)
-                        pixmap = self.resize_qimage_and_create_qpixmap(qimage)
-                        self.label_info2.setPixmap(pixmap)
-                    else:
-                        self.label_info1.setText(f"No image data found for '{message}'.")
-                except Exception as e:
-                    self.label_info1.setText(f"Error loading image '{message}': {e}")
-            else:
-                self.label_info1.setText(f"Image file '{message}.txt' not found.")
-        elif message == "":
+        """
+        Updates the info labels, including the image preview.
+        This is the corrected and robust version.
+        """
+        # 1. Handle cases where the preview should be cleared.
+        if not message or message.startswith("Module Info:") or message.startswith("Last Module Log:"):
             self.label_info2.clear()
-        else:
-            self.label_info1.setText(f"Last Module Log: {message}")
-            if not self.module_filter_dropdown.currentText() or self.module_filter_dropdown.currentText() == "-- Show All Modules --":
-                self.label_info2.clear()
             self.label_info2.setText("Image Preview")
+            self.label_info3.setText("Image Name")
+            if message:
+                self.label_info1.setText(message)
+            return
+
+        # 2. If we have a message, it's an image name. Construct the full path.
+        #    THIS IS THE CRITICAL FIX: We need to build the full path to the .txt file.
+        image_name = message
+        image_data_filepath = os.path.join(self.click_image_dir, f"{image_name}.txt")
+
+        # 3. Check if the data file actually exists.
+        if os.path.exists(image_data_filepath):
+            self.label_info3.setText(image_name)
+            try:
+                # 4. Open the .txt file and load the JSON data.
+                with open(image_data_filepath, 'r', encoding='utf-8') as json_file:
+                    img_data = json.load(json_file)
+                    # The image data is the first value in the dictionary
+                    base64_string = next(iter(img_data.values()), None)
+                
+                if base64_string:
+                    # 5. Decode, convert, resize, and display the image.
+                    pic_png = self.base64_pgn(base64_string)
+                    qimage = ImageQt(pic_png)
+                    pixmap = self.resize_qimage_and_create_qpixmap(qimage)
+                    self.label_info2.setPixmap(pixmap)
+                    self.label_info1.setText(f"Previewing: {image_name}")
+                else:
+                    # Handle case where the JSON is valid but has no image data
+                    self.label_info1.setText(f"No image data found in '{image_name}.txt'.")
+                    self.label_info2.setText("No Data")
+                    self.label_info2.clear()
+
+            except (json.JSONDecodeError, Exception) as e:
+                self.label_info1.setText(f"Error loading image '{image_name}': {e}")
+                self.label_info2.setText("Load Error")
+                self.label_info2.clear()
+        else:
+            # Handle case where the file is missing entirely.
+            self.label_info1.setText(f"Image file for '{image_name}' not found.")
+            self.label_info2.setText("Not Found")
+            self.label_info2.clear()
+            self.label_info3.setText("Image Name")
 
     def base64_pgn(self,text):
         return PIL.Image.open(io.BytesIO(base64.b64decode(text)))
@@ -4514,17 +5238,16 @@ class MainWindow(QWidget):
         new_height = int(qimage_input.height() * (percentage / 100))
         return QPixmap.fromImage(qimage_input.scaled(QSize(new_width, new_height), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
-# In the MainWindow class, REPLACE your existing method with this one
-
     def set_ui_enabled_state(self, enabled: bool) -> None:
         widgets_to_toggle = [
-            self.execute_all_button, self.add_loop_button, self.add_conditional_button, 
+            # self.execute_all_button, # <-- REMOVED
+            self.add_loop_button, self.add_conditional_button, 
             self.save_steps_button, self.clear_selected_button, self.remove_all_steps_button,
-            self.module_filter_dropdown, self.module_tree, self.saved_steps_tree, # Corrected line
+            self.module_filter_dropdown, self.module_tree, self.saved_steps_tree,
             self.add_var_button, self.edit_var_button, self.delete_var_button, 
             self.clear_vars_button, self.open_screenshot_tool_button, 
             self.group_steps_button
-        ]
+        ]  # <--- It's right here
         for widget in widgets_to_toggle:
             widget.setEnabled(enabled)
         self.execute_one_step_button.setEnabled(enabled and len(self.execution_tree.selectedItems()) > 0)
@@ -4587,11 +5310,7 @@ class MainWindow(QWidget):
                 self.global_variables[var_name] = None
             self._update_variables_list_display()
 
-# In the MainWindow class, REPLACE your existing save_bot_steps_dialog method with this one
-
     def save_bot_steps_dialog(self) -> None:
-        """Opens a custom dialog to get a name and save the bot steps,
-        sanitizing any non-serializable global variables."""
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
             return
@@ -4614,22 +5333,17 @@ class MainWindow(QWidget):
     
             file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
             try:
-                # --- NEW: Create a sanitized copy of global variables for saving ---
                 variables_to_save = {}
                 for var_name, var_value in self.global_variables.items():
                     try:
-                        # Attempt to serialize the value to see if it's valid
                         json.dumps(var_value)
                         variables_to_save[var_name] = var_value
                     except (TypeError, OverflowError):
-                        # If it fails, the value is a non-serializable object. Set to None.
                         variables_to_save[var_name] = None
-                # --- End of new section ---
     
                 with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
                     writer = csv.writer(csvfile)
                     writer.writerow(["__GLOBAL_VARIABLES__"])
-                    # Use the sanitized dictionary for writing
                     for var_name, var_value in variables_to_save.items():
                         writer.writerow([var_name, json.dumps(var_value)])
                     writer.writerow(["__BOT_STEPS__"])
@@ -4646,65 +5360,51 @@ class MainWindow(QWidget):
                 QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
     
 
-    def load_steps_from_file(self, file_path: str) -> None:
-        self._internal_clear_all_steps()
-        try:
-            section, loaded_variables, loaded_steps = None, {}, []
-            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                reader = csv.reader(csvfile)
-                for row_num, row in enumerate(reader):
-                    if not row:
-                        continue
-                    if row[0] == "__GLOBAL_VARIABLES__":
-                        section = "VARIABLES"
-                        continue
-                    elif row[0] == "__BOT_STEPS__":
-                        section = "STEPS"
-                        next(reader, None)
-                        continue
-                    if section == "VARIABLES":
-                        if len(row) == 2:
-                            loaded_variables[row[0]] = json.loads(row[1])
-                        else:
-                            self._log_to_console(f"Warning: Malformed variable row {row_num+1} in {file_path}")
-                    elif section == "STEPS":
-                        if len(row) == 2:
-                            step_data_json = json.loads(row[1])
-                            if step_data_json.get("type") == "group_start":
-                                try:
-                                    self.group_id_counter = max(self.group_id_counter, int(step_data_json.get("group_id", "group_0").split('_')[-1]))
-                                except (ValueError, IndexError):
-                                    pass
-                            elif step_data_json.get("type") == "loop_start":
-                                try:
-                                    self.loop_id_counter = max(self.loop_id_counter, int(step_data_json.get("loop_id", "loop_0").split('_')[-1]))
-                                except (ValueError, IndexError):
-                                    pass
-                            elif step_data_json.get("type") == "IF_START":
-                                try:
-                                    self.if_id_counter = max(self.if_id_counter, int(step_data_json.get("if_id", "if_0").split('_')[-1]))
-                                except (ValueError, IndexError):
-                                    pass
-                            loaded_steps.append(step_data_json)
-                        else:
-                            self._log_to_console(f"Warning: Malformed step row {row_num+1} in {file_path}")
-            self.global_variables = loaded_variables
-            self._update_variables_list_display()
-            if not loaded_steps and not loaded_variables:
-                QMessageBox.warning(self, "Load Warning", "No valid steps or variables were found in the file.")
-                return
-            self.added_steps_data = loaded_steps
-            self._rebuild_execution_tree()
-            QMessageBox.information(self, "Load Successful", f"{len(loaded_steps)} steps and {len(loaded_variables)} variables loaded.")
-        except FileNotFoundError:
-            QMessageBox.critical(self, "Load Error", f"The file was not found:\n{file_path}")
-        except json.JSONDecodeError as e:
-            QMessageBox.critical(self, "Load Error", f"The file is corrupted or not a valid step file.\nError parsing data: {e}")
-        except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
-            self._log_to_console(f"Load Error: {e}")
-    # REPLACE your old show_method_context_menu with this one
-    # In the MainWindow class, REPLACE your old show_context_menu with this one
+    def load_steps_from_file(self, file_path: str, bot_name: str = "") -> None:
+            self._internal_clear_all_steps()
+            try:
+                section = None
+                loaded_variables, loaded_steps = {}, []
+                with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                    reader = csv.reader(csvfile)
+                    for row_num, row in enumerate(reader):
+                        if not row: continue
+                        
+                        header = row[0]
+                        if header == "__SCHEDULE_INFO__":
+                            section = "SCHEDULE"
+                            continue
+                        elif header == "__GLOBAL_VARIABLES__":
+                            section = "VARIABLES"
+                            continue
+                        elif header == "__BOT_STEPS__":
+                            section = "STEPS"
+                            next(reader, None)
+                            continue
+                        
+                        if section == "SCHEDULE":
+                            pass
+                        elif section == "VARIABLES":
+                            if len(row) == 2:
+                                loaded_variables[row[0]] = json.loads(row[1])
+                        elif section == "STEPS":
+                            if len(row) == 2:
+                                loaded_steps.append(json.loads(row[1]))
+    
+                self.global_variables = loaded_variables
+                self._update_variables_list_display()
+                self.added_steps_data = loaded_steps
+                self._rebuild_execution_tree()
+                
+                if bot_name:
+                    self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
+    
+                self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
+    
+            except Exception as e:
+                QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
+                self._log_to_console(f"Load Error: {e}")
+                
     def show_context_menu(self, position: QPoint):
         item = self.module_tree.itemAt(position)
         if not item:
@@ -4718,12 +5418,9 @@ class MainWindow(QWidget):
             item.parent() is None
         )
 
-        # This `if` block handles right-clicks on the main module names.
-        # By having it simply 'pass', no context menu is created for them.
         if is_top_level and item.text(0) != "Bot Templates":
             pass
 
-        # This handles right-clicks on the methods within a module.
         elif isinstance(item_data, tuple) and len(item_data) == 5:
             _, class_name, method_name, module_name, _ = item_data
             read_doc_action = context_menu.addAction("Read Documentation")
@@ -4737,7 +5434,6 @@ class MainWindow(QWidget):
             elif action == delete_action:
                 self.delete_method(module_name, class_name, method_name)
 
-        # This handles right-clicks on the bot templates.
         elif isinstance(item_data, dict) and item_data.get('type') == 'template':
             template_name = item_data.get('name')
             if not template_name:
@@ -4762,7 +5458,7 @@ class MainWindow(QWidget):
 
     def view_template_documentation(self, template_name: str):
         """Finds and displays the HTML documentation for a given template."""
-        os.makedirs(self.template_document_directory, exist_ok=True) # Ensure folder exists
+        os.makedirs(self.template_document_directory, exist_ok=True)
     
         doc_path = os.path.join(self.template_document_directory, f"{template_name}.html")
     
@@ -4772,8 +5468,6 @@ class MainWindow(QWidget):
         else:
             QMessageBox.information(self, "Documentation Not Found",
                                       f"No documentation file found at:\n{doc_path}")
-
-    # Add this new method to the MainWindow class
     
     def delete_template(self, template_name: str):
         """Deletes a template file after user confirmation."""
@@ -4788,13 +5482,12 @@ class MainWindow(QWidget):
                 if os.path.exists(template_path):
                     os.remove(template_path)
                     QMessageBox.information(self, "Success", f"Template '{template_name}' has been deleted.")
-                    # Refresh the module tree to reflect the deletion
                     self.load_all_modules_to_tree()
                 else:
                     QMessageBox.warning(self, "File Not Found", f"The template file for '{template_name}' could not be found.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"An error occurred while deleting the template:\n{e}")
-    # Add this method to the MainWindow class
+
     def read_method_documentation(self, module_name: str, class_name: str, method_name: str):
         try:
             if self.module_directory not in sys.path:
@@ -4813,42 +5506,21 @@ class MainWindow(QWidget):
             if self.module_directory in sys.path:
                 sys.path.remove(self.module_directory)
 
-    # Add this method to the MainWindow class
-    # In MainWindow class, REPLACE the old modify_method with this:
     def modify_method(self, module_name: str, class_name: str, method_name: str):
         try:
-            # We need the full path to the module file
             module_path = os.path.join(self.module_directory, f"{module_name}.py")
             if not os.path.exists(module_path):
                 QMessageBox.critical(self, "File Not Found", f"The source file for module '{module_name}' could not be found.")
                 return
     
-            # Create and show the editor dialog
             editor_dialog = CodeEditorDialog(module_path, class_name, method_name, self.all_parsed_method_data, self)
             editor_dialog.exec()
             
-            # After saving, reload the modules to reflect any changes
             self.load_all_modules_to_tree()
     
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not open the code editor: {e}")
-
-    def load_saved_steps_to_tree(self) -> None:
-        """Loads saved bot step files into the QTreeWidget."""
-        self.saved_steps_tree.clear()
-        try:
-            os.makedirs(self.bot_steps_directory, exist_ok=True)
-            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
-            for file_name in step_files:
-                bot_name = os.path.splitext(file_name)[0]
-                # Create a tree item with placeholder text for the new columns
-                tree_item = QTreeWidgetItem(self.saved_steps_tree, [bot_name, "Not Set", "Idle"])
-            if not step_files:
-                self.saved_steps_tree.addTopLevelItem(QTreeWidgetItem(["No saved bots found."]))
-        except Exception as e:
-            QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
-
-# --- MODIFY check_schedules ---
+    
     def check_schedules(self):
         """Timer-triggered function to check for and run scheduled bots."""
         # --- ADD THIS CHECK AT THE BEGINNING ---
@@ -4880,7 +5552,7 @@ class MainWindow(QWidget):
                     self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
                     
                     self.load_steps_from_file(file_path)
-                    self.execute_all_steps() # This will now set the is_bot_running flag
+                    self._handle_execute_pause_resume() # This will now set the is_bot_running flag
 
                     # The rest of the logic for rescheduling remains the same...
                     repeat_mode = schedule_data.get("repeat")
@@ -4903,147 +5575,6 @@ class MainWindow(QWidget):
                         self._write_schedule_to_csv(file_path, schedule_data)
                         self._log_to_console(f"Disabled non-repeating schedule for '{bot_name}'.")
 
-
-    def schedule_bot(self, bot_name: str):
-        """Opens the scheduling dialog and saves the result to the bot's CSV file."""
-        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
-        if not os.path.exists(file_path):
-            QMessageBox.warning(self, "File Not Found", f"The bot file '{bot_name}.csv' could not be found to save the schedule.")
-            return
-
-        schedule_data = self._read_schedule_from_csv(file_path)
-        dialog = ScheduleTaskDialog(bot_name, schedule_data, self)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_schedule_data = dialog.get_schedule_data()
-            if self._write_schedule_to_csv(file_path, new_schedule_data):
-                self._log_to_console(f"Schedule for '{bot_name}' has been updated.")
-                self.load_saved_steps_to_tree() # Refresh the view
-            else:
-                QMessageBox.critical(self, "Error", f"Failed to save schedule for '{bot_name}'.")
-
-    # --- REPLACE load_saved_steps_to_tree ---
-    def load_saved_steps_to_tree(self) -> None:
-        """Loads saved bot step files and their schedules into the QTreeWidget."""
-        self.saved_steps_tree.clear()
-        try:
-            os.makedirs(self.bot_steps_directory, exist_ok=True)
-            step_files = sorted([f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")], reverse=True)
-            for file_name in step_files:
-                bot_name = os.path.splitext(file_name)[0]
-                file_path = os.path.join(self.bot_steps_directory, file_name)
-                schedule_info = self._read_schedule_from_csv(file_path)
-
-                schedule_str = "Not Set"
-                status_str = "Idle"
-                if schedule_info:
-                    start_datetime_obj = QDateTime.fromString(schedule_info.get('start_datetime'), Qt.DateFormat.ISODate)
-                    schedule_str = f"{schedule_info.get('repeat', 'Once')} at {start_datetime_obj.toString('yyyy-MM-dd hh:mm')}"
-                    status_str = "Scheduled" if schedule_info.get("enabled") else "Disabled"
-
-                tree_item = QTreeWidgetItem(self.saved_steps_tree, [bot_name, schedule_str, status_str])
-            if not step_files:
-                self.saved_steps_tree.addTopLevelItem(QTreeWidgetItem(["No saved bots found."]))
-        except Exception as e:
-            QMessageBox.critical(self, "Error Loading Saved Bots", f"Could not load bot files: {e}")
-
-    # --- REPLACE load_steps_from_file ---
-    def load_steps_from_file(self, file_path: str, bot_name: str = "") -> None:
-            self._internal_clear_all_steps()
-            try:
-                section = None
-                loaded_variables, loaded_steps = {}, []
-                with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                    reader = csv.reader(csvfile)
-                    for row_num, row in enumerate(reader):
-                        if not row: continue
-                        
-                        header = row[0]
-                        if header == "__SCHEDULE_INFO__":
-                            section = "SCHEDULE"
-                            continue
-                        elif header == "__GLOBAL_VARIABLES__":
-                            section = "VARIABLES"
-                            continue
-                        elif header == "__BOT_STEPS__":
-                            section = "STEPS"
-                            next(reader, None)  # Skip the "StepType,DataJSON" header row
-                            continue
-                        
-                        if section == "SCHEDULE":
-                            # Schedule is handled separately, so we just skip these rows here
-                            pass
-                        elif section == "VARIABLES":
-                            if len(row) == 2:
-                                loaded_variables[row[0]] = json.loads(row[1])
-                        elif section == "STEPS":
-                            if len(row) == 2:
-                                loaded_steps.append(json.loads(row[1]))
-    
-                self.global_variables = loaded_variables
-                self._update_variables_list_display()
-                self.added_steps_data = loaded_steps
-                self._rebuild_execution_tree()
-                
-                # UPDATE the label using the passed bot_name
-                if bot_name:
-                    self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
-    
-                self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
-    
-            except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
-                self._log_to_console(f"Load Error: {e}")
-
-
-    # --- REPLACE save_bot_steps_dialog ---
-    def save_bot_steps_dialog(self) -> None:
-        if not self.added_steps_data and not self.global_variables:
-            QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
-            return
-        
-        os.makedirs(self.bot_steps_directory, exist_ok=True)
-        existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
-        
-        dialog = SaveBotDialog(existing_bots, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            bot_name = dialog.get_bot_name()
-            if not bot_name: return
-    
-            file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
-            
-            # Preserve existing schedule if overwriting
-            existing_schedule = self._read_schedule_from_csv(file_path) if os.path.exists(file_path) else None
-
-            try:
-                variables_to_save = {k: v for k, v in self.global_variables.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
-
-                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    
-                    # Write schedule first
-                    if existing_schedule:
-                        writer.writerow(["__SCHEDULE_INFO__"])
-                        writer.writerow([json.dumps(existing_schedule)])
-
-                    # Write variables
-                    writer.writerow(["__GLOBAL_VARIABLES__"])
-                    for var_name, var_value in variables_to_save.items():
-                        writer.writerow([var_name, json.dumps(var_value)])
-                    
-                    # Write steps
-                    writer.writerow(["__BOT_STEPS__"])
-                    writer.writerow(["StepType", "DataJSON"])
-                    for step_data_dict in self.added_steps_data:
-                        writer.writerow([step_data_dict["type"], json.dumps(step_data_dict)])
-                
-                QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{file_path}")
-                self.load_saved_steps_to_tree()
-            except Exception as e:
-                QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
-
-
-    # --- HELPER METHODS for CSV schedule handling ---
     def _read_schedule_from_csv(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Reads only the schedule info from a bot's CSV file."""
         if not os.path.exists(file_path):
@@ -5053,7 +5584,6 @@ class MainWindow(QWidget):
                 reader = csv.reader(csvfile)
                 for row in reader:
                     if row and row[0] == "__SCHEDULE_INFO__":
-                        # The next row should contain the JSON data
                         schedule_row = next(reader, None)
                         if schedule_row:
                             return json.loads(schedule_row[0])
@@ -5066,186 +5596,35 @@ class MainWindow(QWidget):
         lines = []
         schedule_written = False
         try:
-            # Read all existing content
             if os.path.exists(file_path):
                 with open(file_path, 'r', newline='', encoding='utf-8') as f:
                     lines = list(csv.reader(f))
 
-            # Find and replace schedule, or add it if not present
             with open(file_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 
-                # Check if schedule section already exists
                 try:
                     schedule_header_index = [i for i, row in enumerate(lines) if row and row[0] == "__SCHEDULE_INFO__"][0]
                     lines[schedule_header_index + 1] = [json.dumps(schedule_data)]
                     schedule_written = True
                 except IndexError:
-                    # Header not found, so we'll add it at the top
                     pass
                 
                 if schedule_written:
                     writer.writerows(lines)
                 else:
-                    # Write new schedule at the top
                     writer.writerow(["__SCHEDULE_INFO__"])
                     writer.writerow([json.dumps(schedule_data)])
-                    # Write the rest of the original content
                     writer.writerows(lines)
             return True
         except Exception as e:
             self._log_to_console(f"Error writing schedule to {file_path}: {e}")
             return False
-# At the VERY END of main_app.py
-# In main_app.py, inside the MainWindow class, add this new method:
-
-    def update_module_via_github(self, module_name: str):
-        """
-        Downloads the latest version of a module from GitHub and overwrites the local file.
-        Assumes the module is in the 'Bot_module' directory and the repository is 
-        'tuanhungstar/automateclick' on the 'main' branch for the raw file.
-        """
-        repo_owner = "tuanhungstar"
-        repo_name = "automateclick"
-        git_branch = "main" # Assuming 'main' is the branch for updates
-        
-        filename = f"{module_name}.py"
-        remote_path = f"Bot_module/{filename}"
-        
-        github_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{git_branch}/{remote_path}"
-        local_path = os.path.join(self.module_directory, filename)
-        
-        self._log_to_console(f"Attempting to update {filename} from Github at {github_url}")
-
-        try:
-            # 1. Fetch the file content
-            with urllib.request.urlopen(github_url) as response:
-                if response.getcode() != 200:
-                    raise Exception(f"Failed to fetch. HTTP Status: {response.getcode()}")
-                
-                content = response.read().decode('utf-8')
-
-            # 2. Overwrite the local file
-            with open(local_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-
-            # 3. Reload modules to reflect changes
-            self.load_all_modules_to_tree()
             
-            # 4. Success message
-            QMessageBox.information(self, "Update Successful", 
-                                    f"Successfully updated '{filename}' from Github and saved to Bot_module folder.")
-            self._log_to_console(f"Successfully updated {filename} from Github.")
-            
-        except urllib.error.HTTPError as e:
-            QMessageBox.critical(self, "Update Failed (HTTP)", 
-                                 f"Failed to download module: HTTP Error {e.code}. Please check the module name or GitHub URL.")
-            self._log_to_console(f"Update failed for {filename}: HTTP Error {e.code}")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Update Failed", 
-                                 f"An unexpected error occurred during update: {e}")
-            self._log_to_console(f"Update failed for {filename}: {e}")
-# In main_app.py, inside the MainWindow class, add this new method:
+    def _log_to_console(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_console.append(f"[{timestamp}] {message}")
 
-    # In main_app.py, inside the MainWindow class, replace the method:
-# In main_app.py, inside the MainWindow class, add this new method:
-
-    def _fetch_and_overwrite_file(self, remote_path: str, local_path: str, opener) -> bool:
-        """Helper to fetch a single file from GitHub and overwrite it locally."""
-        repo_owner = "tuanhungstar"
-        repo_name = "automateclick"
-        git_branch = "main"
-        
-        github_url = f"https://raw.githubusercontent.com/{repo_owner}/{repo_name}/{git_branch}/{remote_path}"
-        filename = os.path.basename(local_path)
-        
-        try:
-            self._log_to_console(f"Fetching {filename} from {github_url}")
-            
-            # 1. Fetch the file content
-            with opener.open(github_url) as response:
-                if response.getcode() != 200:
-                    raise Exception(f"Failed to fetch. HTTP Status: {response.getcode()}")
-                
-                content = response.read().decode('utf-8')
-
-            # 2. Ensure the local directory exists (e.g., creates 'my_lib' if missing)
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            
-            # 3. Overwrite the local file
-            with open(local_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-                
-            self._log_to_console(f"Successfully updated {filename}.")
-            return True
-            
-        except urllib.error.HTTPError as e:
-            self._log_to_console(f"Update failed for {filename}: HTTP Error {e.code}")
-            QMessageBox.critical(self, "Update Failed (HTTP)", 
-                                 f"Failed to download {filename}: HTTP Error {e.code}. Check the file name or GitHub path.")
-            return False
-            
-        except Exception as e:
-            self._log_to_console(f"Update failed for {filename}: {e}")
-            QMessageBox.critical(self, "Update Failed", 
-                                 f"An unexpected error occurred during {filename} update: {e}")
-            return False
-    def update_main_app_from_github(self):
-        """
-        Downloads the latest versions of main_app.py and my_lib/BOT_take_image.py 
-        from GitHub and overwrites the local files.
-        """
-        
-        # --- Proxy Handling Setup ---
-        proxy_url = getattr(self, 'proxy_url', None) 
-        opener = urllib.request.build_opener()
-        
-        if proxy_url:
-            self._log_to_console(f"Configuring proxy: {proxy_url}")
-            proxy_handler = urllib.request.ProxyHandler({
-                'http': proxy_url,
-                'https': proxy_url
-            })
-            opener = urllib.request.build_opener(proxy_handler)
-            # Install opener temporarily for all urllib calls
-            urllib.request.install_opener(opener) 
-        # --- End Proxy Handling Setup ---
-
-        # Define files to update: (Remote Path, Local Path)
-        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        files_to_update = [
-            ("main_app.py", os.path.abspath(sys.argv[0])),
-            ("my_lib/BOT_take_image.py", os.path.join(base_dir, 'my_lib', 'BOT_take_image.py'))
-        ]
-        
-        all_successful = True
-        updated_files = []
-        
-        self._log_to_console("Starting application file update from Github...")
-        
-        try:
-            for remote_path, local_path in files_to_update:
-                if self._fetch_and_overwrite_file(remote_path, local_path, opener):
-                    updated_files.append(os.path.basename(local_path))
-                else:
-                    all_successful = False
-                    # We continue attempting other files even if one fails
-        finally:
-            # CRITICAL: Uninstall the proxy opener if it was installed
-            if proxy_url:
-                urllib.request.install_opener(urllib.request.build_opener())
-
-        # --- Final Status Message ---
-        if all_successful:
-            QMessageBox.information(self, "App Update Successful", 
-                                    f"Successfully updated: {', '.join(updated_files)}. Please **restart the application** immediately for changes to take effect.")
-        elif updated_files:
-             QMessageBox.warning(self, "Partial App Update", 
-                                    f"Partially successful update. Updated: {', '.join(updated_files)}. Check the console for errors on failed files. Restart recommended.")
-        else:
-            QMessageBox.critical(self, "App Update Failed", 
-                                    "All file updates failed. Check your network connection, proxy settings, and GitHub repository access.")
     def update_application(self):
         github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
@@ -5302,25 +5681,18 @@ class MainWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
 
-# In main_app.py, inside the MainWindow class (e.g., after the load_steps_from_file method)
-
-    # In main_app.py, inside the MainWindow class
-# REPLACE show_workflow_dialog with this new method:
-
     def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
         """Builds/Refreshes the workflow canvas. Optionally switches to its tab."""
         
-        # Clear the old canvas
         old_canvas = self.workflow_scroll_area.takeWidget()
         if old_canvas:
             old_canvas.deleteLater()
 
         if not self.added_steps_data:
-            # Create an empty canvas
             self.workflow_canvas = WorkflowCanvas([], self)
             self.workflow_scroll_area.setWidget(self.workflow_canvas)
             if switch_to_tab:
-                self.main_right_tab_widget.setCurrentWidget(self.workflow_view_widget)
+                self.main_tab_widget.setCurrentWidget(self.workflow_scroll_area.parentWidget())
             return
 
         try:
@@ -5330,35 +5702,22 @@ class MainWindow(QWidget):
                     QMessageBox.warning(self, "Error", "Could not parse the workflow structure.")
                 return
             
-            # Create a new canvas with the current workflow
             self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
             
-            # Set the new canvas as the widget for the scroll area
             self.workflow_scroll_area.setWidget(self.workflow_canvas)
             
             if switch_to_tab:
-                self.main_right_tab_widget.setCurrentWidget(self.workflow_view_widget)
+                self.main_tab_widget.setCurrentWidget(self.workflow_scroll_area.parentWidget())
             
         except Exception as e:
             if switch_to_tab:
                 QMessageBox.critical(self, "Workflow Error", f"An error occurred while building the workflow: {e}")
             self._log_to_console(f"Workflow build error: {e}")
 
-    # In main_app.py, inside the MainWindow class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the MainWindow class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the MainWindow class
-# REPLACE this entire method:
-
-    # In main_app.py, inside the MainWindow class
-    # REPLACE this entire method:
     def _build_workflow_tree_data(self) -> List[Dict[str, Any]]:
         """
         Parses the flat self.added_steps_data into a nested tree structure
-        that supports IF/ELSE and LOOP/END branching.
+        that supports IF/ELSE and LOOP/END branching. [CORRECTED VERSION]
         """
         def parse_block_recursive(flat_steps: List[Dict[str, Any]], index: int) -> Tuple[List[Dict[str, Any]], int]:
             nodes = []
@@ -5366,60 +5725,304 @@ class MainWindow(QWidget):
             while i < len(flat_steps):
                 step_data = flat_steps[i]
                 step_type = step_data.get("type")
-                
-                # Check for end-of-block markers
+
+                # --- Exit Condition: Stop parsing when we hit an end or else tag ---
                 if step_type in ["group_end", "loop_end", "IF_END", "ELSE"]:
-                    return nodes, i # Return children and the index of the unconsumed end tag
+                    return nodes, i
 
                 new_node = {'step_data': step_data, 'children': []}
-                i += 1 # Consume the current (non-end) step
-                
+                i += 1 # Move to the next step
+
+                # --- Recursive Parsing for Block Types ---
                 if step_type == "group_start":
-                    # --- Group logic (single container) ---
+                    # Parse children until a 'group_end' is found
                     children, end_index = parse_block_recursive(flat_steps, i)
                     new_node['children'] = children
                     i = end_index
-                    
+
+                    # Consume the 'group_end' tag
                     if i < len(flat_steps) and flat_steps[i].get("type") == "group_end":
-                        # Consume the end tag, but DO NOT create a node for it.
-                        i += 1 
-                    
-                    # Add only the group_start node, which now contains all children
-                    nodes.append(new_node) 
-                    continue # Skip the default nodes.append() at the end
-                        
+                        i += 1 # Move past the 'group_end' tag
+                    nodes.append(new_node)
+                    continue
+
                 elif step_type == "IF_START" or step_type == "loop_start":
-                    # --- Shared logic for IF and LOOP ---
+                    # Parse the main ("true") branch
                     children, next_index = parse_block_recursive(flat_steps, i)
                     new_node['children'] = children
                     i = next_index
-                    
-                    # Handle ELSE block (only for IF)
+
+                    # --- Correctly Handle IF-ELSE structure ---
                     if step_type == "IF_START" and i < len(flat_steps) and flat_steps[i].get("type") == "ELSE":
-                        else_node = {'step_data': flat_steps[i], 'children': []}
-                        i += 1 # Consume ELSE
-                        
+                        # The 'ELSE' is NOT a child. We record its steps in 'false_children'.
+                        new_node['false_children'] = []
+                        i += 1 # Consume the 'ELSE' tag
+
+                        # Parse the 'else' branch until an 'IF_END' is found
                         false_children, end_index = parse_block_recursive(flat_steps, i)
-                        else_node['children'] = false_children 
-                        new_node['false_children'] = [else_node] 
+                        # We store the actual steps, not the ELSE tag itself
+                        new_node['false_children'] = false_children
                         i = end_index
-                        
-                    # Find the matching END node
+
+                    # --- Find and attach the End Node ---
                     end_tag = "IF_END" if step_type == "IF_START" else "loop_end"
                     if i < len(flat_steps) and flat_steps[i].get("type") == end_tag:
-                        new_node['end_node'] = {'step_data': flat_steps[i], 'children': []}
-                        i += 1 # Consume end_tag
-                
+                        # Attach the end node data to the start node
+                        new_node['end_node'] = {'step_data': flat_steps[i]}
+                        i += 1 # Consume the 'end_tag'
+
+                # --- Add the fully constructed node (step, if, loop, or group) ---
                 nodes.append(new_node)
-            
+
             return nodes, i
 
+        # Start the parsing from the beginning of the flat list
         root_nodes, _ = parse_block_recursive(self.added_steps_data, 0)
         return root_nodes
 
-# ... (The rest of your MainWindow class and the main execution block)
+    def _get_image_filenames(self) -> List[str]:
+            """Gets a sorted list of image names, including relative paths from subfolders."""
+            relative_paths: List[str] = []
+            if not os.path.exists(self.click_image_dir):
+                return []
+                
+            for root, _, files in os.walk(self.click_image_dir):
+                for filename in files:
+                    if filename.lower().endswith(".txt"):
+                        full_path = os.path.join(root, filename)
+                        # Get the path relative to click_image_dir
+                        relative_path = os.path.relpath(full_path, self.click_image_dir)
+                        
+                        # If the file is in the root, relpath is "filename.txt"
+                        # If in subfolder, it's "Subfolder/filename.txt"
+                        
+                        # Remove the .txt extension
+                        relative_path_no_ext = os.path.splitext(relative_path)[0]
+                        
+                        # Standardize on '/' for path separators
+                        relative_paths.append(relative_path_no_ext.replace(os.sep, '/'))
+                            
+            return sorted(relative_paths)
+        
+    def _set_step_execution_status(self, step_data: Dict[str, Any], status: str):
+            """Sets the execution status for a step in both tree and workflow views."""
+            
+            if status == "normal":
+                if "execution_status" in step_data:
+                    del step_data["execution_status"]
+            else:
+                step_data["execution_status"] = status
+            
+            # Update the workflow canvas if it exists
+            if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+                self.workflow_canvas.update()
+    
+    def _clear_all_execution_status(self):
+        """Clears execution status from all steps."""
+        for step_data in self.added_steps_data:
+            if "execution_status" in step_data:
+                del step_data["execution_status"]
+            if "execution_result" in step_data:  # ADD THIS LINE
+                del step_data["execution_result"]  # ADD THIS LINE
+        
+        # Update the workflow canvas
+        if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+            self.workflow_canvas.update()
+            
+    def _reset_loop_steps_status(self, loop_id: str):
+        """Resets the execution status of all steps within a specific loop."""
+        if not loop_id:
+            return
+            
+        # Find the loop boundaries
+        loop_start_index = -1
+        loop_end_index = -1
+        
+        for i, step_data in enumerate(self.added_steps_data):
+            if (step_data.get("type") == "loop_start" and 
+                step_data.get("loop_id") == loop_id):
+                loop_start_index = i
+            elif (step_data.get("type") == "loop_end" and 
+                  step_data.get("loop_id") == loop_id and 
+                  loop_start_index != -1):
+                loop_end_index = i
+                break
+        
+        if loop_start_index == -1 or loop_end_index == -1:
+            return
+            
+        # Reset status for all steps within the loop (excluding the loop_start and loop_end)
+        for i in range(loop_start_index + 1, loop_end_index):
+            step_data = self.added_steps_data[i]
+            if "execution_status" in step_data:
+                del step_data["execution_status"]
+            
+            # Also reset the visual status in the execution tree
+            item_widget = self._find_qtreewidget_item(step_data)
+            if item_widget:
+                card = self.execution_tree.itemWidget(item_widget, 0)
+                if card:
+                    card.set_status("#D3D3D3")  # Normal gray border
+                    card.clear_result()
+        
+        # Update the workflow canvas to reflect the changes
+        if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+            self.workflow_canvas.update()
+            
+        self._log_to_console(f"🔄 Loop '{loop_id}' iteration started - Reset status of {loop_end_index - loop_start_index - 1} steps within the loop")
+
+    def _reset_nested_loop_steps_status(self, loop_id: str):
+        """Resets execution status for steps in a loop, handling nested structures properly."""
+        if not loop_id:
+            return
+            
+        # Find all steps that belong to this loop (including nested structures)
+        loop_steps = []
+        current_loop_level = 0
+        inside_target_loop = False
+        
+        for i, step_data in enumerate(self.added_steps_data):
+            step_type = step_data.get("type")
+            step_loop_id = step_data.get("loop_id")
+            step_if_id = step_data.get("if_id")
+            step_group_id = step_data.get("group_id")
+            
+            # Check if we're entering our target loop
+            if step_type == "loop_start" and step_loop_id == loop_id:
+                inside_target_loop = True
+                current_loop_level = 0
+                continue
+                
+            # Check if we're exiting our target loop
+            if step_type == "loop_end" and step_loop_id == loop_id and inside_target_loop:
+                break
+                
+            # If we're inside the target loop, track nesting and collect steps
+            if inside_target_loop:
+                # Track nesting level for other structures
+                if step_type in ["loop_start", "IF_START", "group_start"]:
+                    current_loop_level += 1
+                elif step_type in ["loop_end", "IF_END", "group_end"]:
+                    current_loop_level -= 1
+                
+                # Add this step to our reset list
+                loop_steps.append((i, step_data))
+        
+        # Reset status for all collected steps
+        reset_count = 0
+        for step_index, step_data in loop_steps:
+            if "execution_status" in step_data:
+                del step_data["execution_status"]
+                reset_count += 1
+            if "execution_result" in step_data:  # ADD THIS LINE
+                del step_data["execution_result"]  # ADD THIS LINE
+            # Also reset the visual status in the execution tree
+            item_widget = self._find_qtreewidget_item(step_data)
+            if item_widget:
+                card = self.execution_tree.itemWidget(item_widget, 0)
+                if card:
+                    card.set_status("#D3D3D3")  # Normal gray border
+                    card.clear_result()
+        
+        # Update the workflow canvas to reflect the changes
+        if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+            self.workflow_canvas.update()
+            
+        if reset_count > 0:
+            self._log_to_console(f"🔄 Loop '{loop_id}' new iteration - Reset status of {reset_count} steps within the loop")
+            
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # Apply a modern stylesheet
+    app.setStyleSheet("""
+        QMainWindow, QDialog {
+            background-color: #f8f9fa;
+        }
+        QTabWidget::pane {
+            border-top: 1px solid #dee2e6;
+        }
+        QTabBar::tab {
+            background: #e9ecef;
+            border: 1px solid #dee2e6;
+            border-bottom-color: #dee2e6;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            min-width: 8ex;
+            padding: 8px 12px;
+            margin-right: 2px;
+            font-size: 13px;
+        }
+        QTabBar::tab:selected, QTabBar::tab:hover {
+            background: #ffffff;
+        }
+        QTabBar::tab:selected {
+            border-color: #dee2e6;
+            border-bottom-color: #ffffff;
+        }
+        QSplitter::handle {
+            background: #ced4da;
+        }
+        QSplitter::handle:horizontal {
+            width: 3px;
+        }
+        QSplitter::handle:vertical {
+            height: 3px;
+        }
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            margin-top: 1ex;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            padding: 0 3px;
+        }
+        QTreeWidget {
+            border: 1px solid #ced4da;
+            background-color: #ffffff;
+        }
+        QListWidget {
+            border: 1px solid #ced4da;
+            background-color: #ffffff;
+        }
+        QLineEdit, QTextEdit, QComboBox {
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            padding: 5px;
+            background-color: #ffffff;
+        }
+        QPushButton {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        QPushButton:hover {
+            background-color: #0056b3;
+        }
+        QPushButton:pressed {
+            background-color: #004085;
+        }
+        QPushButton:disabled {
+            background-color: #c0c0c0;
+            color: #6c757d;
+        }
+        QLabel#section-header {
+            font-weight: bold;
+            color: #343a40;
+            padding: 4px 0;
+            border-bottom: 1px solid #e0e0e0;
+            margin-bottom: 4px;
+        }
+    """)
+    
     window = MainWindow()
-    window.show() # <-- CHANGE IS HERE
+    window.show()
     sys.exit(app.exec())
