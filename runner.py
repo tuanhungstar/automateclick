@@ -1,7 +1,18 @@
 import sys
+import os
 # Import the main application module
 # This gives you access to the classes defined inside main_app.py
+
+# --- START OF FIX ---
+# Get the absolute path of the directory containing this script.
+# This ensures that Python knows where to look for other files like main_app.py.
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(script_dir)
+# --- END OF FIX ---
+from PyQt6.QtWidgets import QApplication
 import main_app
+
+
 
 # The logic below replicates the original entry point from main_app.py's 
 # 'if __name__ == "__main__":' block.
