@@ -17,6 +17,7 @@ import pyautogui
 from tkinter import Tk, Toplevel, Frame, Canvas, BOTH, YES, NO, TOP, X, Y
 import re # Needed for RPA step parsing if you re-add it, or for file list parsing
 import time # Added this import, as it was used but not imported in Old_utility
+from PyQt6.QtCore import pyqtSlot
 
 # --- GENERATED UI CODE (from standard_gui.ui, MODIFIED to remove tabs) ---
 # Form implementation generated from reading ui file 'standard_gui.ui'
@@ -611,6 +612,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
     # --- END NEW METHODS ---
 
     # --- UI Slot Methods (MODIFIED) ---
+    @pyqtSlot()
     def Start_BOT(self):
         if self.conf_list_cob_img.currentText():
             reply = QMessageBox.question(self, 'Check file', 'Do you want to add to current file?',
@@ -628,7 +630,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
             qimage = ImageQt(pic_png)
             pixmap = QtGui.QPixmap.fromImage(qimage)
             self.click_img.setPixmap(pixmap)
-
+    @pyqtSlot()
     def Save_img(self):
         if len(self.current_pic) <= 50:
             self.show_info_messagebox('No image data to save. Take a screenshot first.')
@@ -732,8 +734,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
 
         except Exception as e:
             self.show_info_messagebox(f"Error saving image: {e}")
-
-
+    @pyqtSlot()
     def delete_img(self):
         selected_item = self.KPI_botcomment_txt.currentItem()
         if not selected_item:
@@ -797,7 +798,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
                     self.show_info_messagebox(f"Error saving updated image file: {e}")
             else:
                 self.show_info_messagebox('Selected image not found in data.')
-
+    @pyqtSlot()
     def conf_list_img(self):
         self.KPI_botcomment_txt.clear()
         current_file_name = self.conf_list_cob_img.currentText() # This is now a relative path
@@ -843,7 +844,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         base_file_name = os.path.basename(current_file_name)
         self.file_name_txt.setText(base_file_name)
 
-
+    @pyqtSlot()
     def KPI_txt(self):
         selected_item = self.KPI_botcomment_txt.currentItem()
         self.label_test_result.setText('')
@@ -863,7 +864,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         else:
             self.click_img.clear()
             self.current_pic = ''
-
+    @pyqtSlot()
     def _test_image_actual(self): # Renamed the actual test logic
         if len(self.current_pic) > 50:
             status = self.text_located(self.current_pic)
@@ -885,7 +886,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         if location is not None:
             pyautogui.moveTo(location.x, location.y)
         return location
-
+    @pyqtSlot()
     def exit_BOT(self):
         # Emit the currently selected relative path
         current_file_path = self.conf_list_cob_img.currentText()
