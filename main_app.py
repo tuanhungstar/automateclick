@@ -17,7 +17,7 @@ from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor, QAction
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF,pyqtSlot
 from PyQt6 import QtWidgets, QtGui, QtCore
 from typing import Optional, List, Dict, Any, Tuple, Union
 # Ensure my_lib is in the Python path
@@ -50,7 +50,7 @@ from my_lib.BOT_take_image import MainWindow as BotTakeImageWindow
 class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer a full window
 
     screenshot_saved = pyqtSignal(str)
-
+    
     def __init__(self, image: str, base_dir: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Take and Manage Screenshots")
@@ -73,11 +73,11 @@ class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer 
         self.setLayout(layout)
 
         self.finished.connect(self._on_dialog_closed)
-
+    
     def _handle_screenshot_saved(self, filename: str):
         """Pass through the signal from the embedded UI."""
         self.screenshot_saved.emit(filename)
-
+    
     def _on_dialog_closed(self, result: int):
         """Handles dialog closure, including via 'X' button."""
 
@@ -86,6 +86,7 @@ class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer 
 
 # --- ExecutionStepCard ---
 class ExecutionStepCard(QWidget):
+    
     edit_requested = pyqtSignal(dict)
     delete_requested = pyqtSignal(dict)
     move_up_requested = pyqtSignal(dict)
@@ -95,7 +96,7 @@ class ExecutionStepCard(QWidget):
     # NEW SIGNALS FOR DRAG AND DROP
     step_drag_started = pyqtSignal(dict, int)
     step_reorder_requested = pyqtSignal(int, int)
-
+    
     def __init__(self, step_data: Dict[str, Any], step_number: int, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.step_data = step_data
@@ -111,7 +112,7 @@ class ExecutionStepCard(QWidget):
         
         # Enable drag and drop
         self.setAcceptDrops(True)
-
+    
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
@@ -231,12 +232,13 @@ class ExecutionStepCard(QWidget):
                 main_layout.addWidget(params_group)
 
     # FIXED DRAG AND DROP METHODS
+    
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             self.drag_start_position = event.pos()
             self.dragging = False
         super().mousePressEvent(event)
-
+    
     def mouseMoveEvent(self, event: QtGui.QMoveEvent):
         if not (event.buttons() & Qt.MouseButton.LeftButton):
             return
@@ -247,7 +249,7 @@ class ExecutionStepCard(QWidget):
                 QApplication.startDragDistance()):
                 self.start_drag()
         super().mouseMoveEvent(event)
-
+    
     def start_drag(self):
         """Start the drag operation with proper Qt drag and drop."""
         self.dragging = True
@@ -284,7 +286,7 @@ class ExecutionStepCard(QWidget):
         # Reset visual feedback
         self.set_status("#dcdcdc")
         self.dragging = False
-
+    
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
         if self.dragging:
             self.dragging = False
@@ -292,6 +294,7 @@ class ExecutionStepCard(QWidget):
         super().mouseReleaseEvent(event)
 
     # Drag and drop event handlers
+    
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
         if event.mimeData().hasText():
             event.acceptProposedAction()
@@ -303,15 +306,15 @@ class ExecutionStepCard(QWidget):
                     border-radius: 6px; 
                 }
             """)
-
+    
     def dragMoveEvent(self, event: QtGui.QDragMoveEvent):
         if event.mimeData().hasText():
             event.acceptProposedAction()
-
+    
     def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent):
         # Reset visual feedback
         self.set_status("#dcdcdc")
-
+    
     def dropEvent(self, event: QtGui.QDropEvent):
         # Reset visual feedback
         self.set_status("#dcdcdc")
@@ -335,6 +338,7 @@ class ExecutionStepCard(QWidget):
             event.acceptProposedAction()
 
     # Keep all existing methods (unchanged)
+    
     def _get_formatted_title(self) -> str:
         step_type = self.step_data.get("type", "Unknown")
         if step_type == "group_start":
@@ -346,7 +350,8 @@ class ExecutionStepCard(QWidget):
             
         step_type_display = step_type.replace("_", " ").title()
         return f"Step {self.step_number}: {step_type_display}"
-
+        
+    
     def _get_formatted_method_name(self) -> str:
         step_type = self.step_data["type"]
         if step_type == "step":
@@ -376,7 +381,7 @@ class ExecutionStepCard(QWidget):
             right_str = f"@{right_op['value']}" if right_op['type'] == 'variable' else repr(right_op['value'])
             return f"{name_display} ({left_str} {op} {right_str})"
         return ""
-
+    
     def set_status(self, border_color: str, is_running: bool = False, is_error: bool = False):
         if is_running:
             border_color = "#FFD700"
@@ -401,7 +406,7 @@ class ExecutionStepCard(QWidget):
                 border-radius: 6px; 
             }}
         """)
-
+    
     def set_result_text(self, result_message: str):
         if not self.method_label:
             return
@@ -435,6 +440,7 @@ class ExecutionStepCard(QWidget):
             self.method_label.setText(self._original_method_text)
             self.method_label.setStyleSheet("font-size: 10pt; padding: 5px; background-color: white; border: 1px solid #E0E0E0; border-radius: 3px;")
 class LoopConfigDialog(QDialog):
+    
     def __init__(self, global_variables: Dict[str, Any], parent: Optional[QWidget] = None, initial_config: Optional[Dict[str, Any]] = None):
         super().__init__(parent)
         self.setWindowTitle("Configure Loop Group")
@@ -475,7 +481,7 @@ class LoopConfigDialog(QDialog):
         self.setLayout(main_layout)
         if initial_config: self.set_config(initial_config)
         else: self._toggle_count_var_input(); self._toggle_assign_iter_input()
-
+    
     def _toggle_count_var_input(self) -> None:
         is_using_var = self.use_var_checkbox.isChecked()
         self.repeat_count_editor.setEnabled(not is_using_var)
@@ -484,7 +490,7 @@ class LoopConfigDialog(QDialog):
         self.global_var_combo_count.setVisible(is_using_var)
         if is_using_var: self.repeat_count_editor.clear()
         else: self.global_var_combo_count.setCurrentIndex(0)
-
+    
     def _toggle_assign_iter_input(self) -> None:
         is_assigning_iter = self.assign_iter_checkbox.isChecked()
         self.global_var_combo_assign_iter.setEnabled(is_assigning_iter)
@@ -493,13 +499,13 @@ class LoopConfigDialog(QDialog):
         self.new_var_iter_editor.setVisible(is_assigning_iter)
         self.global_var_combo_assign_iter.currentIndexChanged.connect(self._update_new_var_iter_editor_state)
         self._update_new_var_iter_editor_state()
-
+    
     def _update_new_var_iter_editor_state(self) -> None:
         is_assigning_iter = self.assign_iter_checkbox.isChecked()
         is_selecting_new = self.global_var_combo_assign_iter.currentIndex() == 0
         self.new_var_iter_editor.setEnabled(is_assigning_iter and is_selecting_new)
         if not (is_assigning_iter and is_selecting_new): self.new_var_iter_editor.clear()
-
+    
     def get_config(self) -> Optional[Dict[str, Any]]:
         loop_name = self.loop_name_editor.text().strip()
         count_config = {}
@@ -524,7 +530,7 @@ class LoopConfigDialog(QDialog):
             else: assign_iter_var_name = self.global_var_combo_assign_iter.currentText()
             if count_config["type"] == "variable" and count_config["value"] == assign_iter_var_name: QMessageBox.warning(self, "Input Error", "The variable for Loop Count cannot be the same as the variable for assigning Current Iteration."); return None
         return {"loop_name": loop_name if loop_name else None, "iteration_count_config": count_config, "assign_iteration_to_variable": assign_iter_var_name}
-
+    
     def set_config(self, config: Dict[str, Any]) -> None:
         self.loop_name_editor.setText(config.get("loop_name", "") or "")
         count_config = config.get("iteration_count_config", {})
@@ -546,6 +552,7 @@ class LoopConfigDialog(QDialog):
         self._toggle_assign_iter_input()
 
 class ConditionalConfigDialog(QDialog):
+    
     def __init__(self, global_variables: Dict[str, Any], parent: Optional[QWidget] = None, initial_config: Optional[Dict[str, Any]] = None):
         super().__init__(parent)
         self.setWindowTitle("Configure Conditional Block (IF-ELSE)")
@@ -576,21 +583,22 @@ class ConditionalConfigDialog(QDialog):
         self.setLayout(main_layout)
         self._toggle_left_operand_input(); self._toggle_right_operand_input()
         if initial_config: self.set_config(initial_config)
-
+    
+    
     def _toggle_left_operand_input(self) -> None:
         is_using_var = (self.left_operand_source_combo.currentIndex() == 1)
         self.left_operand_editor.setVisible(not is_using_var)
         self.left_operand_var_combo.setVisible(is_using_var)
         if not is_using_var: self.left_operand_var_combo.setCurrentIndex(0)
         else: self.left_operand_editor.clear()
-
+    
     def _toggle_right_operand_input(self) -> None:
         is_using_var = (self.right_operand_source_combo.currentIndex() == 1)
         self.right_operand_editor.setVisible(not is_using_var)
         self.right_operand_var_combo.setVisible(is_using_var)
         if not is_using_var: self.right_operand_var_combo.setCurrentIndex(0)
         else: self.right_operand_editor.clear()
-
+    
     def _parse_value_from_string(self, value_str: str) -> Any:
         try:
             if value_str.lower() == 'none': return None
@@ -601,7 +609,7 @@ class ConditionalConfigDialog(QDialog):
             if (value_str.startswith('{') and value_str.endswith('}')) or (value_str.startswith('[') and value_str.endswith(']')): return json.loads(value_str)
             return value_str
         except (ValueError, json.JSONDecodeError): return value_str
-
+    
     def get_config(self) -> Optional[Dict[str, Any]]:
         block_name = self.block_name_editor.text().strip()
         left_op_config: Dict[str, Any] = {}
@@ -624,7 +632,7 @@ class ConditionalConfigDialog(QDialog):
             right_op_config = {"type": "hardcoded", "value": self._parse_value_from_string(value_str)}
         operator = self.operator_combo.currentText()
         return {"block_name": block_name if block_name else None, "condition": {"left_operand": left_op_config, "operator": operator, "right_operand": right_op_config}}
-
+    
     def set_config(self, config: Dict[str, Any]) -> None:
         self.block_name_editor.setText(config.get("block_name", "") or "")
         condition = config.get("condition", {})
@@ -654,6 +662,7 @@ class ConditionalConfigDialog(QDialog):
         self._toggle_left_operand_input(); self._toggle_right_operand_input()
 
 class GlobalVariableDialog(QDialog):
+    
     def __init__(self, variable_name: str = "", variable_value: Any = "", parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Add/Edit Global Variable")
@@ -677,7 +686,7 @@ class GlobalVariableDialog(QDialog):
 
         self.name_input.editingFinished.connect(self._toggle_browse_button)
         self._toggle_browse_button()
-
+    
     def _toggle_browse_button(self):
         """Shows or hides the browse button based on the variable name."""
         name = self.name_input.text()
@@ -685,12 +694,13 @@ class GlobalVariableDialog(QDialog):
             self.browse_button.setVisible("link" in name.lower())
         else:
             self.browse_button.setVisible(False)
-
+    
     def _open_file_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
         if file_path:
             self.value_input.setText(file_path)
-
+            
+    
     def get_variable_data(self) -> Optional[Tuple[str, str]]:
         name = self.name_input.text().strip()
         if not name:
@@ -701,7 +711,7 @@ class GlobalVariableDialog(QDialog):
 class ParameterInputDialog(QDialog):
     request_screenshot = pyqtSignal()
     update_image_filenames = pyqtSignal(list, str)
-
+    
     def __init__(self, method_name: str, parameters_to_configure: Dict[str, Tuple[Any, Any]],
                  current_global_var_names: List[str], image_filenames: List[str],
                  gui_communicator: GuiCommunicator,
@@ -923,14 +933,14 @@ class ParameterInputDialog(QDialog):
         main_layout.addWidget(button_box)
         self.setLayout(main_layout)
         # --- End Assignment Group Box ---
-
+    
     def _open_file_dialog_for_param(self, param_name: str):
         editor = self.param_editors.get(param_name)
         if editor:
             file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
             if file_path:
                 editor.setText(file_path)
-
+    
     def _toggle_param_input_type(self, index: int, hardcoded_editor: QLineEdit, variable_select_combo: QComboBox) -> None:
         is_hardcoded = (index == 0)
         hardcoded_editor.setVisible(is_hardcoded)
@@ -939,6 +949,7 @@ class ParameterInputDialog(QDialog):
             hardcoded_editor.clear()
 
     # --- MODIFICATION: Added folder_selector_combo ---
+    
     def _toggle_file_or_var_input(self, index: int, folder_selector_combo: QComboBox, file_selector_combo: QComboBox, variable_select_combo: QComboBox) -> None:
         is_file_selection = (index == 0)
         folder_selector_combo.setVisible(is_file_selection) # Show/hide folder combo
@@ -950,6 +961,7 @@ class ParameterInputDialog(QDialog):
     # --- END MODIFICATION ---
 
     # --- NEW: Method to filter file list based on folder selection ---
+    
     def _update_file_list_based_on_folder(self, index: int = -1):
         """Filters the file selector combo based on the folder selector combo."""
         folder_combo = self.sender()
@@ -999,7 +1011,7 @@ class ParameterInputDialog(QDialog):
         
         file_combo.blockSignals(False)
     # --- END NEW ---
-
+    
     def _on_file_selection_changed(self, param_name: str, index: int) -> None:
         # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
         if param_name == "image_to_click" and param_name in self.file_selector_combos:
@@ -1015,7 +1027,7 @@ class ParameterInputDialog(QDialog):
                 self.gui_communicator.update_module_info_signal.emit(selected_text)
             else:
                 self.gui_communicator.update_module_info_signal.emit("")
-
+    
     def _refresh_file_selector_combo(self, new_filenames: List[str], saved_filename: str = "") -> None:
         # --- MODIFICATION: This method is now much more complex ---
         # 1. Update master list
@@ -1084,7 +1096,7 @@ class ParameterInputDialog(QDialog):
                 if combo_box.currentIndex() <= 0 and saved_filename == "":
                     self.gui_communicator.update_module_info_signal.emit("")
         # --- END MODIFICATION ---
-
+    
     def _toggle_assignment_widgets(self) -> None:
         is_assign_enabled = self.assign_checkbox.isChecked()
         self.new_var_radio.setVisible(is_assign_enabled)
@@ -1094,7 +1106,7 @@ class ParameterInputDialog(QDialog):
         if not is_assign_enabled:
             self.new_var_input.clear()
             self.existing_var_combo.setCurrentIndex(0)
-
+    
     def get_parameters_config(self) -> Optional[Dict[str, Any]]:
         config_data: Dict[str, Any] = {}
         for param_name, source_combo in self.param_value_source_combos.items():
@@ -1158,7 +1170,7 @@ class ParameterInputDialog(QDialog):
 
         self.parameters_config = config_data
         return config_data
-
+    
     def get_assignment_variable(self) -> Optional[str]:
         if not self.assign_checkbox.isChecked():
             return None
@@ -1183,7 +1195,7 @@ class ExecutionWorker(QThread):
     execution_error = pyqtSignal(dict, str, int)
     execution_finished_all = pyqtSignal(ExecutionContext, bool, int)
     loop_iteration_started = pyqtSignal(str, int)  # loop_id, iteration_number
-
+    
     def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
                  global_variables_ref: Dict[str, Any], parent: Optional[QWidget] = None,
                  single_step_mode: bool = False, selected_start_index: int = 0):
@@ -1203,6 +1215,7 @@ class ExecutionWorker(QThread):
         self.next_step_index_to_select: int = -1
         self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
         self._is_paused = False # ADD THIS LINE
+    
     def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
         count_config = loop_config["iteration_count_config"]
         if count_config["type"] == "variable":
@@ -1211,14 +1224,14 @@ class ExecutionWorker(QThread):
             if isinstance(var_value, int) and var_value >= 1: return var_value
             else: self.context.add_log(f"Warning: Global variable '{var_name}' for loop count is not a valid positive integer (value: {var_value}). Defaulting to 1 iteration."); return 1
         else: return count_config.get("value", 1)
-
+    
     def _resolve_operand_value(self, operand_config: Dict[str, Any]) -> Any:
         if operand_config["type"] == "variable":
             var_name = operand_config["value"]
             if var_name not in self.global_variables: raise ValueError(f"Global variable '{var_name}' not found for condition operand.")
             return self.global_variables[var_name]
         else: return operand_config["value"]
-
+    
     def _evaluate_condition(self, condition_config: Dict[str, Any]) -> bool:
         left_val = self._resolve_operand_value(condition_config["left_operand"])
         right_val = self._resolve_operand_value(condition_config["right_operand"])
@@ -1490,19 +1503,22 @@ class ExecutionWorker(QThread):
             self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
 
 # Add these new methods anywhere inside the ExecutionWorker class
+    
     def pause(self):
         """Sets the pause flag and logs the action."""
         self._is_paused = True
         self.context.add_log("Execution PAUSED.")
         self.execution_started.emit("Execution PAUSED.") # Re-use signal for logging
-
+    
     def resume(self):
         """Clears the pause flag and logs the action."""
         self._is_paused = False
         self.context.add_log("Execution RESUMED.")
         self.execution_started.emit("Execution RESUMED.") # Re-use signal for logging
 class StepInsertionDialog(QDialog):
+    
     def __init__(self, execution_tree: QTreeWidget, parent: Optional[QWidget] = None):
+        
         super().__init__(parent)
         self.setWindowTitle("Insert Step At...")
         self.layout = QVBoxLayout(self)
@@ -1538,17 +1554,17 @@ class StepInsertionDialog(QDialog):
         
         self.selected_parent_item: Optional[QTreeWidgetItem] = None
         self.insert_mode: str = "after"
-
+    
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
         data = item.data(0, Qt.ItemDataRole.UserRole)
         return data.value() if isinstance(data, QVariant) else data
-
+    
     def _populate_tree_view(self, source_tree: QTreeWidget):
         self.execution_tree_view.clear()
         self._copy_children(source_tree.invisibleRootItem(), self.execution_tree_view.invisibleRootItem())
         self.execution_tree_view.expandAll()
-
+    
     def _copy_children(self, source_item: QTreeWidgetItem, dest_item: QTreeWidgetItem):
         for i in range(source_item.childCount()):
             child_source = source_item.child(i)
@@ -1557,7 +1573,7 @@ class StepInsertionDialog(QDialog):
             child_dest = QTreeWidgetItem(dest_item, [display_text])
             child_dest.setData(0, Qt.ItemDataRole.UserRole, self._get_item_data(child_source))
             self._copy_children(child_source, child_dest)
-
+    
     def get_insertion_point(self) -> Tuple[Optional[QTreeWidgetItem], str]:
         self.selected_parent_item = self.execution_tree_view.currentItem()
         if self.insert_before_radio.isChecked(): 
@@ -1571,7 +1587,7 @@ class StepInsertionDialog(QDialog):
 class TemplateVariableMappingDialog(QDialog):
     """A dialog to map variables from a template to global variables."""
 # In the TemplateVariableMappingDialog class, replace the __init__ method
-
+    
     def __init__(self, template_variables: set, global_variables: list, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Map Template Variables")
@@ -1638,7 +1654,7 @@ class TemplateVariableMappingDialog(QDialog):
 
 
 # In the TemplateVariableMappingDialog class, replace the _toggle_inputs method
-
+    
     def _toggle_inputs(self, var_name: str, index: int):
         """Shows or hides the input widgets based on the selected action."""
         widgets = self.mapping_widgets[var_name]
@@ -1649,7 +1665,7 @@ class TemplateVariableMappingDialog(QDialog):
         widgets['new_value'].setVisible(not is_mapping_to_existing) # --- NEW: Toggle the value editor ---
 
 # In the TemplateVariableMappingDialog class, replace the get_mapping method
-
+    
     def get_mapping(self) -> Optional[Tuple[Dict[str, str], Dict[str, Any]]]:
         mapping = {}
         new_variables = {}
@@ -1694,6 +1710,7 @@ class TemplateVariableMappingDialog(QDialog):
 
 # --- NEW CLASS: SaveTemplateDialog ---
 class SaveTemplateDialog(QDialog):
+    
     def __init__(self, existing_templates: List[str], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Save Step Template")
@@ -1725,7 +1742,7 @@ class SaveTemplateDialog(QDialog):
         main_layout.addWidget(button_box)
 
         self._selection_changed(self.templates_combo.currentText())
-
+    
     def _selection_changed(self, text: str) -> None:
         if text == "-- Create New Template --":
             self.name_editor.clear()
@@ -3553,6 +3570,7 @@ class WorkflowCanvas(QWidget):
         
 # --- MAIN APPLICATION WINDOW ---
 class MainWindow(QMainWindow):
+    
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Automate Your Task By Simple Bot - Designed by Phung Tuan Hung")
@@ -3650,7 +3668,7 @@ class MainWindow(QMainWindow):
         main_layout.setStretch(0, 0)
         main_layout.setStretch(1, 1)
         main_layout.setStretch(2, 0)
-
+    
     def create_left_menu(self):
         """Creates the collapsible left-side menu."""
         self.left_menu = QWidget()
@@ -3758,7 +3776,7 @@ class MainWindow(QMainWindow):
 # REPLACE your existing create_center_content method with this one:
 # In MainWindow class
 # REPLACE your existing create_center_content method with this one:
-
+    
     def create_center_content(self):
         """Creates the main tabbed interface, now with a dedicated focus mode layout."""
         self.center_content = QWidget()
@@ -3808,7 +3826,7 @@ class MainWindow(QMainWindow):
 
         # Add the focus mode widget to the main layout
         main_center_layout.addWidget(self.focus_mode_widget)
-
+    
     def create_right_panels(self):
         """Creates the right-side panels for modules and variables."""
         self.right_panels = QWidget()
@@ -3900,7 +3918,7 @@ class MainWindow(QMainWindow):
         self.edit_var_button.clicked.connect(self.edit_variable)
         self.delete_var_button.clicked.connect(self.delete_variable)
         self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
-        
+    
     def create_execution_flow_tab(self):
         """
         Creates the 'Execution Flow' tab, containing only the title label
@@ -3929,14 +3947,14 @@ class MainWindow(QMainWindow):
 
         # Add the completed widget as a new tab
         self.main_tab_widget.addTab(exec_widget, "📋 Execution Flow")
-
+    
     def create_saved_bots_tab(self):
         bots_widget = QWidget()
         layout = QVBoxLayout(bots_widget)
         layout.addWidget(QLabel("Saved Bots"))
         self.saved_steps_tree = QTreeWidget(); self.saved_steps_tree.setHeaderLabels(["Bot", "Schedule", "Status"]); self.saved_steps_tree.itemDoubleClicked.connect(self.saved_step_tree_item_selected); self.saved_steps_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); self.saved_steps_tree.customContextMenuRequested.connect(self.show_saved_bot_context_menu); layout.addWidget(self.saved_steps_tree)
         self.main_tab_widget.addTab(bots_widget, "🤖 Saved Bots")
-
+    
     def create_workflow_tab(self):
         flow_widget = QWidget()
         layout = QVBoxLayout(flow_widget)
@@ -5270,7 +5288,7 @@ class MainWindow(QMainWindow):
         # Connect the new loop iteration signal
         if hasattr(self.worker, 'loop_iteration_started'):
             self.worker.loop_iteration_started.connect(self._on_loop_iteration_started)
-            
+    @pyqtSlot(str, int)
     def _on_loop_iteration_started(self, loop_id: str, iteration_number: int):
         """Handle loop iteration start - reset status of steps within the loop."""
         if iteration_number > 1:  # Only reset for iterations after the first one
@@ -5315,7 +5333,7 @@ class MainWindow(QMainWindow):
             return group_stack[-1]
             
         return None
-        
+    @pyqtSlot(dict, int)
     def update_execution_tree_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int) -> None:
         """Enhanced method with deferred centering for robust workflow visualization."""
         # --- Part 1: Immediate UI Updates (Borders, Logs, etc.) ---
@@ -5378,7 +5396,7 @@ class MainWindow(QMainWindow):
         # THE FIX: Schedule the centering function to run as soon as Qt is idle.
         QTimer.singleShot(0, center_the_view)
 
-
+    @pyqtSlot(dict, str, int)
     def update_execution_tree_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int) -> None:
         """Enhanced method with workflow visualization support."""
         
@@ -5440,7 +5458,7 @@ class MainWindow(QMainWindow):
                     card.set_result_text(message)
                 self._log_to_console(f"Finished: {card._get_formatted_title()} | {message}")
                 self._update_variables_list_display()
-
+    @pyqtSlot(dict, str, int)
     def update_execution_tree_item_status_error(self, step_data_dict: Dict[str, Any], error_message: str, original_listbox_row_index: int) -> None:
         """Enhanced method with workflow visualization support."""
         # Set execution status
@@ -5465,7 +5483,7 @@ class MainWindow(QMainWindow):
 # In the MainWindow class
 # In MainWindow class
 # REPLACE your existing on_execution_finished method with this one:
-
+    @pyqtSlot(ExecutionContext, bool, int)
     def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
         self.is_bot_running = False
         self.is_paused = False
@@ -5525,7 +5543,7 @@ class MainWindow(QMainWindow):
         # Switch to the Execution Flow tab to see the final results
         self.main_tab_widget.setCurrentIndex(1)
 # In the MainWindow class, REPLACE the existing update_label_info_from_module method with this one:
-
+    @pyqtSlot(str)
     def update_label_info_from_module(self, message: str) -> None:
         """
         Updates the info labels, including the image preview.
@@ -5971,7 +5989,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log_to_console(f"Error writing schedule to {file_path}: {e}")
             return False
-            
+    @pyqtSlot(str)
     def _log_to_console(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_console.append(f"[{timestamp}] {message}")
