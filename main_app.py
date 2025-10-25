@@ -18,9 +18,8 @@ import PIL.Image
 from PIL.ImageQt import ImageQt
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor, QAction
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
-from PyQt6 import QtWidgets, QtGui
+from PyQt6 import QtWidgets, QtGui, QtCore
 from typing import Optional, List, Dict, Any, Tuple, Union
-
 # Ensure my_lib is in the Python path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 my_lib_dir = os.path.join(script_dir, "my_lib")
@@ -36,7 +35,7 @@ from PyQt6.QtWidgets import (
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
     QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator,
-    QScrollArea, QTabWidget, QFrame
+    QScrollArea, QTabWidget, QFrame, QMenu, 
 )
 
 from PyQt6.QtGui import QIntValidator
@@ -93,23 +92,32 @@ class ExecutionStepCard(QWidget):
     move_down_requested = pyqtSignal(dict)
     save_as_template_requested = pyqtSignal(dict)
     execute_this_requested = pyqtSignal(dict)
-
+    # NEW SIGNALS FOR DRAG AND DROP
+    step_drag_started = pyqtSignal(dict, int)
+    step_reorder_requested = pyqtSignal(int, int)
 
     def __init__(self, step_data: Dict[str, Any], step_number: int, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.step_data = step_data
         self.step_number = step_number
+        
+        # Drag and drop attributes
+        self.dragging = False
+        self.drag_start_position = QPoint()
+        self.original_index = step_data.get("original_listbox_row_index", -1)
+        self.drag_widget = None  # For visual feedback during drag
+        
         self.init_ui()
-
-# In the ExecutionStepCard class, REPLACE the existing init_ui method with this one:
+        
+        # Enable drag and drop
+        self.setAcceptDrops(True)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(5)
         self.setObjectName("ExecutionStepCard")
-        # The default "resting" border color
-        self.set_status("#dcdcdc") # A slightly darker grey for better definition
+        self.set_status("#dcdcdc")
 
         top_row_layout = QHBoxLayout()
         step_label_text = self._get_formatted_title()
@@ -131,12 +139,11 @@ class ExecutionStepCard(QWidget):
         self.save_template_button = QPushButton("Save Template")
         self.execute_this_button = QPushButton("Execute This")
 
-        # --- FIX STARTS HERE: Apply a high-contrast stylesheet to the card's buttons ---
         card_button_style = """
             QPushButton {
-                background-color: #f0f0f0; /* Light grey background */
-                color: #333333;             /* Dark grey text */
-                border: 1px solid #c0c0c0;  /* Slightly darker border */
+                background-color: #f0f0f0;
+                color: #333333;
+                border: 1px solid #c0c0c0;
                 border-radius: 4px;
                 padding: 4px 8px;
                 font-size: 12px;
@@ -150,10 +157,8 @@ class ExecutionStepCard(QWidget):
             }
         """
         
-        # Apply the style to all buttons
         for button in [self.up_button, self.down_button, self.edit_button, self.delete_button, self.save_template_button, self.execute_this_button]:
             button.setStyleSheet(card_button_style)
-        # --- FIX ENDS HERE ---
 
         button_font = self.up_button.font()
         button_font.setBold(True)
@@ -193,7 +198,6 @@ class ExecutionStepCard(QWidget):
 
         main_layout.addLayout(top_row_layout)
 
-        # The rest of the method remains the same...
         self._original_method_text = self._get_formatted_method_name()
         if self._original_method_text:
             self.method_label = QLabel(self._original_method_text)
@@ -213,15 +217,10 @@ class ExecutionStepCard(QWidget):
                     if param_name == "original_listbox_row_index": continue
                     value_str = ""
                     if config.get('type') == 'hardcoded': value_str = repr(config['value'])
-                    # --- MODIFICATION IS HERE ---
                     elif config.get('type') == 'hardcoded_file':
-                        # config['value'] is "Folder/image_name"
                         full_path_value = config['value']
-                        # os.path.basename gets "image_name"
                         base_name = os.path.basename(full_path_value)
-                        # os.path.splitext is not needed if extension is already stripped
                         value_str = f"File: '{base_name}'"
-                    # --- END MODIFICATION ---
                     elif config.get('type') == 'variable': value_str = f"Variable: @{config['value']}"
                     param_label = QLabel(f"{param_name}:")
                     value_label = QLineEdit(value_str)
@@ -231,12 +230,116 @@ class ExecutionStepCard(QWidget):
                 params_group.setLayout(params_layout)
                 main_layout.addWidget(params_group)
 
+    # FIXED DRAG AND DROP METHODS
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_start_position = event.pos()
+            self.dragging = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMoveEvent):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        
+        if not self.dragging:
+            # Check if we've moved far enough to start dragging
+            if ((event.pos() - self.drag_start_position).manhattanLength() >= 
+                QApplication.startDragDistance()):
+                self.start_drag()
+        super().mouseMoveEvent(event)
+
+    def start_drag(self):
+        """Start the drag operation with proper Qt drag and drop."""
+        self.dragging = True
+        
+        # Create drag object
+        drag = QtGui.QDrag(self)
+        mime_data = QtCore.QMimeData()
+        
+        # Store the source index in mime data
+        mime_data.setText(str(self.original_index))
+        drag.setMimeData(mime_data)
+        
+        # Create drag pixmap for visual feedback
+        pixmap = self.grab()
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(self.drag_start_position)
+        
+        # Visual feedback on source
+        self.setStyleSheet("""
+            #ExecutionStepCard { 
+                background-color: #E3F2FD; 
+                border: 3px dashed #2196F3; 
+                border-radius: 6px; 
+                opacity: 0.7;
+            }
+        """)
+        
+        # Emit signal
+        self.step_drag_started.emit(self.step_data, self.original_index)
+        
+        # Execute drag
+        drop_action = drag.exec(Qt.DropAction.MoveAction)
+        
+        # Reset visual feedback
+        self.set_status("#dcdcdc")
+        self.dragging = False
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
+        if self.dragging:
+            self.dragging = False
+            self.set_status("#dcdcdc")
+        super().mouseReleaseEvent(event)
+
+    # Drag and drop event handlers
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+            # Visual feedback for drop target
+            self.setStyleSheet("""
+                #ExecutionStepCard { 
+                    background-color: #FFF3E0; 
+                    border: 2px solid #FF9800; 
+                    border-radius: 6px; 
+                }
+            """)
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event: QtGui.QDragLeaveEvent):
+        # Reset visual feedback
+        self.set_status("#dcdcdc")
+
+    def dropEvent(self, event: QtGui.QDropEvent):
+        # Reset visual feedback
+        self.set_status("#dcdcdc")
+        
+        if event.mimeData().hasText():
+            source_index = int(event.mimeData().text())
+            target_index = self.original_index
+            
+            # Determine if dropping above or below based on position
+            drop_pos = event.position() if hasattr(event, 'position') else event.pos()
+            if drop_pos.y() < self.height() / 2:
+                # Drop above (before)
+                target_index = self.original_index
+            else:
+                # Drop below (after)
+                target_index = self.original_index + 1
+            
+            if source_index != target_index:
+                self.step_reorder_requested.emit(source_index, target_index)
+            
+            event.acceptProposedAction()
+
+    # Keep all existing methods (unchanged)
     def _get_formatted_title(self) -> str:
         step_type = self.step_data.get("type", "Unknown")
         if step_type == "group_start":
             return f"Group: {self.step_data.get('group_name', 'Unnamed')}"
         
-        # MODIFIED: Only show method name for standard steps
         if step_type == "step":
             method_name = self.step_data.get("method_name", "UnknownMethod")
             return f"Step {self.step_number}: {method_name}"
@@ -275,28 +378,22 @@ class ExecutionStepCard(QWidget):
         return ""
 
     def set_status(self, border_color: str, is_running: bool = False, is_error: bool = False):
-        """Enhanced status setting with dynamic border thickness and colors."""
-        
-        # Determine border thickness based on state
-        if is_running or is_error:
-            border_thickness = 4  # 100% increase from normal 2px
-        else:
-            border_thickness = 2  # Normal thickness
-        
-        # Determine colors based on state
         if is_running:
-            border_color = "#FFD700"  # Gold/Yellow for running
-            background_color = "#FFFBF0"  # Very light yellow background
+            border_color = "#FFD700"
+            background_color = "#FFFBF0"
+            border_thickness = 4
         elif is_error:
-            border_color = "#DC3545"  # Red for error
-            background_color = "#FFF5F5"  # Very light red background
+            border_color = "#DC3545"
+            background_color = "#FFF5F5"
+            border_thickness = 4
         elif border_color == "darkGreen" or border_color == "#28a745":
-            border_color = "#28a745"  # Green for success
-            background_color = "#F8FFF8"  # Very light green background
+            border_color = "#28a745"
+            background_color = "#F8FFF8"
+            border_thickness = 2
         else:
-            background_color = "#F8F8F8"  # Default light gray background
+            background_color = "#F8F8F8"
+            border_thickness = 2
         
-        # Apply the styling
         self.setStyleSheet(f"""
             #ExecutionStepCard {{ 
                 background-color: {background_color}; 
@@ -306,47 +403,37 @@ class ExecutionStepCard(QWidget):
         """)
 
     def set_result_text(self, result_message: str):
-        """Displays the execution result on the card by updating the method label."""
         if not self.method_label:
             return
 
-        # Truncate long results for display
         if len(result_message) > 300:
              result_message = result_message[:297] + "..."
 
         assign_to_var = self.step_data.get("assign_to_variable_name")
         
-        # Check if this is a standard step with a variable assignment and a valid result message
         if self.step_data.get("type") == "step" and assign_to_var and "Result: " in result_message:
             try:
-                # Extract the actual result value - handle both possible formats
                 if " (Assigned to @" in result_message:
                     result_val_str = result_message.split("Result: ")[1].split(" (Assigned to @")[0]
                 elif " (Assigned to" in result_message:
                     result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0]
                 else:
-                    # Fallback: just get everything after "Result: "
                     result_val_str = result_message.split("Result: ")[1]
             except IndexError:
                 result_val_str = "Error parsing result"
             
-            # NEW FORMAT: @variable = result
             display_text = f"@{assign_to_var} = {result_val_str}"
             self.method_label.setText(display_text)
             self.method_label.setStyleSheet("font-size: 10pt; font-style: italic; color: #155724; padding: 5px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 3px;")
         
         else:
-            # For other step types (loops, ifs) or steps without assignment, just show the worker message
             self.method_label.setText(f"✓ {result_message}")
             self.method_label.setStyleSheet("font-size: 10pt; font-style: italic; color: #155724; padding: 5px; background-color: #d4edda; border: 1px solid #c3e6cb; border-radius: 3px;")
 
     def clear_result(self):
-        """Resets the method label to its pre-execution state."""
         if self.method_label:
             self.method_label.setText(self._original_method_text)
-            # Reset to original style
             self.method_label.setStyleSheet("font-size: 10pt; padding: 5px; background-color: white; border: 1px solid #E0E0E0; border-radius: 3px;")
-
 class LoopConfigDialog(QDialog):
     def __init__(self, global_variables: Dict[str, Any], parent: Optional[QWidget] = None, initial_config: Optional[Dict[str, Any]] = None):
         super().__init__(parent)
@@ -1419,34 +1506,38 @@ class StepInsertionDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Insert Step At...")
         self.layout = QVBoxLayout(self)
+        
         self.execution_tree_view = QTreeWidget()
         self.execution_tree_view.setHeaderHidden(True)
         self.execution_tree_view.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
+        
         self.insertion_mode_group = QGroupBox("Insertion Mode")
         self.insertion_mode_layout = QHBoxLayout()
-        self.insert_as_child_radio = QRadioButton("Insert as Child")
+        
+        # SIMPLIFIED: Always enable both before and after
         self.insert_before_radio = QRadioButton("Insert Before Selected")
         self.insert_after_radio = QRadioButton("Insert After Selected")
-        self.insert_as_child_radio.setChecked(True)
-        self.insertion_mode_layout.addWidget(self.insert_as_child_radio)
+        
+        # Default to "Insert After"
+        self.insert_after_radio.setChecked(True)
+        
         self.insertion_mode_layout.addWidget(self.insert_before_radio)
         self.insertion_mode_layout.addWidget(self.insert_after_radio)
         self.insertion_mode_group.setLayout(self.insertion_mode_layout)
-        self.insert_as_child_radio.toggled.connect(self._update_insertion_options)
-        self.insert_before_radio.toggled.connect(self._update_insertion_options)
-        self.insert_after_radio.toggled.connect(self._update_insertion_options)
-        self.layout.addWidget(QLabel("Select Parent or Sibling for new step:"))
+        
+        self.layout.addWidget(QLabel("Select position for new step:"))
         self.layout.addWidget(self.execution_tree_view)
         self.layout.addWidget(self.insertion_mode_group)
+        
         self._populate_tree_view(execution_tree)
+        
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
+        
         self.selected_parent_item: Optional[QTreeWidgetItem] = None
-        self.insert_mode: str = "child"
-        self.execution_tree_view.currentItemChanged.connect(self._update_insertion_options)
-        self._update_insertion_options()
+        self.insert_mode: str = "after"
 
     def _get_item_data(self, item: QTreeWidgetItem) -> Optional[Dict[str, Any]]:
         if not item: return None
@@ -1467,38 +1558,24 @@ class StepInsertionDialog(QDialog):
             child_dest.setData(0, Qt.ItemDataRole.UserRole, self._get_item_data(child_source))
             self._copy_children(child_source, child_dest)
 
-    def _update_insertion_options(self) -> None:
-        selected_item = self.execution_tree_view.currentItem()
-        if selected_item is None:
-            self.insert_as_child_radio.setEnabled(True); self.insert_before_radio.setEnabled(False); self.insert_after_radio.setEnabled(False); self.insert_as_child_radio.setChecked(True)
-        else:
-            step_data_dict = self._get_item_data(selected_item)
-            is_block_parent = step_data_dict and step_data_dict.get("type") in ["loop_start", "IF_START", "ELSE", "group_start"]
-            self.insert_as_child_radio.setEnabled(is_block_parent); self.insert_before_radio.setEnabled(True); self.insert_after_radio.setEnabled(True)
-            if self.insert_as_child_radio.isChecked() and not self.insert_as_child_radio.isEnabled():
-                if self.insert_after_radio.isEnabled(): self.insert_after_radio.setChecked(True)
-                elif self.insert_before_radio.isEnabled(): self.insert_before_radio.setChecked(True)
-            if (self.insert_before_radio.isChecked() or self.insert_after_radio.isChecked()) and not (self.insert_before_radio.isEnabled() and not self.insert_after_radio.isEnabled()):
-                if self.insert_as_child_radio.isEnabled(): self.insert_as_child_radio.setChecked(True)
-        if not (self.insert_as_child_radio.isChecked() or self.insert_before_radio.isChecked() or self.insert_after_radio.isChecked()):
-            if self.insert_as_child_radio.isEnabled(): self.insert_as_child_radio.setChecked(True)
-            elif self.insert_after_radio.isEnabled(): self.insert_after_radio.setChecked(True)
-            elif self.insert_before_radio.isEnabled(): self.insert_before_radio.setChecked(True)
-
     def get_insertion_point(self) -> Tuple[Optional[QTreeWidgetItem], str]:
         self.selected_parent_item = self.execution_tree_view.currentItem()
-        if self.insert_before_radio.isChecked(): self.insert_mode = "before"
-        elif self.insert_after_radio.isChecked(): self.insert_mode = "after"
-        else: self.insert_mode = "child"
+        if self.insert_before_radio.isChecked(): 
+            self.insert_mode = "before"
+        else: 
+            self.insert_mode = "after"
         return self.selected_parent_item, self.insert_mode
+
 
 # --- REPLACEMENT CLASS: TemplateVariableMappingDialog (with intelligent default) ---
 class TemplateVariableMappingDialog(QDialog):
     """A dialog to map variables from a template to global variables."""
+# In the TemplateVariableMappingDialog class, replace the __init__ method
+
     def __init__(self, template_variables: set, global_variables: list, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Map Template Variables")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(600)  # Increase width to fit the new field
         self.template_variables = sorted(list(template_variables))
         self.global_variables = global_variables
         self.mapping_widgets = {}
@@ -1510,34 +1587,41 @@ class TemplateVariableMappingDialog(QDialog):
             row_layout = QHBoxLayout()
             
             action_combo = QComboBox()
-            action_combo.addItems(["Map to Existing", "Create New", "Keep Original Name"])
+            action_combo.addItems(["Map to Existing", "Create New"])
             
             existing_var_combo = QComboBox()
             existing_var_combo.addItem("-- Select Existing --")
             existing_var_combo.addItems(self.global_variables)
             
-            # --- INTELLIGENT DEFAULT LOGIC ---
-            # If a global variable already exists with the same name as the template variable,
-            # default to "Map to Existing" and select that variable.
+            new_var_name_editor = QLineEdit(var_name)
+            new_var_name_editor.setPlaceholderText("Variable Name")
+
+            # --- NEW: Add a textbox for the initial value ---
+            new_var_value_editor = QLineEdit()
+            new_var_value_editor.setPlaceholderText("Initial Value (optional)")
+            # --- END NEW ---
+
             if var_name in self.global_variables:
                 action_combo.setCurrentText("Map to Existing")
                 existing_var_combo.setCurrentText(var_name)
             else:
-                # Otherwise, default to "Keep Original Name"
-                action_combo.setCurrentText("Keep Original Name")
-
-            new_var_editor = QLineEdit(var_name)
+                action_combo.setCurrentText("Create New")
 
             row_layout.addWidget(action_combo, 1)
             row_layout.addWidget(existing_var_combo, 2)
-            row_layout.addWidget(new_var_editor, 2)
+            row_layout.addWidget(new_var_name_editor, 2)
             
-            form_layout.addRow(QLabel(f"'{var_name}':"), row_layout)
+            # --- NEW: Add the value editor to the layout ---
+            row_layout.addWidget(new_var_value_editor, 2)
+            # --- END NEW ---
+            
+            form_layout.addRow(QLabel(f"Template Variable '{var_name}':"), row_layout)
 
             self.mapping_widgets[var_name] = {
                 'action': action_combo,
                 'existing': existing_var_combo,
-                'new': new_var_editor
+                'new_name': new_var_name_editor,
+                'new_value': new_var_value_editor # --- NEW: Store the widget ---
             }
             
             action_combo.currentIndexChanged.connect(
@@ -1552,11 +1636,19 @@ class TemplateVariableMappingDialog(QDialog):
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
 
+
+# In the TemplateVariableMappingDialog class, replace the _toggle_inputs method
+
     def _toggle_inputs(self, var_name: str, index: int):
+        """Shows or hides the input widgets based on the selected action."""
         widgets = self.mapping_widgets[var_name]
-        is_mapping = (index == 0)
-        widgets['existing'].setVisible(is_mapping)
-        widgets['new'].setVisible(not is_mapping)
+        is_mapping_to_existing = (index == 0)
+        
+        widgets['existing'].setVisible(is_mapping_to_existing)
+        widgets['new_name'].setVisible(not is_mapping_to_existing)
+        widgets['new_value'].setVisible(not is_mapping_to_existing) # --- NEW: Toggle the value editor ---
+
+# In the TemplateVariableMappingDialog class, replace the get_mapping method
 
     def get_mapping(self) -> Optional[Tuple[Dict[str, str], Dict[str, Any]]]:
         mapping = {}
@@ -1564,20 +1656,39 @@ class TemplateVariableMappingDialog(QDialog):
         for var_name, widgets in self.mapping_widgets.items():
             action_index = widgets['action'].currentIndex()
             
-            if action_index == 0: # Map to Existing
+            if action_index == 0:  # Map to Existing
                 target_var = widgets['existing'].currentText()
                 if target_var == "-- Select Existing --":
                     QMessageBox.warning(self, "Input Error", f"Please select an existing variable to map '{var_name}' to.")
                     return None
                 mapping[var_name] = target_var
-            else: # Create New or Keep Original
-                target_var = widgets['new'].text().strip()
-                if not target_var:
+            
+            else:  # Create New
+                target_var_name = widgets['new_name'].text().strip()
+                if not target_var_name:
                     QMessageBox.warning(self, "Input Error", f"The new variable name for '{var_name}' cannot be empty.")
                     return None
-                mapping[var_name] = target_var
-                if target_var not in self.global_variables:
-                    new_variables[target_var] = None
+                
+                mapping[var_name] = target_var_name
+                
+                if target_var_name not in self.global_variables:
+                    # --- NEW: Get the initial value from the textbox ---
+                    initial_value_str = widgets['new_value'].text()
+
+                    # If the textbox is empty, the value will be None
+                    if not initial_value_str:
+                        new_variables[target_var_name] = None
+                    else:
+                        # Safely evaluate the string to get Python types (int, float, bool, etc.)
+                        try:
+                            # ast.literal_eval is a safe way to evaluate simple literals
+                            parsed_value = ast.literal_eval(initial_value_str)
+                        except (ValueError, SyntaxError):
+                            # If it can't be parsed (e.g., just text), treat it as a string
+                            parsed_value = initial_value_str
+                        
+                        new_variables[target_var_name] = parsed_value
+                    # --- END NEW ---
 
         return mapping, new_variables
 
@@ -1688,13 +1799,60 @@ class SaveBotDialog(QDialog):
 # In main_app.py, REPLACE your entire GroupedTreeWidget class with this:
 
 class GroupedTreeWidget(QTreeWidget):
-    """
-    A custom QTreeWidget that draws vertical lines to indicate the scope
-    of expanded groups, loops, and conditional blocks.
-    """
+    step_reorder_requested = pyqtSignal(int, int)  # NEW SIGNAL
+    
     def __init__(self, main_window: 'MainWindow', parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.main_window = main_window
+        
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+        self.setDragEnabled(False)  # We handle dragging in cards
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent):
+        if event.mimeData().hasText():
+            event.acceptProposedAction()
+            
+            # Provide visual feedback
+            item = self.itemAt(event.position().toPoint() if hasattr(event, 'position') else event.pos())
+            if item:
+                self.setCurrentItem(item)
+
+    def dropEvent(self, event: QtGui.QDropEvent):
+        if event.mimeData().hasText():
+            source_index = int(event.mimeData().text())
+            
+            # Calculate target position
+            drop_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            target_item = self.itemAt(drop_pos)
+            
+            if target_item:
+                target_card = self.itemWidget(target_item, 0)
+                if isinstance(target_card, ExecutionStepCard):
+                    target_index = target_card.step_data.get("original_listbox_row_index", -1)
+                    
+                    # Determine if dropping above or below based on position
+                    item_rect = self.visualItemRect(target_item)
+                    if drop_pos.y() < item_rect.center().y():
+                        # Drop above (before)
+                        final_target = target_index
+                    else:
+                        # Drop below (after)
+                        final_target = target_index + 1
+                    
+                    if source_index != final_target:
+                        self.step_reorder_requested.emit(source_index, final_target)
+            else:
+                # Drop at end
+                if source_index < len(self.main_window.added_steps_data):
+                    self.step_reorder_requested.emit(source_index, len(self.main_window.added_steps_data))
+            
+            event.acceptProposedAction()
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         # First, run the default paint event to draw all the items.
@@ -1702,7 +1860,7 @@ class GroupedTreeWidget(QTreeWidget):
         
         # Now, draw our custom lines on top.
         painter = QPainter(self.viewport())
-        pen = QPen(QColor("#C0392B")) # A shade of red
+        pen = QPen(QColor("#C0392B"))
         pen.setWidth(2)
         painter.setPen(pen)
 
@@ -1712,49 +1870,34 @@ class GroupedTreeWidget(QTreeWidget):
         for i in range(parent_item.childCount()):
             child_item = parent_item.child(i)
             
-            # Get the data associated with this tree item.
             item_data = self.main_window._get_item_data(child_item)
             
-            # --- THIS IS THE CORRECTED LINE ---
-            # Check if this item is a block start and is currently expanded.
             if (item_data and item_data.get("type") in ["group_start", "loop_start", "IF_START"] and child_item.isExpanded()):
                 
                 start_index = item_data.get("original_listbox_row_index")
-                # Use MainWindow's helper to find the index of the matching 'end' block.
                 _ , end_index = self.main_window._find_block_indices(start_index)
                 
-                # Find the corresponding end item widget using the map from MainWindow.
                 end_item = self.main_window.data_to_item_map.get(end_index)
                 
                 start_rect = self.visualItemRect(child_item)
                 
-                # Proceed only if we found the end item and the start item is visible.
                 if end_item and not start_rect.isEmpty():
                     end_rect = self.visualItemRect(end_item)
                     
-                    # Define line geometry.
-                    x_offset = 8    # How far from the left edge.
-                    tick_width = 5  # The width of the small horizontal ticks.
+                    x_offset = 8
+                    tick_width = 5
                     start_y = start_rect.center().y()
                     
-                    # If the end item is scrolled out of view, draw the line to the
-                    # bottom of the visible area. Otherwise, draw to the end item's center.
                     end_y = end_rect.center().y() if not end_rect.isEmpty() else self.viewport().height()
 
-                    # Don't draw if the line would be pointing upwards.
                     if end_y < start_y:
                         continue
                         
-                    # --- Draw the lines ---
-                    # 1. The main vertical line.
                     painter.drawLine(x_offset, start_y, x_offset, end_y)
-                    # 2. The top horizontal tick.
                     painter.drawLine(x_offset, start_y, x_offset + tick_width, start_y)
-                    # 3. The bottom horizontal tick (only if the end item is visible).
                     if not end_rect.isEmpty():
                         painter.drawLine(x_offset, end_y, x_offset + tick_width, end_y)
 
-            # Recurse into the children of the current item to draw nested block lines.
             if child_item.isExpanded():
                 self._draw_group_lines_recursive(child_item, painter)
 # --- NEW WIDGET: FindReplaceWidget ---
@@ -2794,8 +2937,10 @@ class WorkflowCanvas(QWidget):
             self.update()
             event.accept()
 
+    # In the WorkflowCanvas class, modify the mousePressEvent method
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
+            # ... (existing left-click logic for dragging remains the same)
             # Check if clicking on a node first
             clicked_pos = event.pos() - self.canvas_offset
             node_clicked = False
@@ -2816,16 +2961,25 @@ class WorkflowCanvas(QWidget):
                     node_clicked = True
                     break
             
-            # If no node was clicked, start canvas panning
             if not node_clicked:
                 self.dragging_canvas = True
                 self.last_pan_point = event.pos()
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)
         
         elif event.button() == Qt.MouseButton.RightButton:
-            # Right-click context menu
-            self._show_context_menu(event.pos())
-        
+            # --- NEW LOGIC FOR RIGHT-CLICK ---
+            clicked_pos_local = event.pos() - self.canvas_offset
+            clicked_node_data = None
+            for rect, _, _, step_data in self.nodes:
+                if rect.contains(clicked_pos_local):
+                    clicked_node_data = step_data
+                    break
+            
+            # Show the context menu
+            self._show_context_menu(event.pos(), clicked_node_data)
+            # --- END NEW LOGIC ---
+
+        # Keep this call for other event handling
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMoveEvent):
@@ -2883,18 +3037,37 @@ class WorkflowCanvas(QWidget):
 
         super().mouseReleaseEvent(event)
 
-    def _show_context_menu(self, pos: QPoint):
+# In the WorkflowCanvas class, update the _show_context_menu method
+    def _show_context_menu(self, pos: QPoint, clicked_node_data: Optional[Dict] = None):
         """Shows a context menu with workflow options."""
         context_menu = QMenu(self)
+
+        # --- NEW LOGIC: Add configure action if a configurable node was clicked ---
+        if clicked_node_data:
+            step_type = clicked_node_data.get("type")
+            # We can configure 'step', 'loop_start', 'IF_START', and 'group_start'
+            if step_type in ["step", "loop_start", "IF_START", "group_start"]:
+                configure_action = context_menu.addAction("⚙️ Configure Parameters")
+                context_menu.addSeparator()
+            else:
+                configure_action = None
+        else:
+            configure_action = None
+        # --- END NEW LOGIC ---
         
         redraw_action = context_menu.addAction("🔄 Smart Redraw Layout")
-        context_menu.addSeparator()
         reset_zoom_action = context_menu.addAction("🔍 Reset Zoom")
         center_action = context_menu.addAction("🎯 Center Workflow")
         
         action = context_menu.exec(self.mapToGlobal(pos))
         
-        if action == redraw_action:
+        # --- NEW LOGIC: Handle the configure action click ---
+        if action == configure_action and clicked_node_data:
+            # We don't handle the dialog here. We emit a signal to the MainWindow.
+            # MainWindow has the logic to find the tree item and open the correct dialog.
+            self.main_window.edit_step_from_data(clicked_node_data)
+        # --- END NEW LOGIC ---
+        elif action == redraw_action:
             self._smart_redraw_layout()
         elif action == reset_zoom_action:
             self._reset_zoom()
@@ -3321,20 +3494,25 @@ class WorkflowCanvas(QWidget):
     def _adjust_canvas_size(self):
         """Recalculates the minimum size of the canvas to fit all nodes."""
         if not self.nodes:
-            self.setMinimumSize(800, 600)
+            # If no nodes, a small default is fine.
+            self.setMinimumSize(100, 100)
             return
 
+        # Calculate the actual bounds of all nodes
         max_x = 0
         max_y = 0
         for rect, _, _, _ in self.nodes:
             max_x = max(max_x, rect.right())
             max_y = max(max_y, rect.bottom())
         
-        # Add padding
-        self.total_width = max_x + 200
-        self.total_height = max_y + 200
-        self.setMinimumSize(self.total_width, self.total_height)
-
+        # Add a 200px padding around the content
+        required_width = max_x + 200
+        required_height = max_y + 200
+        
+        # THIS IS THE KEY: Set the minimum size to the actual required size.
+        # This tells the parent QScrollArea how big the canvas needs to be.
+        self.setMinimumSize(required_width, required_height)
+        
     def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
         """Updates all edge indices when a node is moved in the list."""
         new_edges = []
@@ -3438,7 +3616,16 @@ class MainWindow(QMainWindow):
         self.load_all_modules_to_tree()
         self.load_saved_steps_to_tree()
         self._update_variables_list_display()
-    
+        self.minimized_for_execution = False
+        self.original_geometry = None
+        #--------------------------------------------------
+        self.minimized_for_execution = False
+        self.original_geometry = None
+        self.widget_homes = {} # <<< ADD THIS LINE
+        self.is_bot_running = False
+        self.is_paused = False
+        self.worker: Optional[ExecutionWorker] = None
+        
     def init_ui(self) -> None:
         """Initialize the new UI with left menu, center content, and right panels."""
         os.makedirs(self.steps_template_directory, exist_ok=True)
@@ -3567,52 +3754,60 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar(); self.progress_bar.hide(); menu_layout.addWidget(self.progress_bar)
         self.exit_button = QPushButton("🚪 Exit"); self.exit_button.clicked.connect(QApplication.instance().quit); menu_layout.addWidget(self.exit_button)
         
+# In MainWindow class
+# REPLACE your existing create_center_content method with this one:
+# In MainWindow class
+# REPLACE your existing create_center_content method with this one:
+
     def create_center_content(self):
-        """Creates the main tabbed interface."""
+        """Creates the main tabbed interface, now with a dedicated focus mode layout."""
         self.center_content = QWidget()
-        center_layout = QVBoxLayout(self.center_content)
-        
-        # 1. Create the tab widget
+        # Main layout that holds everything in the center panel
+        main_center_layout = QVBoxLayout(self.center_content)
+        main_center_layout.setContentsMargins(5, 5, 5, 5)
+
+        # 1. Normal Mode UI (Tabs and Info)
+        # Create a widget to hold the normal UI so we can hide/show it easily
+        self.normal_mode_widget = QWidget()
+        normal_mode_layout = QVBoxLayout(self.normal_mode_widget)
+        normal_mode_layout.setContentsMargins(0, 0, 0, 0) # No extra margins needed here
+
         self.main_tab_widget = QTabWidget()
-        
-        # 2. Call the methods to populate the tabs in the desired order
         self.create_saved_bots_tab()
         self.create_execution_flow_tab()
         self.create_workflow_tab()
         self.create_log_tab()
-        
-        # 3. Add the tab widget to the layout
-        center_layout.addWidget(self.main_tab_widget)
-        
-        # --- FIX STARTS HERE: Create and add the info labels below the tabs ---
-        # Create a container for the shared info labels
-        info_widget = QFrame()
-        info_widget.setFrameShape(QFrame.Shape.StyledPanel)
-        info_layout = QHBoxLayout(info_widget)
-        
-        self.label_info1 = QLabel("Info:")
-        info_layout.addWidget(self.label_info1)
+        normal_mode_layout.addWidget(self.main_tab_widget) # Add tabs to normal widget
 
+        # Create the info widget (as before)
+        self.info_widget = QFrame()
+        self.info_widget.setFrameShape(QFrame.Shape.StyledPanel)
+        info_layout = QHBoxLayout(self.info_widget)
+        self.label_info1 = QLabel("Info:")
         self.label_info2 = QLabel("Image Preview")
         self.label_info2.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label_info2.setFixedSize(200, 30)
-        self.label_info2.setStyleSheet("""
-            QLabel {
-                background-color: #f0f0f0;
-                border: 1px solid #dcdcdc;
-                border-radius: 4px;
-                color: #888;
-            }
-        """)
-        info_layout.addWidget(self.label_info2)
-        
+        self.label_info2.setStyleSheet("QLabel { background-color: #f0f0f0; border: 1px solid #dcdcdc; border-radius: 4px; color: #888; }")
         self.label_info3 = QLabel("Image Name")
         self.label_info3.setAlignment(Qt.AlignmentFlag.AlignRight)
+        info_layout.addWidget(self.label_info1)
+        info_layout.addWidget(self.label_info2)
         info_layout.addWidget(self.label_info3)
-        
-        # Add the entire info widget to the main center layout, below the tabs
-        center_layout.addWidget(info_widget)
-        # --- FIX ENDS HERE ---
+        normal_mode_layout.addWidget(self.info_widget) # Add info widget to normal widget
+
+        # Add the entire normal mode widget to the main layout
+        main_center_layout.addWidget(self.normal_mode_widget)
+
+
+        # 2. Focus Mode UI (Initially hidden)
+        # This is the new container for our focus mode UI
+        self.focus_mode_widget = QWidget()
+        self.focus_mode_layout = QVBoxLayout(self.focus_mode_widget)
+        self.focus_mode_layout.setContentsMargins(0, 0, 0, 0)
+        self.focus_mode_widget.setVisible(False) # Start hidden
+
+        # Add the focus mode widget to the main layout
+        main_center_layout.addWidget(self.focus_mode_widget)
 
     def create_right_panels(self):
         """Creates the right-side panels for modules and variables."""
@@ -3746,7 +3941,10 @@ class MainWindow(QMainWindow):
         flow_widget = QWidget()
         layout = QVBoxLayout(flow_widget)
         layout.addWidget(QLabel("Bot Workflow"))
-        self.workflow_scroll_area = QScrollArea(); self.workflow_scroll_area.setWidgetResizable(True); layout.addWidget(self.workflow_scroll_area)
+        self.workflow_scroll_area = QScrollArea(); 
+        self.workflow_scroll_area.setWidgetResizable(True); 
+        self.workflow_scroll_area.setMinimumSize(50, 50)
+        layout.addWidget(self.workflow_scroll_area)
 
         self.workflow_tab_index = self.main_tab_widget.indexOf(flow_widget)
         self.main_tab_widget.addTab(flow_widget, "📈 Workflow")
@@ -3975,17 +4173,25 @@ class MainWindow(QMainWindow):
     
     def _rebuild_execution_tree(self, item_to_focus_data: Optional[Dict[str, Any]] = None) -> None:
         expanded_state = self._get_expansion_state()
-    
+
         self.execution_tree.clear()
         self.data_to_item_map.clear()
         
+        # CONNECT THE NEW TREE SIGNAL
+        if hasattr(self.execution_tree, 'step_reorder_requested'):
+            try:
+                self.execution_tree.step_reorder_requested.disconnect()
+            except TypeError:
+                pass
+        self.execution_tree.step_reorder_requested.connect(self._handle_step_reorder)
+        
         current_parent_stack: List[QTreeWidgetItem] = [self.execution_tree.invisibleRootItem()]
         item_to_focus: Optional[QTreeWidgetItem] = None
-    
+
         for i, step_data_dict in enumerate(self.added_steps_data):
             step_data_dict["original_listbox_row_index"] = i
             step_type = step_data_dict.get("type")
-    
+
             if step_type == "group_end":
                 if len(current_parent_stack) > 1:
                     last_parent_data = self._get_item_data(current_parent_stack[-1])
@@ -4007,36 +4213,43 @@ class MainWindow(QMainWindow):
                                  current_parent_stack.pop()
                     elif last_parent_data and last_parent_data.get("type") == "IF_START" and last_parent_data.get("if_id") == step_data_dict.get("if_id"):
                         current_parent_stack.pop()
-    
+
             parent_for_current_item = current_parent_stack[-1]
             tree_item = QTreeWidgetItem(parent_for_current_item)
             tree_item.setData(0, Qt.ItemDataRole.UserRole, QVariant(step_data_dict))
             
             self.data_to_item_map[i] = tree_item
-    
+
             card = ExecutionStepCard(step_data_dict, i + 1)
+            
+            # Connect all signals
             card.edit_requested.connect(self._handle_edit_request)
             card.delete_requested.connect(self._handle_delete_request)
             card.move_up_requested.connect(self._handle_move_up_request)
             card.move_down_requested.connect(self._handle_move_down_request)
             card.save_as_template_requested.connect(self._handle_save_as_template_request)
             card.execute_this_requested.connect(self._handle_execute_this_request)
+            # NEW DRAG AND DROP CONNECTIONS
+            card.step_drag_started.connect(self._handle_step_drag_started)
+            card.step_reorder_requested.connect(self._handle_step_reorder)
+            
             tree_item.setSizeHint(0, card.sizeHint())
             self.execution_tree.setItemWidget(tree_item, 0, card)
-    
+
             if item_to_focus_data and step_data_dict == item_to_focus_data:
                 item_to_focus = tree_item
-    
+
             if step_type in ["loop_start", "IF_START", "ELSE", "group_start"]:
                 current_parent_stack.append(tree_item)
-    
+
         if item_to_focus:
             self.execution_tree.setCurrentItem(item_to_focus)
             self.execution_tree.scrollToItem(item_to_focus, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
-    
+
         self.update_status_column_for_all_items()
         self._restore_expansion_state(expanded_state)
         self._update_workflow_tab(switch_to_tab=False)
+
 
     def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
         item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
@@ -4622,29 +4835,12 @@ class MainWindow(QMainWindow):
         self.gui_communicator.update_module_info_signal.emit("")
         self.active_param_input_dialog = None
 
+# In the MainWindow class
+
     def _calculate_flat_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
-        if selected_tree_item is None:
-            return len(self.added_steps_data)
-        selected_item_data_in_dialog = self._get_item_data(selected_tree_item)
-        if not selected_item_data_in_dialog:
-            return len(self.added_steps_data)
-        try:
-            selected_flat_index = self.added_steps_data.index(selected_item_data_in_dialog)
-        except ValueError:
-            return len(self.added_steps_data)
-        
-        if insert_mode == "before":
-            return selected_flat_index
-        elif insert_mode == "after":
-            _, end_idx = self._find_block_indices(selected_flat_index)
-            return end_idx + 1
-        elif insert_mode == "child":
-            block_type = selected_item_data_in_dialog.get("type")
-            if block_type in ["group_start", "loop_start", "IF_START", "ELSE"]:
-                return selected_flat_index + 1
-            else:
-                return selected_flat_index + 1
-        return len(self.added_steps_data)
+        """Enhanced method that always allows before/after insertion."""
+        return self._calculate_smart_insertion_index(selected_tree_item, insert_mode)
+
 
     def add_loop_block(self) -> None:
         dialog = LoopConfigDialog(self.global_variables, parent=self)
@@ -4888,34 +5084,87 @@ class MainWindow(QMainWindow):
             self._internal_clear_all_steps()
             self._log_to_console("All steps cleared by user.")
 
+# In the MainWindow class
+# In MainWindow class
+# REPLACE your existing _handle_execute_pause_resume method with this one:
+
     def _handle_execute_pause_resume(self):
-        """Handles the Start, Pause, and Resume logic for the main execution button."""
-        
+        """
+        Handles Start/Pause/Resume. Now correctly builds the focus mode UI
+        including the image preview label.
+        """
         if not self.is_bot_running:
-            # --- This is the START case ---
+            # --- START Case ---
             if not self.added_steps_data:
                 QMessageBox.information(self, "No Steps", "No steps have been added.")
                 return
             if not self._validate_block_structure_on_execution():
                 return
-            
-            self.is_bot_running = True
-            self.is_paused = False # Ensure pause is reset
-            
-            # --- ACTIVATE WORKFLOW TAB (Request 1) ---
-            if hasattr(self, 'workflow_tab_index'):
-                self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
-            else:
-                self._log_to_console("Could not find workflow tab to switch to.")
-            # --- END ---
 
-            # --- CHANGE BUTTON TO PAUSE (Request 2) ---
+            self.is_bot_running = True
+            self.is_paused = False
+            
+            if self.always_on_top_button.isChecked():
+                # --- ENTERING FOCUS MODE ---
+                self.minimized_for_execution = True
+                self.original_geometry = self.geometry()
+                
+                self.workflow_scroll_area.setWidgetResizable(False)
+
+
+                # --- Store the original homes for ALL widgets we are moving ---
+                def store_home(widget):
+                    parent_layout = widget.parent().layout()
+                    index = parent_layout.indexOf(widget)
+                    self.widget_homes[widget] = (parent_layout, index)
+
+                store_home(self.execute_all_button)
+                store_home(self.exit_button)
+                store_home(self.workflow_scroll_area)
+                store_home(self.label_info2) # Store home for image preview label
+                
+                # Hide the main side panels and the normal center content
+                self.left_menu.setVisible(False)
+                self.right_panels.setVisible(False)
+                self.normal_mode_widget.setVisible(False)
+
+                # --- Build the Focus Mode UI dynamically ---
+                # 1. Add the workflow canvas
+                self.focus_mode_layout.addWidget(self.workflow_scroll_area)
+                self.workflow_scroll_area.setVisible(True)
+
+                # 2. Add the image preview label
+                self.focus_mode_layout.addWidget(self.label_info2)
+                self.label_info2.setVisible(True)
+
+                # 3. Add the temporary control widget for buttons
+                if not hasattr(self, 'execution_control_widget'):
+                    self.execution_control_widget = QWidget()
+                    self.execution_control_widget.setLayout(QHBoxLayout())
+                    self.execution_control_widget.layout().setContentsMargins(5, 5, 5, 5)
+                self.focus_mode_layout.addWidget(self.execution_control_widget)
+                self.execution_control_widget.layout().addWidget(self.execute_all_button)
+                self.execution_control_widget.layout().addWidget(self.exit_button)
+                
+                # Make the entire focus mode container visible
+                self.focus_mode_widget.setVisible(True)
+                
+                # Resize window
+                screen = QApplication.primaryScreen().geometry()
+                new_width = int(self.original_geometry.width() * 0.25)
+                new_height = int(self.original_geometry.height() * 0.30)
+                self.resize(new_width, new_height)
+                self.move(screen.width() - new_width - 10, 10)
+
+            else: # Normal execution
+                self.main_tab_widget.setCurrentIndex(2)
+
+            # --- Universal Start Logic ---
             self.execute_all_button.setText("⏸️ Pause")
             self.execute_all_button.setToolTip("Pause the running execution")
-            # --- END ---
-            
-            self.set_ui_enabled_state(False) # Disables other UI elements
-            
+            self.set_ui_enabled_state(False)
+            self.right_panels.setEnabled(False)
+            self.main_tab_widget.setEnabled(False)
             self.progress_bar.setValue(0)
             self.progress_bar.show()
             self.update_status_column_for_all_items()
@@ -4925,24 +5174,21 @@ class MainWindow(QMainWindow):
             self.worker.start()
 
         elif self.is_bot_running and not self.is_paused:
-            # --- This is the PAUSE case ---
+            # --- PAUSE Case ---
             if self.worker:
                 self.worker.pause()
                 self.is_paused = True
                 self.execute_all_button.setText("▶️ Resume")
                 self.execute_all_button.setToolTip("Resume the paused execution")
-                # Re-enable UI components that should be usable during pause
-                self.set_ui_enabled_state(True) 
                 
         elif self.is_bot_running and self.is_paused:
-            # --- This is the RESUME case ---
+            # --- RESUME Case ---
             if self.worker:
                 self.worker.resume()
                 self.is_paused = False
                 self.execute_all_button.setText("⏸️ Pause")
                 self.execute_all_button.setToolTip("Pause the running execution")
-                # Disable UI again
-                self.set_ui_enabled_state(False)
+
 
     def _validate_block_structure_on_execution(self) -> bool:
         open_blocks = []
@@ -5069,67 +5315,68 @@ class MainWindow(QMainWindow):
             return group_stack[-1]
             
         return None
+        
     def update_execution_tree_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int) -> None:
-        """Enhanced method with workflow visualization support."""
-        # Set execution status
+        """Enhanced method with deferred centering for robust workflow visualization."""
+        # --- Part 1: Immediate UI Updates (Borders, Logs, etc.) ---
+        
+        # Set execution status in the data model
         self._set_step_execution_status(step_data_dict, "running")
         
-        # --- NEW: Update parent group status ---
+        # Update parent group status
         parent_group_data = self._find_parent_group_data(original_listbox_row_index)
-        if parent_group_data:
-            # Check if parent group is already in an error state. If so, don't reset to "running".
-            if parent_group_data.get("execution_status") != "error":
-                self._set_step_execution_status(parent_group_data, "running")
-        # --- END NEW ---
+        if parent_group_data and parent_group_data.get("execution_status") != "error":
+            self._set_step_execution_status(parent_group_data, "running")
         
         # Update the execution tree card
         item_widget = self._find_qtreewidget_item(step_data_dict)
         if item_widget:
             card = self.execution_tree.itemWidget(item_widget, 0)
             if card:
-                card.set_status("", is_running=True)  # Yellow border, thick
+                card.set_status("", is_running=True)
                 self._log_to_console(f"Executing: {card._get_formatted_title()}")
             self.execution_tree.setCurrentItem(item_widget)
             self.execution_tree.scrollToItem(item_widget, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
-            
-        # --- LOGIC TO CENTER WORKFLOW CANVAS ---
-        
-        # 1. Check if the workflow canvas exists and is the visible tab
+
+        # Tell the canvas it needs a repaint (this will happen after layouts are stable)
         if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
-            workflow_tab_widget = self.workflow_scroll_area.parentWidget()
+            self.workflow_canvas.update()
+
+        # --- Part 2: Deferred Centering Logic ---
+        
+        def center_the_view():
+            """This function will run AFTER Qt has stabilized the layout."""
+            if not (hasattr(self, 'workflow_canvas') and self.workflow_canvas and self.workflow_scroll_area.isVisible()):
+                return
+
+            # Find the corresponding node in the canvas's node list
+            target_node_rect: Optional[QRect] = None
+            for rect, _, _, node_step_data in self.workflow_canvas.nodes:
+                if node_step_data is step_data_dict:
+                    target_node_rect = rect
+                    break
             
-            # 2. Only scroll if the user is actually watching the workflow tab
-            if self.main_tab_widget.currentWidget() == workflow_tab_widget:
-                
-                # 3. Find the corresponding node in the canvas's node list
-                target_node_rect: Optional[QRect] = None
-                for rect, _, _, node_step_data in self.workflow_canvas.nodes:
-                    # Compare using the data dictionary itself (fast identity check)
-                    if node_step_data is step_data_dict: 
-                        target_node_rect = rect
-                        break
-                
-                # 4. If found, calculate and set the scroll position
-                if target_node_rect:
-                    try:
-                        # Get the center of the node
-                        node_center = target_node_rect.center()
-                        
-                        # Get the visible size of the scroll area
-                        viewport_size = self.workflow_scroll_area.viewport().size()
-                        
-                        # Calculate the new top-left scroll value to center the node
-                        target_x = node_center.x() - (viewport_size.width() // 2)
-                        target_y = node_center.y() - (viewport_size.height() // 2)
-                        
-                        # Set the scroll bars
-                        self.workflow_scroll_area.horizontalScrollBar().setValue(target_x)
-                        self.workflow_scroll_area.verticalScrollBar().setValue(target_y)
-                        
-                    except Exception as e:
-                        # Log if something goes wrong, but don't crash execution
-                        self._log_to_console(f"Workflow scroll error: {e}")
-        # --- END LOGIC ---
+            if target_node_rect:
+                try:
+                    # Get the center of the node
+                    node_center = target_node_rect.center()
+                    
+                    # Get the STABLE and CORRECT visible size of the scroll area
+                    viewport_size = self.workflow_scroll_area.viewport().size()
+                    
+                    # Calculate the new top-left scroll value to center the node
+                    target_x = node_center.x() - (viewport_size.width() // 2)
+                    target_y = node_center.y() - (viewport_size.height() // 2)
+                    
+                    # Set the scroll bars
+                    self.workflow_scroll_area.horizontalScrollBar().setValue(target_x)
+                    self.workflow_scroll_area.verticalScrollBar().setValue(target_y)
+
+                except Exception as e:
+                    self._log_to_console(f"Workflow scroll error: {e}")
+
+        # THE FIX: Schedule the centering function to run as soon as Qt is idle.
+        QTimer.singleShot(0, center_the_view)
 
 
     def update_execution_tree_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int) -> None:
@@ -5214,20 +5461,69 @@ class MainWindow(QMainWindow):
             self._log_to_console(f"ERROR on {card._get_formatted_title()}: {error_message}")
             self._update_variables_list_display()
 
+# In the MainWindow class
+# In the MainWindow class
+# In MainWindow class
+# REPLACE your existing on_execution_finished method with this one:
+
     def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
         self.is_bot_running = False
-        self.is_paused = False # ADD THIS
-        self.worker = None # ADD THIS
+        self.is_paused = False
+        self.worker = None
 
-        # --- RESET BUTTON (Request 2) ---
         self.execute_all_button.setText("🚀 Execute All")
         self.execute_all_button.setToolTip("Execute all steps from the beginning")
-        # --- END ---
-
+        
         self.progress_bar.setValue(100)
-        self.set_ui_enabled_state(True)
         self.last_executed_context = context
 
+        if self.minimized_for_execution:
+            # --- EXITING FOCUS MODE ---
+            # Hide the focus mode container
+            self.focus_mode_widget.setVisible(False)
+            
+            self.workflow_scroll_area.setWidgetResizable(True)
+
+            # --- Restore ALL widgets back to their original homes ---
+            def restore_home(widget):
+                if widget in self.widget_homes:
+                    layout, index = self.widget_homes[widget]
+                    # To be safe, set the widget's parent to None before re-inserting
+                    widget.setParent(None)
+                    layout.insertWidget(index, widget)
+                    widget.setVisible(True) # Ensure it's visible after being moved
+
+            restore_home(self.execute_all_button)
+            restore_home(self.exit_button)
+            restore_home(self.workflow_scroll_area)
+            restore_home(self.label_info2) # Restore the image preview label
+                
+            self.widget_homes.clear()
+
+            # Restore visibility of main UI panels
+            self.left_menu.setVisible(True)
+            self.right_panels.setVisible(True)
+            self.normal_mode_widget.setVisible(True) # Show the normal UI container
+            
+            # Restore window geometry
+            if self.original_geometry:
+                self.setGeometry(self.original_geometry)
+
+            self.minimized_for_execution = False
+        
+        # --- Universal UI Re-enablement ---
+        self.set_ui_enabled_state(True)
+        self.right_panels.setEnabled(True)
+        self.main_tab_widget.setEnabled(True)
+
+        if next_step_index_to_select != -1:
+            item_to_select = self.data_to_item_map.get(next_step_index_to_select)
+            if item_to_select:
+                self.execution_tree.setCurrentItem(item_to_select)
+                self.execution_tree.scrollToItem(item_to_select, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
+
+        # Switch to the Execution Flow tab to see the final results
+        self.main_tab_widget.setCurrentIndex(1)
 # In the MainWindow class, REPLACE the existing update_label_info_from_module method with this one:
 
     def update_label_info_from_module(self, message: str) -> None:
@@ -5986,7 +6282,160 @@ class MainWindow(QMainWindow):
         if reset_count > 0:
             self._log_to_console(f"🔄 Loop '{loop_id}' new iteration - Reset status of {reset_count} steps within the loop")
             
+    def _handle_step_drag_started(self, step_data: Dict[str, Any], original_index: int):
+        """Handle when a step card starts being dragged."""
+        self._log_to_console(f"Drag started for step at index {original_index}")
 
+    def _handle_step_reorder(self, source_index: int, target_index: int):
+        """Handle reordering of steps via drag and drop."""
+        if source_index == target_index or source_index == -1 or target_index == -1:
+            return
+        
+        # Clamp target_index to valid range
+        target_index = max(0, min(target_index, len(self.added_steps_data)))
+        
+        # Perform the reordering
+        self._reorder_steps_smart(source_index, target_index)
+
+    def _reorder_steps_smart(self, source_index: int, target_index: int):
+        """Smart reordering that respects block boundaries."""
+        if not (0 <= source_index < len(self.added_steps_data)):
+            return
+        
+        # Get the block boundaries for the source step
+        source_start, source_end = self._find_block_indices(source_index)
+        
+        # Calculate the actual target position
+        if target_index > source_end:
+            # Moving down - adjust target to account for removed items
+            actual_target = target_index - (source_end - source_start + 1)
+        else:
+            actual_target = target_index
+        
+        # Ensure target is within bounds
+        actual_target = max(0, min(actual_target, len(self.added_steps_data) - (source_end - source_start + 1)))
+        
+        # Extract the block to move
+        steps_to_move = self.added_steps_data[source_start:source_end + 1]
+        
+        # Remove from original position
+        del self.added_steps_data[source_start:source_end + 1]
+        
+        # Insert at new position
+        for i, step in enumerate(steps_to_move):
+            self.added_steps_data.insert(actual_target + i, step)
+        
+        # Rebuild the tree and focus on the moved block
+        self._rebuild_execution_tree(item_to_focus_data=steps_to_move[0])
+        
+        self._log_to_console(f"Moved step block from index {source_index} to {actual_target}")
+    '''
+    def _calculate_smart_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
+        """Enhanced insertion calculation that properly handles block structures."""
+        if selected_tree_item is None:
+            # If no item is selected, insert at the end of the entire list.
+            return len(self.added_steps_data)
+
+        selected_item_data = self._get_item_data(selected_tree_item)
+        if not selected_item_data:
+            # If the item has no associated data, treat as inserting at the end.
+            return len(self.added_steps_data)
+
+        try:
+            selected_flat_index = self.added_steps_data.index(selected_item_data)
+        except ValueError as e:
+            error_content = str(e)
+            self._log_to_console(f"ValueError in insertion index calculation: {error_content}")
+            print ("error:", str(ValueError))
+            # If the selected item's data is not found in the flat list, insert at the end.
+            return len(self.added_steps_data)
+        
+        selected_step_type = selected_item_data.get("type")
+
+        if insert_mode == "before":
+            return selected_flat_index
+        elif insert_mode == "after":
+            return selected_flat_index + 1
+        
+        # Fallback, should not be reached with "before" or "after" modes.
+        return len(self.added_steps_data)
+        '''
+    def _calculate_smart_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
+        """Enhanced insertion calculation that properly handles block structures."""
+        if selected_tree_item is None:
+            # If no item is selected, insert at the end of the entire list.
+            return len(self.added_steps_data)
+
+        selected_item_data = self._get_item_data(selected_tree_item)
+        if not selected_item_data:
+            # If the item has no associated data, treat as inserting at the end.
+            return len(self.added_steps_data)
+
+        # Use original_listbox_row_index for more reliable lookup
+        selected_flat_index = selected_item_data.get("original_listbox_row_index")
+        
+        # If original_listbox_row_index is not available or invalid, try to find by identity
+        if selected_flat_index is None or not (0 <= selected_flat_index < len(self.added_steps_data)):
+            try:
+                # Try to find by object identity first (fastest)
+                for i, step_data in enumerate(self.added_steps_data):
+                    if step_data is selected_item_data:
+                        selected_flat_index = i
+                        break
+                else:
+                    # If identity search fails, try equality comparison
+                    selected_flat_index = self.added_steps_data.index(selected_item_data)
+            except ValueError:
+                self._log_to_console(f"ValueError in insertion index calculation: {error_content}")
+                # If the selected item's data is not found in the flat list, insert at the end.
+                return len(self.added_steps_data)
+        
+        # Verify the index is still valid
+        if not (0 <= selected_flat_index < len(self.added_steps_data)):
+            return len(self.added_steps_data)
+            
+        selected_step_type = selected_item_data.get("type")
+
+        if insert_mode == "before":
+            return selected_flat_index
+        elif insert_mode == "after":
+            return selected_flat_index + 1
+        
+        # Fallback, should not be reached with "before" or "after" modes.
+        return len(self.added_steps_data)
+    # In the MainWindow class, add this new method
+# In the MainWindow class, REPLACE the existing edit_step_from_data method with this one.
+
+    def edit_step_from_data(self, step_data: Dict[str, Any]):
+        """
+        Finds a step by its unique index and triggers the edit dialog.
+        This is called from the WorkflowCanvas context menu.
+        This is the robust version that prevents the 'out of sync' error.
+        """
+        # 1. Get the unique identifier for the step from the workflow node's data.
+        step_index = step_data.get("original_listbox_row_index")
+
+        # 2. Basic validation.
+        if step_index is None:
+            QMessageBox.warning(self, "Edit Error", "The selected workflow shape has no valid identifier.")
+            return
+
+        # 3. Check if the index is valid within our main data list.
+        if not (0 <= step_index < len(self.added_steps_data)):
+            QMessageBox.warning(self, "Edit Error", f"The step index '{step_index}' is out of bounds. The workflow may be out of sync. Please try rebuilding the flow.")
+            return
+
+        # 4. Find the corresponding item in the Execution Flow tree using the data_to_item_map.
+        #    This map was created specifically for this purpose.
+        item_to_edit = self.data_to_item_map.get(step_index)
+
+        # 5. If the item is found, call the same edit function as the card's "Edit" button.
+        if item_to_edit:
+            # This now behaves exactly like clicking the "Edit" button on the card.
+            self.edit_step_in_execution_tree(item_to_edit, 0)
+        else:
+            # This is a fallback and should rarely happen if the map is up-to-date.
+            QMessageBox.warning(self, "Edit Error", "Could not find the corresponding UI element in the Execution Flow. Please try rebuilding the flow.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
