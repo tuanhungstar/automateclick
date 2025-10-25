@@ -6385,7 +6385,8 @@ class MainWindow(QMainWindow):
                 else:
                     # If identity search fails, try equality comparison
                     selected_flat_index = self.added_steps_data.index(selected_item_data)
-            except ValueError:
+            except ValueError as e:
+                error_content = str(e)
                 self._log_to_console(f"ValueError in insertion index calculation: {error_content}")
                 # If the selected item's data is not found in the flat list, insert at the end.
                 return len(self.added_steps_data)
