@@ -3,6 +3,7 @@ import pyautogui
 from my_lib.shared_context import ExecutionContext as Context
 import Gui_Automate
 import Mouse_Key_Automate
+import time
 class Keyboard:
     def __init__(self,context: Context):
         self.context = Context
@@ -15,6 +16,7 @@ class Keyboard:
         """
         send hotkey link "CTRL+a"
         """
+        time.sleep(1)
         keyboard.press_and_release(hotkey)
         return f"Bot send this hotkey: {hotkey}"
         

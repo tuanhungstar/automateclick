@@ -154,6 +154,46 @@ class Bot_utility:
             #print ('left_click_done fail: {}'.format(image_file),str(key))
         return 'left_click_done fail: {}'.format(file_name)
         
+    def right_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
+        """Finds a UI element (as an image) on the screen and performs a right click.
+
+        Args:
+            image_to_click (str): The name of the image file (without extension) to find and click.
+            offset_x (int, optional): The horizontal offset in pixels from the image's center
+                                      to click. Defaults to 0.
+            offset_y (int, optional): The vertical offset in pixels from the image's center
+                                      to click. Defaults to 0.
+            confidence (float, optional): The confidence level for the image recognition.
+                                          Defaults to 0.92.
+
+        Returns:
+            str: A status message, 'left_click_done' on success or a failure message
+                 if the image could not be found.
+        """
+        location=None
+        file_name= image_to_click
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
+            image_file = json.load(json_file)
+        for key, data in image_file.items():
+            #print (key)
+            image_file = self._base64_pgn(data)
+            try:
+                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                if location!=None:
+                    pyautogui.rightClick(location.x + offset_x, location.y + offset_y)
+                    self.context.add_log(f"{file_name}")
+                    return 'right_click_done'
+            except:
+                pass
+        if location is None:
+            self.context.add_log(f"{file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+        return 'right_click_done fail: {}'.format(file_name)
+
     def activate_window(self,title):
         """Brings a window with a matching title to the foreground.
 
