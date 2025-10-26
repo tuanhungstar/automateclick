@@ -403,7 +403,10 @@ class ExecutionStepCard(QWidget):
         """)
 
     def set_result_text(self, result_message: str):
+        #print(f"DEBUG: set_result_text called with message: '{result_message}'")
+        #print(f"DEBUG: method_label exists: {self.method_label is not None}")
         if not self.method_label:
+            #print("DEBUG: method_label is None!")  # ADD THIS
             return
 
         if len(result_message) > 300:
@@ -1185,7 +1188,9 @@ class ExecutionWorker(QThread):
     loop_iteration_started = pyqtSignal(str, int)  # loop_id, iteration_number
 
     def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
-                 global_variables_ref: Dict[str, Any], parent: Optional[QWidget] = None,
+                 global_variables_ref: Dict[str, Any], 
+                 wait_config: Dict[str, Any],  # <-- ARGUMENT IS NOW A DICT
+                 parent: Optional[QWidget] = None,
                  single_step_mode: bool = False, selected_start_index: int = 0):
         super().__init__(parent)
         self.steps_to_execute = steps_to_execute
@@ -1203,6 +1208,7 @@ class ExecutionWorker(QThread):
         self.next_step_index_to_select: int = -1
         self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
         self._is_paused = False # ADD THIS LINE
+        self.wait_config = wait_config # <-- STORE THE CONFIG DICT
     def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
         count_config = loop_config["iteration_count_config"]
         if count_config["type"] == "variable":
@@ -1274,7 +1280,39 @@ class ExecutionWorker(QThread):
                     break
                 if self.single_step_mode and current_execution_item_count >= 1: 
                     break
+                
+                # --- REPLACE THE OLD WAIT LOGIC WITH THIS NEW, DYNAMIC LOGIC ---
+                if current_execution_item_count > 0 and not self.single_step_mode:
+                    wait_seconds = 0
                     
+                    # 1. Resolve the wait time from the config
+                    if self.wait_config['type'] == 'variable':
+                        var_name = self.wait_config['value']
+                        # Get the current value from the shared global variables dict
+                        var_value = self.global_variables.get(var_name, 0)
+                        try:
+                            # Ensure the value from the variable is a valid number
+                            wait_seconds = float(var_value)
+                        except (ValueError, TypeError):
+                            self.context.add_log(f"Warning: Global variable '@{var_name}' does not contain a valid number for wait time. Using 0.")
+                            wait_seconds = 0
+                    else: # It's hardcoded
+                        wait_seconds = self.wait_config['value']
+
+                    # 2. Perform the wait if necessary
+                    if wait_seconds > 0:
+                        self.context.add_log(f"Waiting for {wait_seconds:.2f} second(s)...")
+                        # QThread.msleep() takes milliseconds, so we multiply by 1000
+                        QThread.msleep(int(wait_seconds * 1000))
+                # --- END OF REPLACEMENT ---
+
+
+
+
+
+
+
+                
                 step_data = self.steps_to_execute[step_index]
                 step_type = step_data["type"]
                 original_listbox_row_index = step_data.get("original_listbox_row_index", step_index)
@@ -1501,10 +1539,172 @@ class ExecutionWorker(QThread):
         self._is_paused = False
         self.context.add_log("Execution RESUMED.")
         self.execution_started.emit("Execution RESUMED.") # Re-use signal for logging
+# --- NEW WIDGET: RearrangeStepItemWidget ---
+# --- REPLACEMENT WIDGET: RearrangeStepItemWidget (WITH GUARANTEED STEP NUMBER FIRST) ---
+class RearrangeStepItemWidget(QWidget):
+    """A compact widget to display a step's details for the rearrange dialog."""
+    def __init__(self, step_data: Dict[str, Any], step_number: int, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.step_data = step_data
+        self.step_number = step_number
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 3, 5, 3)
+
+        # Get the detailed text for the label
+        full_text = self._get_formatted_display_text()
+        
+        self.label = QLabel(full_text)
+        self.label.setWordWrap(True)
+        
+        # Add an icon to indicate draggability
+        self.drag_handle_label = QLabel("☰")
+        self.drag_handle_label.setToolTip("Drag to reorder")
+        self.drag_handle_label.setStyleSheet("font-weight: bold; color: #7f8c8d;")
+        self.drag_handle_label.setFixedWidth(20)
+        layout.addWidget(self.drag_handle_label)
+        layout.addWidget(self.label)
+        
+        # Set background color based on step type for better readability
+        step_type = self.step_data.get("type")
+        if step_type in ["loop_start", "IF_START", "group_start"]:
+            self.setStyleSheet("background-color: #e8f4fd; border-radius: 3px;")
+        elif step_type in ["loop_end", "IF_END", "group_end", "ELSE"]:
+            self.setStyleSheet("background-color: #f1f2f3; border-radius: 3px;")
+        else:
+             self.setStyleSheet("background-color: #ffffff; border-radius: 3px;")
+
+    def _get_formatted_display_text(self) -> str:
+        """
+        Creates a descriptive string for the step, ensuring the step number is always first.
+        Format: Step X: @var = method(params...)
+        """
+        step_type = self.step_data.get("type")
+        step_num = self.step_number
+
+        # For non-step types (loops, ifs, etc.), use the reliable formatting from ExecutionStepCard
+        if step_type != "step":
+            temp_card = ExecutionStepCard(self.step_data, step_num)
+            base_title = temp_card.step_label.text()
+            details_text = temp_card.method_label.text() if temp_card.method_label else ""
+            if details_text:
+                return f"{base_title}: {details_text}"
+            return base_title
+
+        # --- THIS IS THE UPDATED LOGIC FOR 'step' TYPE ---
+        
+        # 1. Start with the Step number, which is always present.
+        display_parts = [f"Step {step_num}:"]
+        
+        # 2. Add the variable assignment, if it exists.
+        assign_var = self.step_data.get("assign_to_variable_name")
+        if assign_var:
+            display_parts.append(f"@{assign_var} =")
+        
+        # 3. Construct the method call string with parameters.
+        method_name = self.step_data.get("method_name", "Unknown")
+        params_config = self.step_data.get("parameters_config", {})
+        param_details = []
+
+        for name, config in params_config.items():
+            if name == "original_listbox_row_index":
+                continue
+            
+            value_display = ""
+            param_type = config.get('type')
+            
+            if param_type == 'hardcoded':
+                value_display = repr(config['value'])
+            elif param_type == 'hardcoded_file':
+                base_name = os.path.basename(config['value'])
+                value_display = f"File:'{base_name}'"
+            elif param_type == 'variable':
+                value_display = f"@{config['value']}"
+            else:
+                value_display = "???"
+
+            if len(value_display) > 25:
+                value_display = value_display[:22] + "..."
+
+            param_details.append(f"{name}={value_display}")
+        
+        param_str = ", ".join(param_details)
+        method_call_str = f"{method_name}({param_str})"
+        
+        # 4. Add the method call string to our list of parts.
+        display_parts.append(method_call_str)
+        
+        # 5. Join all the parts together with spaces.
+        return " ".join(display_parts)
+# --- NEW DIALOG: RearrangeStepsDialog ---
+
+class RearrangeStepsDialog(QDialog):
+    """A dialog to reorder steps using drag-and-drop."""
+    def __init__(self, steps_data: List[Dict[str, Any]], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Rearrange Bot Steps")
+        self.setMinimumSize(800, 700) # Give it a good default size
+        
+        self.original_steps = steps_data
+        
+        main_layout = QVBoxLayout(self)
+
+        # Instructions
+        info_label = QLabel("Drag and drop the steps below to change their execution order.")
+        info_label.setStyleSheet("font-style: italic; color: #555;")
+        main_layout.addWidget(info_label)
+
+        # The list widget that will hold the steps
+        self.steps_list_widget = QListWidget()
+        
+        # --- Critical part: Enable Drag and Drop ---
+        self.steps_list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.steps_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.steps_list_widget.setAlternatingRowColors(True)
+        self.steps_list_widget.setStyleSheet("font-size: 12pt;")
+        main_layout.addWidget(self.steps_list_widget)
+
+        # Populate the list with our custom widgets
+        self.populate_list()
+        
+        # OK and Cancel buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+
+    def populate_list(self):
+        """Fills the QListWidget with the steps."""
+        self.steps_list_widget.clear()
+        for i, step_data in enumerate(self.original_steps):
+            list_item = QListWidgetItem(self.steps_list_widget)
+            
+            # Use our custom widget for the display
+            item_widget = RearrangeStepItemWidget(step_data, i + 1)
+            
+            # Store the original data with the item
+            list_item.setData(Qt.ItemDataRole.UserRole, step_data)
+            
+            # Set the size hint and associate the widget with the list item
+            list_item.setSizeHint(item_widget.sizeHint())
+            self.steps_list_widget.addItem(list_item)
+            self.steps_list_widget.setItemWidget(list_item, item_widget)
+
+    def get_rearranged_steps(self) -> List[Dict[str, Any]]:
+        """Returns the new, reordered list of step data."""
+        new_steps_data = []
+        for i in range(self.steps_list_widget.count()):
+            list_item = self.steps_list_widget.item(i)
+            # Retrieve the data we stored earlier
+            step_data = list_item.data(Qt.ItemDataRole.UserRole)
+            new_steps_data.append(step_data)
+        return new_steps_data
+        
 class StepInsertionDialog(QDialog):
     def __init__(self, execution_tree: QTreeWidget, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Insert Step At...")
+        self.setFixedSize(600, 800)
         self.layout = QVBoxLayout(self)
         
         self.execution_tree_view = QTreeWidget()
@@ -1693,6 +1893,84 @@ class TemplateVariableMappingDialog(QDialog):
         return mapping, new_variables
 
 # --- NEW CLASS: SaveTemplateDialog ---
+# --- NEW DIALOG: WaitTimeConfigDialog ---
+class WaitTimeConfigDialog(QDialog):
+    """A dialog to configure the wait time using a hardcoded value or a global variable."""
+    def __init__(self, global_variables: List[str], initial_config: Dict[str, Any], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Wait Time Between Steps")
+        self.setMinimumWidth(400)
+        self.global_variables = global_variables
+        
+        main_layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+
+        # --- Input Mode Selection ---
+        self.hardcoded_radio = QRadioButton("Use a fixed number of seconds:")
+        self.variable_radio = QRadioButton("Use a Global Variable:")
+        
+        # --- Input Widgets ---
+        self.wait_time_editor = QLineEdit()
+        # Use a QDoubleValidator to allow for fractional seconds (e.g., 0.5)
+        self.wait_time_editor.setValidator(QtGui.QDoubleValidator(0, 300, 2)) 
+
+        self.global_var_combo = QComboBox()
+        self.global_var_combo.addItem("-- Select Variable --")
+        self.global_var_combo.addItems(sorted(self.global_variables))
+
+        # --- Layout ---
+        form_layout.addRow(self.hardcoded_radio, self.wait_time_editor)
+        form_layout.addRow(self.variable_radio, self.global_var_combo)
+        main_layout.addLayout(form_layout)
+
+        # --- Buttons ---
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        
+        # --- Connections ---
+        self.hardcoded_radio.toggled.connect(self._toggle_inputs)
+        
+        # --- Set Initial State ---
+        self.set_config(initial_config)
+
+    def _toggle_inputs(self):
+        """Enable/disable input fields based on which radio button is selected."""
+        self.wait_time_editor.setEnabled(self.hardcoded_radio.isChecked())
+        self.global_var_combo.setEnabled(self.variable_radio.isChecked())
+
+    def set_config(self, config: Dict[str, Any]):
+        """Sets the dialog's state from an existing configuration."""
+        if config.get('type') == 'variable':
+            self.variable_radio.setChecked(True)
+            idx = self.global_var_combo.findText(config.get('value', ''))
+            if idx != -1:
+                self.global_var_combo.setCurrentIndex(idx)
+        else: # Default to hardcoded
+            self.hardcoded_radio.setChecked(True)
+            self.wait_time_editor.setText(str(config.get('value', 0)))
+        self._toggle_inputs()
+
+    def get_config(self) -> Optional[Dict[str, Any]]:
+        """Returns the new configuration dictionary."""
+        if self.hardcoded_radio.isChecked():
+            try:
+                # Allow floating point numbers for more precision
+                value = float(self.wait_time_editor.text())
+                if value < 0:
+                    raise ValueError
+                return {'type': 'hardcoded', 'value': value}
+            except (ValueError, TypeError):
+                QMessageBox.warning(self, "Input Error", "Please enter a valid non-negative number for the wait time.")
+                return None
+        elif self.variable_radio.isChecked():
+            var_name = self.global_var_combo.currentText()
+            if var_name == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select a global variable for the wait time.")
+                return None
+            return {'type': 'variable', 'value': var_name}
+        return None
 class SaveTemplateDialog(QDialog):
     def __init__(self, existing_templates: List[str], parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -2567,7 +2845,7 @@ class UpdateDialog(QDialog):
 
 class WorkflowCanvas(QWidget):
     """A custom widget that draws the bot's workflow with smart layout and navigation."""
-    
+    execute_step_requested = pyqtSignal(dict)
     def __init__(self, workflow_tree: List[Dict[str, Any]], main_window, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.workflow_tree = workflow_tree
@@ -3041,32 +3319,42 @@ class WorkflowCanvas(QWidget):
     def _show_context_menu(self, pos: QPoint, clicked_node_data: Optional[Dict] = None):
         """Shows a context menu with workflow options."""
         context_menu = QMenu(self)
-
-        # --- NEW LOGIC: Add configure action if a configurable node was clicked ---
+        
+        # --- NEW LOGIC: Store actions to check which was clicked ---
+        configure_action = None
+        execute_action = None
+        
         if clicked_node_data:
             step_type = clicked_node_data.get("type")
-            # We can configure 'step', 'loop_start', 'IF_START', and 'group_start'
+            
+            # Action 1: Execute This Step (only for executable steps)
+            if step_type not in ["group_end", "loop_end", "IF_END", "ELSE"]:
+                execute_action = context_menu.addAction("▶️ Execute This Step")
+
+            # Action 2: Configure Parameters
             if step_type in ["step", "loop_start", "IF_START", "group_start"]:
                 configure_action = context_menu.addAction("⚙️ Configure Parameters")
-                context_menu.addSeparator()
-            else:
-                configure_action = None
-        else:
-            configure_action = None
-        # --- END NEW LOGIC ---
+
+            if execute_action or configure_action:
+                 context_menu.addSeparator()
         
+        # General Canvas Actions
         redraw_action = context_menu.addAction("🔄 Smart Redraw Layout")
         reset_zoom_action = context_menu.addAction("🔍 Reset Zoom")
         center_action = context_menu.addAction("🎯 Center Workflow")
         
+        # Show the menu and get the selected action
         action = context_menu.exec(self.mapToGlobal(pos))
         
-        # --- NEW LOGIC: Handle the configure action click ---
-        if action == configure_action and clicked_node_data:
-            # We don't handle the dialog here. We emit a signal to the MainWindow.
-            # MainWindow has the logic to find the tree item and open the correct dialog.
+        # --- Handle the clicked action ---
+        if action == execute_action and clicked_node_data:
+            # Emit our new signal with the step's data
+            self.execute_step_requested.emit(clicked_node_data)
+
+        elif action == configure_action and clicked_node_data:
+            # This existing logic remains the same
             self.main_window.edit_step_from_data(clicked_node_data)
-        # --- END NEW LOGIC ---
+            
         elif action == redraw_action:
             self._smart_redraw_layout()
         elif action == reset_zoom_action:
@@ -3555,6 +3843,7 @@ class WorkflowCanvas(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.wait_time_between_steps = {'type': 'hardcoded', 'value': 0}
         self.setWindowTitle("Automate Your Task By Simple Bot - Designed by Phung Tuan Hung")
         
         # Get the geometry of the primary screen
@@ -3605,6 +3894,7 @@ class MainWindow(QMainWindow):
         # --- Connect signals and start logic ---
         self.gui_communicator.log_message_signal.connect(self._log_to_console)
         self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
+
 
         # --- Scheduler Setup ---
         self.schedule_timer = QTimer(self)
@@ -3719,17 +4009,23 @@ class MainWindow(QMainWindow):
         self.add_loop_button = QPushButton("🔄 Add Loop")
         self.add_conditional_button = QPushButton("❓ Add Conditional")
         self.group_steps_button = QPushButton("📦 Group Selected")
+        
+        self.rearrange_steps_button = QPushButton("↕️ Rearrange Steps")
+        
         self.clear_selected_button = QPushButton("🗑️ Clear Selected")
         self.remove_all_steps_button = QPushButton("❌ Remove All")
-        create_section("Step Editing", [self.add_loop_button, self.add_conditional_button, self.group_steps_button, self.clear_selected_button, self.remove_all_steps_button])
+
+        create_section("Step Editing", [self.add_loop_button, self.add_conditional_button, self.group_steps_button, self.rearrange_steps_button, self.clear_selected_button, self.remove_all_steps_button])
         
         # --- Tools & Settings ---
         self.open_screenshot_tool_button = QPushButton("📷 Screenshot Tool")
         self.view_workflow_button = QPushButton("📈 View Workflow")
+        self.set_wait_time_button = QPushButton("⏱️ Wait between Steps")
         self.update_app_btn = QPushButton("🔄 Update App")
         self.always_on_top_button = QPushButton("📌 Always On Top: Off")
         self.toggle_log_checkbox = QCheckBox("📋 Show Log")
         create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
+        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
         
         # Connections
         #self.execute_all_button.clicked.connect(self.execute_all_steps)
@@ -3740,12 +4036,14 @@ class MainWindow(QMainWindow):
         self.add_loop_button.clicked.connect(self.add_loop_block)
         self.add_conditional_button.clicked.connect(self.add_conditional_block)
         self.group_steps_button.clicked.connect(self.group_selected_steps)
+        self.rearrange_steps_button.clicked.connect(self.open_rearrange_steps_dialog)
         self.clear_selected_button.clicked.connect(self.clear_selected_steps)
         self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
         self.view_workflow_button.clicked.connect(lambda: self._update_workflow_tab(switch_to_tab=True))
         self.update_app_btn.clicked.connect(self.update_application)
         self.always_on_top_button.setCheckable(True)
+        self.set_wait_time_button.clicked.connect(self.set_wait_time)
         self.always_on_top_button.clicked.connect(self.toggle_always_on_top)
 
         menu_layout.addStretch()
@@ -3940,7 +4238,8 @@ class MainWindow(QMainWindow):
     def create_workflow_tab(self):
         flow_widget = QWidget()
         layout = QVBoxLayout(flow_widget)
-        layout.addWidget(QLabel("Bot Workflow"))
+        self.bot_workflow_label = QLabel("Bot Workflow")
+        layout.addWidget(self.bot_workflow_label)
         self.workflow_scroll_area = QScrollArea(); 
         self.workflow_scroll_area.setWidgetResizable(True); 
         self.workflow_scroll_area.setMinimumSize(50, 50)
@@ -4439,6 +4738,7 @@ class MainWindow(QMainWindow):
             self.module_directory, 
             self.gui_communicator, 
             self.global_variables, 
+            {'type': 'hardcoded', 'value': 0}, # Pass a "no wait" config for single steps
             single_step_mode=True, 
             selected_start_index=current_row
         )
@@ -4737,7 +5037,7 @@ class MainWindow(QMainWindow):
                 insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
                 
                 self.added_steps_data[insert_data_index:insert_data_index] = re_id_d_steps
-                
+                self._sync_counters_with_loaded_data()  # ADD THIS LINE
                 self._rebuild_execution_tree(item_to_focus_data=re_id_d_steps[0])
                 self._log_to_console(f"Loaded template '{template_name}' with {len(re_id_d_steps)} steps.")
                 workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
@@ -5103,6 +5403,7 @@ class MainWindow(QMainWindow):
 
             self.is_bot_running = True
             self.is_paused = False
+            self.view_workflow_button.click()
             
             if self.always_on_top_button.isChecked():
                 # --- ENTERING FOCUS MODE ---
@@ -5169,7 +5470,7 @@ class MainWindow(QMainWindow):
             self.progress_bar.show()
             self.update_status_column_for_all_items()
             
-            self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables)
+            self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables,self.wait_time_between_steps )
             self._connect_worker_signals()
             self.worker.start()
 
@@ -5225,23 +5526,43 @@ class MainWindow(QMainWindow):
         return True
 
     def execute_one_step(self) -> None:
+        """Executes a single step selected from the main execution tree."""
         selected_items = self.execution_tree.selectedItems()
         if len(selected_items) != 1:
             QMessageBox.information(self, "Selection Error", "Please select exactly ONE step to execute.")
             return
+
+        # Get the data from the selected tree item
         selected_step_data = self._get_item_data(selected_items[0])
         if not (selected_step_data and isinstance(selected_step_data, dict)):
+            QMessageBox.critical(self, "Error", "Selected item has no valid data associated with it.")
             return
-        try:
-            current_row = self.added_steps_data.index(selected_step_data)
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Could not find selected step in internal data model.")
+
+        # --- THE FIX ---
+        # Instead of searching the list for a copied object, get the reliable index.
+        current_row = selected_step_data.get("original_listbox_row_index")
+
+        # Validate the index
+        if current_row is None or not (0 <= current_row < len(self.added_steps_data)):
+            QMessageBox.critical(self, "Error", "Could not find selected step in internal data model. The data may be out of sync. Please try rebuilding the steps.")
             return
+        # --- END FIX ---
+
+        # The rest of the logic is the same
         self.set_ui_enabled_state(False)
         self.progress_bar.setValue(0)
         self.progress_bar.show()
         self.update_status_column_for_all_items()
-        self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables, single_step_mode=True, selected_start_index=current_row)
+        
+        self.worker = ExecutionWorker(
+            self.added_steps_data, 
+            self.module_directory, 
+            self.gui_communicator, 
+            self.global_variables, 
+            {'type': 'hardcoded', 'value': 0}, # <-- Pass a "no wait" config dict
+            single_step_mode=True, 
+            selected_start_index=current_row  # Use the reliable index
+        )
         self._connect_worker_signals()
         self.worker.start()
 
@@ -5278,14 +5599,24 @@ class MainWindow(QMainWindow):
     def _find_qtreewidget_item(self, target_step_data_dict: Dict[str, Any], parent_item: Optional[QTreeWidgetItem] = None) -> Optional[QTreeWidgetItem]:
         if parent_item is None:
             parent_item = self.execution_tree.invisibleRootItem()
+        
         for i in range(parent_item.childCount()):
             child_item = parent_item.child(i)
             item_data = self._get_item_data(child_item)
-            if item_data == target_step_data_dict:
-                return child_item
+            
+            if item_data:
+                # Match by original_listbox_row_index instead of object equality
+                target_index = target_step_data_dict.get("original_listbox_row_index")
+                item_index = item_data.get("original_listbox_row_index")
+                
+                if target_index is not None and target_index == item_index:
+                    return child_item
+            
+            # Recursively search children
             found_in_children = self._find_qtreewidget_item(target_step_data_dict, child_item)
             if found_in_children:
                 return found_in_children
+        
         return None
     def _find_parent_group_data(self, step_index: int) -> Optional[Dict[str, Any]]:
         """
@@ -5328,31 +5659,34 @@ class MainWindow(QMainWindow):
         if parent_group_data and parent_group_data.get("execution_status") != "error":
             self._set_step_execution_status(parent_group_data, "running")
         
-        # Update the execution tree card
-        item_widget = self._find_qtreewidget_item(step_data_dict)
-        if item_widget:
-            card = self.execution_tree.itemWidget(item_widget, 0)
-            if card:
-                card.set_status("", is_running=True)
-                self._log_to_console(f"Executing: {card._get_formatted_title()}")
-            self.execution_tree.setCurrentItem(item_widget)
-            self.execution_tree.scrollToItem(item_widget, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
+        # Update the execution tree card using index map
+        if original_listbox_row_index is not None:
+            item_widget = self.data_to_item_map.get(original_listbox_row_index)
+            if item_widget:
+                card = self.execution_tree.itemWidget(item_widget, 0)
+                if card:
+                    card.set_status("", is_running=True)
+                    self._log_to_console(f"Executing: {card._get_formatted_title()}")
+                self.execution_tree.setCurrentItem(item_widget)
+                self.execution_tree.scrollToItem(item_widget, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
 
         # Tell the canvas it needs a repaint (this will happen after layouts are stable)
         if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
             self.workflow_canvas.update()
 
-        # --- Part 2: Deferred Centering Logic ---
+        # --- Part 2: Deferred Centering Logic (FIXED) ---
         
         def center_the_view():
             """This function will run AFTER Qt has stabilized the layout."""
             if not (hasattr(self, 'workflow_canvas') and self.workflow_canvas and self.workflow_scroll_area.isVisible()):
                 return
 
-            # Find the corresponding node in the canvas's node list
+            # Find the corresponding node by matching the original_listbox_row_index
             target_node_rect: Optional[QRect] = None
             for rect, _, _, node_step_data in self.workflow_canvas.nodes:
-                if node_step_data is step_data_dict:
+                # FIX: Match by index instead of object identity
+                node_index = node_step_data.get("original_listbox_row_index")
+                if node_index == original_listbox_row_index:
                     target_node_rect = rect
                     break
             
@@ -5382,6 +5716,8 @@ class MainWindow(QMainWindow):
     def update_execution_tree_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int) -> None:
         """Enhanced method with workflow visualization support."""
         
+        #print(f"DEBUG: update_execution_tree_item_status_finished called for step {original_listbox_row_index}")
+        
         # --- NEW: Find parent group *before* processing ---
         parent_group_data = self._find_parent_group_data(original_listbox_row_index)
         
@@ -5404,6 +5740,7 @@ class MainWindow(QMainWindow):
                 self._set_step_execution_status(step_data_dict, "completed")
         
         elif message == "SKIPPED":
+            #print("DEBUG: Step was SKIPPED")
             # --- Step was SKIPPED ---
             self._set_step_execution_status(step_data_dict, "normal")
             if "execution_result" in step_data_dict:
@@ -5414,30 +5751,39 @@ class MainWindow(QMainWindow):
                 self._set_step_execution_status(parent_group_data, "running")
             
         else:
+            #print("DEBUG: Step COMPLETED normally")
             # --- Step COMPLETED normally (and is not a group_end) ---
             self._set_step_execution_status(step_data_dict, "completed")
             step_data_dict["execution_result"] = message
-            
+            self.label_info1.setText(f"Last Result: {message[0:25]}")
             # If inside a group, keep the group "running"
             if parent_group_data and parent_group_data.get("execution_status") != "error":
                 self._set_step_execution_status(parent_group_data, "running")
 
         # --- Update the Card for the current step (regardless of type) ---
         if message == "SKIPPED":
+            #print("DEBUG: Processing SKIPPED message")
             item_widget = self._find_qtreewidget_item(step_data_dict)
+            #print(f"DEBUG: item_widget = {item_widget}")
             if item_widget:
                 card = self.execution_tree.itemWidget(item_widget, 0)
+                #print(f"DEBUG: card = {card}")
                 if card:
                     card.set_status("#D3D3D3", is_running=False)
                     card.clear_result()
                 self._log_to_console(f"Skipped: {card._get_formatted_title()}")
         else:
+            #print("DEBUG: Processing normal completion message")
             item_widget = self._find_qtreewidget_item(step_data_dict)
+            #print(f"DEBUG: item_widget = {item_widget}")
             if item_widget:
                 card = self.execution_tree.itemWidget(item_widget, 0)
+                #print(f"DEBUG: card = {card}")
                 if card:
+                    #print(f"DEBUG: About to call set_result_text with: {message}")
                     card.set_status("darkGreen", is_running=False)
-                    card.set_result_text(message)
+                    card.set_result_text(message)  # <-- This should call it now
+                    #print("DEBUG: set_result_text called successfully")
                 self._log_to_console(f"Finished: {card._get_formatted_title()} | {message}")
                 self._update_variables_list_display()
 
@@ -5523,7 +5869,7 @@ class MainWindow(QMainWindow):
                 self.execution_tree.scrollToItem(item_to_select, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
 
         # Switch to the Execution Flow tab to see the final results
-        self.main_tab_widget.setCurrentIndex(1)
+        #self.main_tab_widget.setCurrentIndex(1)
 # In the MainWindow class, REPLACE the existing update_label_info_from_module method with this one:
 
     def update_label_info_from_module(self, message: str) -> None:
@@ -5533,9 +5879,9 @@ class MainWindow(QMainWindow):
         """
         # 1. Handle cases where the preview should be cleared.
         if not message or message.startswith("Module Info:") or message.startswith("Last Module Log:"):
-            self.label_info2.clear()
-            self.label_info2.setText("Image Preview")
-            self.label_info3.setText("Image Name")
+            #self.label_info2.clear()
+            #self.label_info2.setText("Image Preview")
+            #self.label_info3.setText("Image Name")
             if message:
                 self.label_info1.setText(message)
             return
@@ -5574,7 +5920,9 @@ class MainWindow(QMainWindow):
                 self.label_info2.clear()
         else:
             # Handle case where the file is missing entirely.
-            self.label_info1.setText(f"Image file for '{image_name}' not found.")
+            #self.label_info1.setText(f"Image file for '{image_name}' not found.")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log_console.append(f"[{timestamp}] {message}")
             self.label_info2.setText("Not Found")
             self.label_info2.clear()
             self.label_info3.setText("Image Name")
@@ -5745,10 +6093,12 @@ class MainWindow(QMainWindow):
                 self.global_variables = loaded_variables
                 self._update_variables_list_display()
                 self.added_steps_data = loaded_steps
+                self._sync_counters_with_loaded_data()  # ADD THIS LINE
                 self._rebuild_execution_tree()
                 
                 if bot_name:
                     self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
+                    self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
     
                 self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
     
@@ -6037,6 +6387,11 @@ class MainWindow(QMainWindow):
         
         old_canvas = self.workflow_scroll_area.takeWidget()
         if old_canvas:
+            # Disconnect old signals before deleting to prevent memory leaks
+            try:
+                old_canvas.execute_step_requested.disconnect()
+            except (TypeError, AttributeError):
+                pass # Ignore if it was not connected or doesn't exist
             old_canvas.deleteLater()
 
         if not self.added_steps_data:
@@ -6054,6 +6409,10 @@ class MainWindow(QMainWindow):
                 return
             
             self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
+            
+            # --- CONNECT THE NEW SIGNAL HERE ---
+            self.workflow_canvas.execute_step_requested.connect(self._handle_execute_this_request)
+            # -----------------------------------
             
             self.workflow_scroll_area.setWidget(self.workflow_canvas)
             
@@ -6438,6 +6797,103 @@ class MainWindow(QMainWindow):
             # This is a fallback and should rarely happen if the map is up-to-date.
             QMessageBox.warning(self, "Edit Error", "Could not find the corresponding UI element in the Execution Flow. Please try rebuilding the flow.")
 
+# In MainWindow class, add this new method:
+
+    def open_rearrange_steps_dialog(self):
+        """Opens the dialog for reordering steps."""
+        if not self.added_steps_data:
+            QMessageBox.information(self, "No Steps", "There are no steps to rearrange.")
+            return
+            
+        # Create an instance of our new dialog with the current steps
+        dialog = RearrangeStepsDialog(self.added_steps_data, self)
+        
+        # If the user clicks "OK"
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Get the newly ordered list of steps from the dialog
+            new_order = dialog.get_rearranged_steps()
+            
+            # Check if the order has actually changed
+            if new_order != self.added_steps_data:
+                self.added_steps_data = new_order
+                
+                # Rebuild the main execution tree to reflect the new order
+                self._rebuild_execution_tree()
+                
+                self._log_to_console("Steps have been rearranged.")
+            else:
+                self._log_to_console("Step order remains unchanged.")
+                
+# In MainWindow class, REPLACE the set_wait_time method with this:
+
+    def set_wait_time(self):
+        """Opens an advanced dialog to set the wait time between execution steps."""
+        
+        # Create an instance of our new, more advanced dialog
+        dialog = WaitTimeConfigDialog(
+            global_variables=list(self.global_variables.keys()),
+            initial_config=self.wait_time_between_steps,
+            parent=self
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_config = dialog.get_config()
+            if new_config:
+                self.wait_time_between_steps = new_config
+                
+                # Update button text to reflect the new setting
+                if new_config['type'] == 'variable':
+                    display_text = f"@{new_config['value']}"
+                    self._log_to_console(f"Wait time will be determined by global variable '{display_text}'.")
+                else:
+                    display_text = f"{new_config['value']}s"
+                    self._log_to_console(f"Wait time between steps set to {display_text}.")
+                
+                self.set_wait_time_button.setText(f"⏱️ Wait between Steps ({display_text})")
+                    
+    def _sync_counters_with_loaded_data(self):
+        """Synchronizes the ID counters with the highest IDs found in loaded data."""
+        max_loop_id = 0
+        max_if_id = 0
+        max_group_id = 0
+        
+        for step_data in self.added_steps_data:
+            # Check loop IDs
+            if "loop_id" in step_data:
+                loop_id_str = step_data["loop_id"]
+                if isinstance(loop_id_str, str) and loop_id_str.startswith("loop_"):
+                    try:
+                        loop_num = int(loop_id_str.split("_")[1])
+                        max_loop_id = max(max_loop_id, loop_num)
+                    except (IndexError, ValueError):
+                        pass
+            
+            # Check IF IDs
+            if "if_id" in step_data:
+                if_id_str = step_data["if_id"]
+                if isinstance(if_id_str, str) and if_id_str.startswith("if_"):
+                    try:
+                        if_num = int(if_id_str.split("_")[1])
+                        max_if_id = max(max_if_id, if_num)
+                    except (IndexError, ValueError):
+                        pass
+            
+            # Check group IDs
+            if "group_id" in step_data:
+                group_id_str = step_data["group_id"]
+                if isinstance(group_id_str, str) and group_id_str.startswith("group_"):
+                    try:
+                        group_num = int(group_id_str.split("_")[1])
+                        max_group_id = max(max_group_id, group_num)
+                    except (IndexError, ValueError):
+                        pass
+        
+        # Update the counters to be the maximum found (next increment will be max+1)
+        self.loop_id_counter = max_loop_id
+        self.if_id_counter = max_if_id
+        self.group_id_counter = max_group_id
+        
+        self._log_to_console(f"Synced counters - Loop: {self.loop_id_counter}, IF: {self.if_id_counter}, Group: {self.group_id_counter}")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
