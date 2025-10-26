@@ -1,6 +1,9 @@
 clipboard
+cx_Oracle
 keyboard
+mysql-connector-python
 numpy
+opencv-python
 openpyxl
 pandas
 Pillow
@@ -8,5 +11,6 @@ pyautogui
 pygetwindow
 pymsgbox
 PyQt6
+pyodbc
 pywin32
-opencv-python
+selenium
