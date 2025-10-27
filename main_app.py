@@ -3894,6 +3894,7 @@ class MainWindow(QMainWindow):
         # --- Connect signals and start logic ---
         self.gui_communicator.log_message_signal.connect(self._log_to_console)
         self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
+        self.gui_communicator.update_click_signal.connect(self.update_click_signal_from_module)
 
 
         # --- Scheduler Setup ---
@@ -5755,7 +5756,7 @@ class MainWindow(QMainWindow):
             # --- Step COMPLETED normally (and is not a group_end) ---
             self._set_step_execution_status(step_data_dict, "completed")
             step_data_dict["execution_result"] = message
-            self.label_info1.setText(f"Last Result: {message[0:25]}")
+            #self.label_info1.setText(f"Last Result: {message[0:25]}")
             # If inside a group, keep the group "running"
             if parent_group_data and parent_group_data.get("execution_status") != "error":
                 self._set_step_execution_status(parent_group_data, "running")
@@ -5871,7 +5872,10 @@ class MainWindow(QMainWindow):
         # Switch to the Execution Flow tab to see the final results
         #self.main_tab_widget.setCurrentIndex(1)
 # In the MainWindow class, REPLACE the existing update_label_info_from_module method with this one:
-
+    def update_click_signal_from_module(self, message: str) -> None:
+        
+        self.label_info1.setText(message)
+        
     def update_label_info_from_module(self, message: str) -> None:
         """
         Updates the info labels, including the image preview.
@@ -5888,7 +5892,7 @@ class MainWindow(QMainWindow):
 
         # 2. If we have a message, it's an image name. Construct the full path.
         #    THIS IS THE CRITICAL FIX: We need to build the full path to the .txt file.
-        image_name = message
+        image_name = message.replace("Image not found: ","")
         image_data_filepath = os.path.join(self.click_image_dir, f"{image_name}.txt")
 
         # 3. Check if the data file actually exists.
@@ -5907,10 +5911,10 @@ class MainWindow(QMainWindow):
                     qimage = ImageQt(pic_png)
                     pixmap = self.resize_qimage_and_create_qpixmap(qimage)
                     self.label_info2.setPixmap(pixmap)
-                    self.label_info1.setText(f"Previewing: {image_name}")
+                    #self.label_info1.setText(f"Previewing: {image_name}")
                 else:
                     # Handle case where the JSON is valid but has no image data
-                    self.label_info1.setText(f"No image data found in '{image_name}.txt'.")
+                    #self.label_info1.setText(f"No image data found in '{image_name}.txt'.")
                     self.label_info2.setText("No Data")
                     self.label_info2.clear()
 
