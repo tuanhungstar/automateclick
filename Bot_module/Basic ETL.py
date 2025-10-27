@@ -367,8 +367,9 @@ class SimpleETL:
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.transformations_log.append(f"{timestamp} - {operation}")
-
-
+    def save_df_to_excel(self,file_link,df):
+        df.to_excel(file_link,index=False)
+        return "done"
 
 
 class DataFrameMerger:

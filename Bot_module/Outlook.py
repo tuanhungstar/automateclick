@@ -1,19 +1,21 @@
 import win32com.client
 import os
 import datetime
+import pandas as pd
 from typing import List, Dict, Any, Optional, Union
 import time
+from my_lib.shared_context import ExecutionContext as Context
 
 class OutlookHandler:
-    def __init__(self):
+    def __init__(self, context: Context):
+        self.context = context
         self.outlook = None
         self.namespace = None
         self.inbox = None
         self.sent_items = None
         self.drafts = None
-        self._connect()
     
-    def _connect(self):
+    def connect(self):
         """Connect to Outlook application"""
         try:
             self.outlook = win32com.client.Dispatch("Outlook.Application")
@@ -24,13 +26,13 @@ class OutlookHandler:
             self.sent_items = self.namespace.GetDefaultFolder(5)  # Sent Items
             self.drafts = self.namespace.GetDefaultFolder(16)  # Drafts
             
-            print("Successfully connected to Outlook")
-            return True
+            self.context.add_log("Successfully connected to Outlook")
+            return self.outlook
         except Exception as e:
-            print(f"Error connecting to Outlook: {str(e)}")
-            return False
+            self.context.add_log(f"Error connecting to Outlook: {str(e)}")
+            return None
     
-    def send_email(self, to_recipients: Union[str, List[str]], subject: str, body: str,
+    def send_email(self, outlook, to_recipients: Union[str, List[str]], subject: str, body: str,
                    cc_recipients: Union[str, List[str]] = None, 
                    bcc_recipients: Union[str, List[str]] = None,
                    attachments: List[str] = None, 
@@ -40,6 +42,7 @@ class OutlookHandler:
         Send an email
         
         Args:
+            outlook: Outlook application object
             to_recipients: Email recipient(s)
             subject: Email subject
             body: Email body content
@@ -50,7 +53,7 @@ class OutlookHandler:
             send_immediately: Send immediately or save to drafts
         """
         try:
-            mail = self.outlook.CreateItem(0)  # 0 = Mail item
+            mail = outlook.CreateItem(0)  # 0 = Mail item
             
             # Set recipients
             if isinstance(to_recipients, str):
@@ -82,471 +85,838 @@ class OutlookHandler:
                 for attachment in attachments:
                     if os.path.exists(attachment):
                         mail.Attachments.Add(attachment)
-                        print(f"Attached: {attachment}")
+                        self.context.add_log(f"Attached: {attachment}")
                     else:
-                        print(f"Warning: Attachment not found: {attachment}")
+                        self.context.add_log(f"Warning: Attachment not found: {attachment}")
             
             # Send or save to drafts
             if send_immediately:
                 mail.Send()
-                print("Email sent successfully")
+                self.context.add_log("Email sent successfully")
             else:
                 mail.Save()
-                print("Email saved to drafts")
+                self.context.add_log("Email saved to drafts")
             
             return True
         except Exception as e:
-            print(f"Error sending email: {str(e)}")
+            self.context.add_log(f"Error sending email: {str(e)}")
             return False
     
-    def get_emails(self, folder_name: str = "Inbox", count: int = 10, 
-                   unread_only: bool = False, from_date: datetime.datetime = None,
-                   to_date: datetime.datetime = None) -> List[Dict]:
+    def read_unread_emails(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None) -> pd.DataFrame:
         """
-        Retrieve emails from a specific folder
+        Read unread emails - version that keeps datetime as strings to avoid conversion errors
         
         Args:
-            folder_name: Name of the folder (Inbox, Sent Items, etc.)
-            count: Number of emails to retrieve
-            unread_only: Only get unread emails
-            from_date: Get emails from this date onwards
-            to_date: Get emails up to this date
+            outlook: Outlook application object
+            folder_name: Name of the folder (e.g., "Inbox", "Sent Items", or custom folder name)
+            folder_path: Full path to folder for nested folders (e.g., "Inbox\\Custom Folder")
+                        If provided, folder_name is ignored
         
         Returns:
-            List of dictionaries containing email information
+            DataFrame with email data (datetime fields as strings)
         """
         try:
-            folder = self._get_folder(folder_name)
-            if not folder:
-                return []
+            if not outlook:
+                self.context.add_log("Outlook object is None. Call connect() first.")
+                return pd.DataFrame()
             
-            messages = folder.Items
+            namespace = outlook.GetNamespace("MAPI")
+            target_folder = self._get_folder(namespace, folder_name, folder_path)
             
-            # Sort by received time (newest first)
-            messages.Sort("[ReceivedTime]", True)
+            if not target_folder:
+                return pd.DataFrame()
             
-            # Apply filters
-            if from_date or to_date or unread_only:
-                filter_str = ""
-                conditions = []
-                
-                if unread_only:
-                    conditions.append("[Unread] = True")
-                
-                if from_date:
-                    conditions.append(f"[ReceivedTime] >= '{from_date.strftime('%m/%d/%Y')}'")
-                
-                if to_date:
-                    conditions.append(f"[ReceivedTime] <= '{to_date.strftime('%m/%d/%Y')}'")
-                
-                if conditions:
-                    filter_str = " AND ".join(conditions)
-                    messages = messages.Restrict(filter_str)
+            messages = target_folder.Items
+            messages = messages.Restrict("[Unread] = True")
             
-            emails = []
-            retrieved = 0
+            # Try to sort, but don't fail if it doesn't work
+            try:
+                messages.Sort("[ReceivedTime]", True)
+            except:
+                pass
             
-            for message in messages:
-                if retrieved >= count:
-                    break
-                
-                try:
-                    email_info = {
-                        'subject': message.Subject,
-                        'sender': message.SenderName,
-                        'sender_email': message.SenderEmailAddress,
-                        'received_time': message.ReceivedTime,
-                        'body': message.Body,
-                        'html_body': message.HTMLBody,
-                        'unread': message.Unread,
-                        'size': message.Size,
-                        'attachments': self._get_attachment_info(message),
-                        'entry_id': message.EntryID
-                    }
-                    emails.append(email_info)
-                    retrieved += 1
-                except Exception as e:
-                    print(f"Error processing email: {str(e)}")
-                    continue
+            email_data = []
             
-            print(f"Retrieved {len(emails)} emails from {folder_name}")
-            return emails
-        except Exception as e:
-            print(f"Error retrieving emails: {str(e)}")
-            return []
-    
-    def search_emails(self, search_term: str, folder_name: str = "Inbox", 
-                     search_in: str = "subject") -> List[Dict]:
-        """
-        Search for emails containing specific terms
-        
-        Args:
-            search_term: Term to search for
-            folder_name: Folder to search in
-            search_in: Where to search ('subject', 'body', 'sender', 'all')
-        
-        Returns:
-            List of matching emails
-        """
-        try:
-            folder = self._get_folder(folder_name)
-            if not folder:
-                return []
-            
-            # Build search filter
-            if search_in == "subject":
-                filter_str = f"[Subject] LIKE '%{search_term}%'"
-            elif search_in == "body":
-                filter_str = f"[Body] LIKE '%{search_term}%'"
-            elif search_in == "sender":
-                filter_str = f"[SenderName] LIKE '%{search_term}%'"
-            elif search_in == "all":
-                filter_str = f"[Subject] LIKE '%{search_term}%' OR [Body] LIKE '%{search_term}%' OR [SenderName] LIKE '%{search_term}%'"
-            else:
-                filter_str = f"[Subject] LIKE '%{search_term}%'"
-            
-            messages = folder.Items.Restrict(filter_str)
-            
-            emails = []
             for message in messages:
                 try:
                     email_info = {
-                        'subject': message.Subject,
-                        'sender': message.SenderName,
-                        'sender_email': message.SenderEmailAddress,
-                        'received_time': message.ReceivedTime,
-                        'body': message.Body[:200] + "..." if len(message.Body) > 200 else message.Body,
-                        'unread': message.Unread,
-                        'entry_id': message.EntryID
+                        'Subject': str(getattr(message, 'Subject', '') or ''),
+                        'Sender': str(getattr(message, 'SenderName', '') or ''),
+                        'SenderEmail': str(getattr(message, 'SenderEmailAddress', '') or ''),
+                        'ReceivedTime_String': str(getattr(message, 'ReceivedTime', '') or ''),
+                        'Body': str(getattr(message, 'Body', '') or ''),
+                        'HTMLBody': str(getattr(message, 'HTMLBody', '') or ''),
+                        'HasAttachments': self._safe_has_attachments(message),
+                        'AttachmentCount': self._safe_attachment_count(message),
+                        'Importance': str(self._get_importance_text(getattr(message, 'Importance', 1))),
+                        'Size': int(getattr(message, 'Size', 0) or 0),
+                        'Categories': str(getattr(message, 'Categories', '') or ''),
+                        'EntryID': str(getattr(message, 'EntryID', '') or ''),
+                        'To': str(getattr(message, 'To', '') or ''),
+                        'CC': str(getattr(message, 'CC', '') or ''),
+                        'Folder': str(target_folder.Name),
+                        'CreationTime_String': str(getattr(message, 'CreationTime', '') or ''),
+                        'MessageClass': str(getattr(message, 'MessageClass', '') or ''),
+                        'AttachmentNames': self._safe_attachment_names(message)
                     }
-                    emails.append(email_info)
+                    
+                    email_data.append(email_info)
+                    
                 except Exception as e:
+                    self.context.add_log(f"Error processing message: {str(e)}")
                     continue
             
-            print(f"Found {len(emails)} emails matching '{search_term}'")
-            return emails
+            df = pd.DataFrame(email_data)
+            self.context.add_log(f"Retrieved {len(df)} unread emails from folder: {target_folder.Name}")
+            return df
+            
         except Exception as e:
-            print(f"Error searching emails: {str(e)}")
-            return []
+            self.context.add_log(f"Error reading unread emails: {str(e)}")
+            return pd.DataFrame()
     
-    def mark_as_read(self, entry_id: str):
-        """Mark an email as read"""
+    def _get_folder(self, namespace, folder_name: str, folder_path: Optional[str] = None):
+        """
+        Get folder object by name or path
+        """
         try:
-            message = self.namespace.GetItemFromID(entry_id)
-            message.Unread = False
-            message.Save()
-            print("Email marked as read")
-            return True
-        except Exception as e:
-            print(f"Error marking email as read: {str(e)}")
-            return False
-    
-    def mark_as_unread(self, entry_id: str):
-        """Mark an email as unread"""
-        try:
-            message = self.namespace.GetItemFromID(entry_id)
-            message.Unread = True
-            message.Save()
-            print("Email marked as unread")
-            return True
-        except Exception as e:
-            print(f"Error marking email as unread: {str(e)}")
-            return False
-    
-    def delete_email(self, entry_id: str):
-        """Delete an email"""
-        try:
-            message = self.namespace.GetItemFromID(entry_id)
-            message.Delete()
-            print("Email deleted")
-            return True
-        except Exception as e:
-            print(f"Error deleting email: {str(e)}")
-            return False
-    
-    def move_email(self, entry_id: str, destination_folder: str):
-        """Move an email to a different folder"""
-        try:
-            message = self.namespace.GetItemFromID(entry_id)
-            dest_folder = self._get_folder(destination_folder)
-            if dest_folder:
-                message.Move(dest_folder)
-                print(f"Email moved to {destination_folder}")
-                return True
+            if folder_path:
+                return self._get_folder_by_path(namespace, folder_path)
+            
+            # Check default folders first
+            if folder_name.lower() == "inbox":
+                return namespace.GetDefaultFolder(6)  # Inbox
+            elif folder_name.lower() == "sent items":
+                return namespace.GetDefaultFolder(5)  # Sent Items
+            elif folder_name.lower() == "drafts":
+                return namespace.GetDefaultFolder(16)  # Drafts
             else:
-                print(f"Destination folder '{destination_folder}' not found")
+                # Search for custom folder
+                return self._find_folder_by_name(namespace, folder_name)
+                
+        except Exception as e:
+            self.context.add_log(f"Error getting folder '{folder_name}': {str(e)}")
+            return None
+    
+    def _get_folder_by_path(self, namespace, folder_path: str):
+        """
+        Get folder by full path (e.g., "Inbox\\Custom Folder\\Subfolder")
+        """
+        try:
+            folder_parts = folder_path.split('\\')
+            
+            # If only one part, it's a root-level folder
+            if len(folder_parts) == 1:
+                folder_name = folder_parts[0]
+                
+                if folder_name.lower() == "inbox":
+                    return namespace.GetDefaultFolder(6)
+                elif folder_name.lower() == "sent items":
+                    return namespace.GetDefaultFolder(5)
+                elif folder_name.lower() == "drafts":
+                    return namespace.GetDefaultFolder(16)
+                else:
+                    return self._find_root_folder_by_name(namespace, folder_name)
+            
+            # Multiple parts - handle nested folders
+            current_folder = None
+            
+            if folder_parts[0].lower() == "inbox":
+                current_folder = namespace.GetDefaultFolder(6)
+            elif folder_parts[0].lower() == "sent items":
+                current_folder = namespace.GetDefaultFolder(5)
+            elif folder_parts[0].lower() == "drafts":
+                current_folder = namespace.GetDefaultFolder(16)
+            else:
+                current_folder = self._find_root_folder_by_name(namespace, folder_parts[0])
+            
+            if not current_folder:
+                self.context.add_log(f"Root folder '{folder_parts[0]}' not found")
+                return None
+            
+            # Navigate through subfolders
+            for folder_part in folder_parts[1:]:
+                found_subfolder = None
+                for subfolder in current_folder.Folders:
+                    if subfolder.Name.lower() == folder_part.lower():
+                        found_subfolder = subfolder
+                        break
+                
+                if found_subfolder:
+                    current_folder = found_subfolder
+                else:
+                    self.context.add_log(f"Subfolder '{folder_part}' not found in '{current_folder.Name}'")
+                    return None
+            
+            return current_folder
+            
+        except Exception as e:
+            self.context.add_log(f"Error navigating folder path '{folder_path}': {str(e)}")
+            return None
+    
+    def _find_folder_by_name(self, namespace, folder_name: str):
+        """
+        Recursively search for folder by name
+        """
+        try:
+            # Search in default folders first
+            folders_to_search = []
+            try:
+                folders_to_search.append(namespace.GetDefaultFolder(6))   # Inbox
+                folders_to_search.append(namespace.GetDefaultFolder(5))   # Sent Items
+                folders_to_search.append(namespace.GetDefaultFolder(16))  # Drafts
+            except:
+                pass
+            
+            # Add root folders
+            try:
+                for folder in namespace.Folders:
+                    folders_to_search.append(folder)
+            except:
+                pass
+            
+            for folder in folders_to_search:
+                try:
+                    found_folder = self._search_folder_recursive(folder, folder_name)
+                    if found_folder:
+                        return found_folder
+                except:
+                    continue
+            
+            self.context.add_log(f"Folder '{folder_name}' not found")
+            return None
+            
+        except Exception as e:
+            self.context.add_log(f"Error searching for folder '{folder_name}': {str(e)}")
+            return None
+    
+    def _find_root_folder_by_name(self, namespace, folder_name: str):
+        """
+        Find folder at root level (same level as Inbox)
+        """
+        try:
+            for folder in namespace.Folders:
+                if folder.Name.lower() == folder_name.lower():
+                    return folder
+            
+            self.context.add_log(f"Root folder '{folder_name}' not found")
+            return None
+            
+        except Exception as e:
+            self.context.add_log(f"Error searching for root folder '{folder_name}': {str(e)}")
+            return None
+    
+    def _search_folder_recursive(self, parent_folder, target_name: str):
+        """
+        Recursively search for folder in subfolders
+        """
+        try:
+            # Check current folder
+            if parent_folder.Name.lower() == target_name.lower():
+                return parent_folder
+            
+            # Search in subfolders
+            for subfolder in parent_folder.Folders:
+                if subfolder.Name.lower() == target_name.lower():
+                    return subfolder
+                
+                # Recursive search
+                found = self._search_folder_recursive(subfolder, target_name)
+                if found:
+                    return found
+            
+            return None
+            
+        except Exception as e:
+            return None
+    
+    def _safe_has_attachments(self, message):
+        """
+        Safely check if message has attachments
+        """
+        try:
+            attachments = getattr(message, 'Attachments', None)
+            if attachments is None:
                 return False
-        except Exception as e:
-            print(f"Error moving email: {str(e)}")
+            return len(attachments) > 0
+        except:
             return False
     
-    def save_attachments(self, entry_id: str, save_path: str) -> List[str]:
+    def _safe_attachment_count(self, message):
         """
-        Save all attachments from an email
+        Safely get attachment count
+        """
+        try:
+            attachments = getattr(message, 'Attachments', None)
+            if attachments is None:
+                return 0
+            return len(attachments)
+        except:
+            return 0
+    
+    def _safe_attachment_names(self, message):
+        """
+        Safely get attachment names
+        """
+        try:
+            if not self._safe_has_attachments(message):
+                return ''
+            
+            attachment_names = []
+            for attachment in message.Attachments:
+                try:
+                    attachment_names.append(str(attachment.FileName))
+                except:
+                    attachment_names.append('[Unknown filename]')
+            return '; '.join(attachment_names)
+        except:
+            return 'Error reading attachments'
+    
+    def _get_importance_text(self, importance_level):
+        """
+        Convert importance level to text
+        """
+        try:
+            importance_map = {
+                0: "Low",
+                1: "Normal", 
+                2: "High"
+            }
+            return importance_map.get(int(importance_level), "Normal")
+        except:
+            return "Normal"
+                
+    def save_attachments(self, outlook, entry_id: str, save_folder: str, 
+                        attachment_names: Optional[List[str]] = None) -> List[str]:
+        """
+        Save attachments from a specific email by EntryID
         
         Args:
-            entry_id: Email entry ID
-            save_path: Directory to save attachments
+            outlook: Outlook application object
+            entry_id: EntryID of the email (from DataFrame)
+            save_folder: Folder path where to save attachments
+            attachment_names: List of specific attachment names to save (None = save all)
         
         Returns:
             List of saved file paths
         """
         try:
-            message = self.namespace.GetItemFromID(entry_id)
-            attachments = message.Attachments
+            if not outlook:
+                self.context.add_log("Outlook object is None")
+                return []
             
-            if not os.path.exists(save_path):
-                os.makedirs(save_path)
+            # Create save folder if it doesn't exist
+            if not os.path.exists(save_folder):
+                os.makedirs(save_folder)
+                self.context.add_log(f"Created folder: {save_folder}")
+            
+            namespace = outlook.GetNamespace("MAPI")
+            
+            # Get the email by EntryID
+            try:
+                message = namespace.GetItemFromID(entry_id)
+            except Exception as e:
+                self.context.add_log(f"Could not find email with EntryID: {entry_id}")
+                return []
+            
+            if not message.Attachments or len(message.Attachments) == 0:
+                self.context.add_log("No attachments found in this email")
+                return []
             
             saved_files = []
-            for attachment in attachments:
-                filename = attachment.FileName
-                file_path = os.path.join(save_path, filename)
-                attachment.SaveAsFile(file_path)
-                saved_files.append(file_path)
-                print(f"Saved attachment: {file_path}")
             
-            return saved_files
-        except Exception as e:
-            print(f"Error saving attachments: {str(e)}")
-            return []
-    
-    def create_appointment(self, subject: str, start_time: datetime.datetime,
-                          end_time: datetime.datetime, body: str = "",
-                          location: str = "", attendees: List[str] = None,
-                          reminder_minutes: int = 15):
-        """
-        Create a calendar appointment
-        
-        Args:
-            subject: Appointment subject
-            start_time: Start time
-            end_time: End time
-            body: Appointment body/description
-            location: Meeting location
-            attendees: List of attendee email addresses
-            reminder_minutes: Reminder time in minutes before appointment
-        """
-        try:
-            appointment = self.outlook.CreateItem(1)  # 1 = Appointment item
-            
-            appointment.Subject = subject
-            appointment.Start = start_time
-            appointment.End = end_time
-            appointment.Body = body
-            appointment.Location = location
-            appointment.ReminderMinutesBeforeStart = reminder_minutes
-            
-            if attendees:
-                for attendee in attendees:
-                    appointment.Recipients.Add(attendee)
-                appointment.Recipients.ResolveAll()
-            
-            appointment.Save()
-            print("Appointment created successfully")
-            return True
-        except Exception as e:
-            print(f"Error creating appointment: {str(e)}")
-            return False
-    
-    def create_task(self, subject: str, body: str = "", due_date: datetime.datetime = None,
-                   priority: int = 1, reminder: bool = True):
-        """
-        Create a task
-        
-        Args:
-            subject: Task subject
-            body: Task description
-            due_date: Due date for the task
-            priority: Priority level (0=Low, 1=Normal, 2=High)
-            reminder: Set reminder for the task
-        """
-        try:
-            task = self.outlook.CreateItem(3)  # 3 = Task item
-            
-            task.Subject = subject
-            task.Body = body
-            task.Importance = priority
-            
-            if due_date:
-                task.DueDate = due_date
-            
-            if reminder and due_date:
-                task.ReminderSet = True
-                task.ReminderTime = due_date
-            
-            task.Save()
-            print("Task created successfully")
-            return True
-        except Exception as e:
-            print(f"Error creating task: {str(e)}")
-            return False
-    
-    def get_contacts(self, name_filter: str = None) -> List[Dict]:
-        """
-        Get contacts from Outlook
-        
-        Args:
-            name_filter: Filter contacts by name (optional)
-        
-        Returns:
-            List of contact dictionaries
-        """
-        try:
-            contacts_folder = self.namespace.GetDefaultFolder(10)  # 10 = Contacts
-            contacts = contacts_folder.Items
-            
-            if name_filter:
-                contacts = contacts.Restrict(f"[FullName] LIKE '%{name_filter}%'")
-            
-            contact_list = []
-            for contact in contacts:
+            for attachment in message.Attachments:
                 try:
-                    contact_info = {
-                        'full_name': contact.FullName,
-                        'email1': contact.Email1Address,
-                        'email2': contact.Email2Address,
-                        'business_phone': contact.BusinessTelephoneNumber,
-                        'mobile_phone': contact.MobileTelephoneNumber,
-                        'company': contact.CompanyName,
-                        'job_title': contact.JobTitle
-                    }
-                    contact_list.append(contact_info)
+                    filename = attachment.FileName
+                    
+                    # Skip if specific attachment names are specified and this isn't one of them
+                    if attachment_names and filename not in attachment_names:
+                        continue
+                    
+                    # Create safe filename
+                    safe_filename = self._make_safe_filename(filename)
+                    file_path = os.path.join(save_folder, safe_filename)
+                    
+                    # Handle duplicate filenames
+                    file_path = self._get_unique_filepath(file_path)
+                    
+                    # Save the attachment
+                    attachment.SaveAsFile(file_path)
+                    saved_files.append(file_path)
+                    
+                    self.context.add_log(f"Saved attachment: {filename} -> {file_path}")
+                    
                 except Exception as e:
+                    self.context.add_log(f"Error saving attachment {filename}: {str(e)}")
                     continue
             
-            print(f"Retrieved {len(contact_list)} contacts")
-            return contact_list
+            self.context.add_log(f"Successfully saved {len(saved_files)} attachments")
+            return saved_files
+            
         except Exception as e:
-            print(f"Error retrieving contacts: {str(e)}")
+            self.context.add_log(f"Error saving attachments: {str(e)}")
             return []
-    
-    def get_folder_list(self) -> List[str]:
-        """Get list of all available folders"""
+
+    def save_attachments_from_dataframe(self, outlook, df: pd.DataFrame, save_folder: str,
+                                       filter_extensions: Optional[List[str]] = None,
+                                       max_size_mb: Optional[float] = None) -> Dict[str, List[str]]:
+        """
+        Save attachments from multiple emails in DataFrame
+        
+        Args:
+            outlook: Outlook application object
+            df: DataFrame from read_unread_emails
+            save_folder: Base folder where to save attachments
+            filter_extensions: List of file extensions to save (e.g., ['.pdf', '.docx'])
+            max_size_mb: Maximum file size in MB to save
+        
+        Returns:
+            Dictionary with EntryID as key and list of saved files as value
+        """
         try:
-            folders = []
+            if df.empty:
+                self.context.add_log("DataFrame is empty")
+                return {}
             
-            # Default folders
-            default_folders = {
-                "Inbox": 6,
-                "Sent Items": 5,
-                "Drafts": 16,
-                "Deleted Items": 3,
-                "Outbox": 4,
-                "Calendar": 9,
-                "Contacts": 10,
-                "Tasks": 13,
-                "Notes": 12
-            }
+            # Create save folder if it doesn't exist
+            if not os.path.exists(save_folder):
+                os.makedirs(save_folder)
             
-            for folder_name in default_folders.keys():
-                folders.append(folder_name)
+            results = {}
+            emails_with_attachments = df[df['HasAttachments'] == True]
             
-            # Custom folders in Inbox
+            self.context.add_log(f"Processing {len(emails_with_attachments)} emails with attachments")
+            
+            for index, row in emails_with_attachments.iterrows():
+                try:
+                    entry_id = row['EntryID']
+                    subject = row['Subject'][:50]  # Truncate for logging
+                    
+                    self.context.add_log(f"Processing email: {subject}...")
+                    
+                    # Create subfolder for this email
+                    email_folder = os.path.join(save_folder, f"Email_{index}_{self._make_safe_filename(subject)}")
+                    
+                    saved_files = self._save_attachments_with_filters(
+                        outlook, entry_id, email_folder, filter_extensions, max_size_mb
+                    )
+                    
+                    if saved_files:
+                        results[entry_id] = saved_files
+                    
+                except Exception as e:
+                    self.context.add_log(f"Error processing email at index {index}: {str(e)}")
+                    continue
+            
+            total_files = sum(len(files) for files in results.values())
+            self.context.add_log(f"Total attachments saved: {total_files}")
+            
+            return results
+            
+        except Exception as e:
+            self.context.add_log(f"Error in save_attachments_from_dataframe: {str(e)}")
+            return {}
+
+    def _save_attachments_with_filters(self, outlook, entry_id: str, save_folder: str,
+                                      filter_extensions: Optional[List[str]] = None,
+                                      max_size_mb: Optional[float] = None) -> List[str]:
+        """
+        Save attachments with filtering options
+        """
+        try:
+            if not os.path.exists(save_folder):
+                os.makedirs(save_folder)
+            
+            namespace = outlook.GetNamespace("MAPI")
+            message = namespace.GetItemFromID(entry_id)
+            
+            if not message.Attachments or len(message.Attachments) == 0:
+                return []
+            
+            saved_files = []
+            
+            for attachment in message.Attachments:
+                try:
+                    filename = attachment.FileName
+                    file_ext = os.path.splitext(filename)[1].lower()
+                    
+                    # Filter by extension
+                    if filter_extensions:
+                        if file_ext not in [ext.lower() for ext in filter_extensions]:
+                            self.context.add_log(f"Skipped {filename} - extension not in filter")
+                            continue
+                    
+                    # Filter by size
+                    if max_size_mb:
+                        try:
+                            # Get attachment size (in bytes)
+                            attachment_size = attachment.Size
+                            size_mb = attachment_size / (1024 * 1024)
+                            
+                            if size_mb > max_size_mb:
+                                self.context.add_log(f"Skipped {filename} - size {size_mb:.1f}MB exceeds limit")
+                                continue
+                        except:
+                            # If we can't get size, save anyway
+                            pass
+                    
+                    # Save the attachment
+                    safe_filename = self._make_safe_filename(filename)
+                    file_path = os.path.join(save_folder, safe_filename)
+                    file_path = self._get_unique_filepath(file_path)
+                    
+                    attachment.SaveAsFile(file_path)
+                    saved_files.append(file_path)
+                    
+                    self.context.add_log(f"Saved: {filename}")
+                    
+                except Exception as e:
+                    self.context.add_log(f"Error saving attachment {filename}: {str(e)}")
+                    continue
+            
+            return saved_files
+            
+        except Exception as e:
+            self.context.add_log(f"Error in _save_attachments_with_filters: {str(e)}")
+            return []
+
+    def _make_safe_filename(self, filename: str) -> str:
+        """
+        Make filename safe for Windows filesystem
+        """
+        try:
+            # Remove or replace invalid characters
+            invalid_chars = '<>:"/\\|?*'
+            safe_filename = filename
+            
+            for char in invalid_chars:
+                safe_filename = safe_filename.replace(char, '_')
+            
+            # Remove leading/trailing spaces and dots
+            safe_filename = safe_filename.strip(' .')
+            
+            # Ensure filename is not empty
+            if not safe_filename:
+                safe_filename = "attachment"
+            
+            # Limit length
+            if len(safe_filename) > 200:
+                name, ext = os.path.splitext(safe_filename)
+                safe_filename = name[:200-len(ext)] + ext
+            
+            return safe_filename
+            
+        except Exception:
+            return "attachment.txt"
+
+    def _get_unique_filepath(self, file_path: str) -> str:
+        """
+        Get unique file path if file already exists
+        """
+        try:
+            if not os.path.exists(file_path):
+                return file_path
+            
+            base_path, extension = os.path.splitext(file_path)
+            counter = 1
+            
+            while os.path.exists(f"{base_path}_{counter}{extension}"):
+                counter += 1
+            
+            return f"{base_path}_{counter}{extension}"
+            
+        except Exception:
+            return file_path
+
+    def get_attachment_info(self, outlook, entry_id: str) -> List[Dict[str, Any]]:
+        """
+        Get detailed information about attachments without saving them
+        
+        Args:
+            outlook: Outlook application object
+            entry_id: EntryID of the email
+        
+        Returns:
+            List of dictionaries with attachment information
+        """
+        try:
+            if not outlook:
+                return []
+            
+            namespace = outlook.GetNamespace("MAPI")
+            message = namespace.GetItemFromID(entry_id)
+            
+            if not message.Attachments or len(message.Attachments) == 0:
+                return []
+            
+            attachment_info = []
+            
+            for i, attachment in enumerate(message.Attachments):
+                try:
+                    info = {
+                        'Index': i + 1,
+                        'FileName': getattr(attachment, 'FileName', f'Attachment_{i+1}'),
+                        'Size': getattr(attachment, 'Size', 0),
+                        'SizeMB': round(getattr(attachment, 'Size', 0) / (1024 * 1024), 2),
+                        'Type': getattr(attachment, 'Type', 'Unknown'),
+                        'Extension': os.path.splitext(getattr(attachment, 'FileName', ''))[1].lower()
+                    }
+                    attachment_info.append(info)
+                    
+                except Exception as e:
+                    self.context.add_log(f"Error getting info for attachment {i+1}: {str(e)}")
+                    continue
+            
+            return attachment_info
+            
+        except Exception as e:
+            self.context.add_log(f"Error getting attachment info: {str(e)}")
+            return []
+            
+    def read_emails_by_period(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
+                             start_date: Optional[Union[str, datetime.datetime]] = None,
+                             end_date: Optional[Union[str, datetime.datetime]] = None,
+                             days_back: Optional[int] = None,
+                             include_read: bool = True,
+                             include_unread: bool = True) -> pd.DataFrame:
+        """
+        Read all emails (read and unread) from a specific folder within a time period
+        
+        Args:
+            outlook: Outlook application object
+            folder_name: Name of the folder (e.g., "Inbox", "Sent Items", or custom folder name)
+            folder_path: Full path to folder for nested folders (e.g., "Inbox\\Custom Folder")
+            start_date: Start date (string 'YYYY-MM-DD' or datetime object)
+            end_date: End date (string 'YYYY-MM-DD' or datetime object)
+            days_back: Number of days back from today (alternative to start_date/end_date)
+            include_read: Include read emails
+            include_unread: Include unread emails
+        
+        Returns:
+            DataFrame with email data (datetime fields as strings)
+        """
+        try:
+            if not outlook:
+                self.context.add_log("Outlook object is None. Call connect() first.")
+                return pd.DataFrame()
+            
+            namespace = outlook.GetNamespace("MAPI")
+            target_folder = self._get_folder(namespace, folder_name, folder_path)
+            
+            if not target_folder:
+                return pd.DataFrame()
+            
+            # Calculate date range
+            start_dt, end_dt = self._calculate_date_range(start_date, end_date, days_back)
+            
+            if not start_dt or not end_dt:
+                self.context.add_log("Invalid date range specified")
+                return pd.DataFrame()
+            
+            self.context.add_log(f"Searching emails from {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
+            
+            # Build filter string for date range and read status
+            filter_parts = []
+            
+            # Date filter
+            start_str = start_dt.strftime('%m/%d/%Y %H:%M %p')
+            end_str = end_dt.strftime('%m/%d/%Y %H:%M %p')
+            filter_parts.append(f"[ReceivedTime] >= '{start_str}'")
+            filter_parts.append(f"[ReceivedTime] <= '{end_str}'")
+            
+            # Read status filter
+            read_filters = []
+            if include_read:
+                read_filters.append("[Unread] = False")
+            if include_unread:
+                read_filters.append("[Unread] = True")
+            
+            if read_filters:
+                filter_parts.append(f"({' OR '.join(read_filters)})")
+            
+            filter_string = ' AND '.join(filter_parts)
+            
+            self.context.add_log(f"Using filter: {filter_string}")
+            
+            # Get messages with filter
+            messages = target_folder.Items
+            messages = messages.Restrict(filter_string)
+            
+            # Sort by received time (newest first)
             try:
-                for folder in self.inbox.Folders:
-                    folders.append(folder.Name)
+                messages.Sort("[ReceivedTime]", True)
             except:
                 pass
             
-            return folders
+            email_data = []
+            
+            for message in messages:
+                try:
+                    email_info = {
+                        'Subject': str(getattr(message, 'Subject', '') or ''),
+                        'Sender': str(getattr(message, 'SenderName', '') or ''),
+                        'SenderEmail': str(getattr(message, 'SenderEmailAddress', '') or ''),
+                        'ReceivedTime_String': str(getattr(message, 'ReceivedTime', '') or ''),
+                        'Body': str(getattr(message, 'Body', '') or ''),
+                        'HTMLBody': str(getattr(message, 'HTMLBody', '') or ''),
+                        'HasAttachments': self._safe_has_attachments(message),
+                        'AttachmentCount': self._safe_attachment_count(message),
+                        'Importance': str(self._get_importance_text(getattr(message, 'Importance', 1))),
+                        'Size': int(getattr(message, 'Size', 0) or 0),
+                        'Categories': str(getattr(message, 'Categories', '') or ''),
+                        'EntryID': str(getattr(message, 'EntryID', '') or ''),
+                        'To': str(getattr(message, 'To', '') or ''),
+                        'CC': str(getattr(message, 'CC', '') or ''),
+                        'BCC': str(getattr(message, 'BCC', '') or ''),
+                        'Folder': str(target_folder.Name),
+                        'CreationTime_String': str(getattr(message, 'CreationTime', '') or ''),
+                        'MessageClass': str(getattr(message, 'MessageClass', '') or ''),
+                        'AttachmentNames': self._safe_attachment_names(message),
+                        'IsRead': not bool(getattr(message, 'Unread', False)),
+                        'IsUnread': bool(getattr(message, 'Unread', False)),
+                        'ConversationTopic': str(getattr(message, 'ConversationTopic', '') or ''),
+                        'SentOn_String': str(getattr(message, 'SentOn', '') or '')
+                    }
+                    
+                    email_data.append(email_info)
+                    
+                except Exception as e:
+                    self.context.add_log(f"Error processing message: {str(e)}")
+                    continue
+            
+            df = pd.DataFrame(email_data)
+            self.context.add_log(f"Retrieved {len(df)} emails from folder: {target_folder.Name}")
+            
+            # Add summary info
+            if not df.empty:
+                read_count = len(df[df['IsRead'] == True])
+                unread_count = len(df[df['IsUnread'] == True])
+                self.context.add_log(f"  - Read emails: {read_count}")
+                self.context.add_log(f"  - Unread emails: {unread_count}")
+            
+            return df
+            
         except Exception as e:
-            print(f"Error getting folder list: {str(e)}")
-            return []
-    
-    def get_unread_count(self, folder_name: str = "Inbox") -> int:
-        """Get count of unread emails in a folder"""
-        try:
-            folder = self._get_folder(folder_name)
-            if folder:
-                return folder.UnReadItemCount
-            return 0
-        except Exception as e:
-            print(f"Error getting unread count: {str(e)}")
-            return 0
-    
-    def _get_folder(self, folder_name: str):
-        """Helper method to get folder by name"""
-        folder_map = {
-            "Inbox": 6,
-            "Sent Items": 5,
-            "Drafts": 16,
-            "Deleted Items": 3,
-            "Outbox": 4,
-            "Calendar": 9,
-            "Contacts": 10,
-            "Tasks": 13,
-            "Notes": 12
-        }
-        
-        try:
-            if folder_name in folder_map:
-                return self.namespace.GetDefaultFolder(folder_map[folder_name])
-            else:
-                # Try to find custom folder
-                for folder in self.inbox.Folders:
-                    if folder.Name == folder_name:
-                        return folder
-                print(f"Folder '{folder_name}' not found")
-                return None
-        except Exception as e:
-            print(f"Error accessing folder '{folder_name}': {str(e)}")
-            return None
-    
-    def _get_attachment_info(self, message) -> List[Dict]:
-        """Helper method to get attachment information"""
-        attachments = []
-        try:
-            for attachment in message.Attachments:
-                att_info = {
-                    'filename': attachment.FileName,
-                    'size': attachment.Size,
-                    'type': attachment.Type
-                }
-                attachments.append(att_info)
-        except:
-            pass
-        return attachments
-    
-    def get_outlook_info(self):
-        """Display Outlook connection information"""
-        try:
-            print("=== Outlook Information ===")
-            print(f"Outlook Version: {self.outlook.Version}")
-            print(f"Current User: {self.namespace.CurrentUser.Name}")
-            print(f"Inbox Unread Count: {self.get_unread_count('Inbox')}")
-            print(f"Available Folders: {', '.join(self.get_folder_list())}")
-        except Exception as e:
-            print(f"Error getting Outlook info: {str(e)}")
+            self.context.add_log(f"Error reading emails by period: {str(e)}")
+            return pd.DataFrame()
 
-# Example usage
-if __name__ == "__main__":
-    # Create an instance of OutlookHandler
-    outlook_handler = OutlookHandler()
-    
-    # Get Outlook information
-    outlook_handler.get_outlook_info()
-    
-    # Example: Send an email
-    # outlook_handler.send_email(
-    #     to_recipients="recipient@example.com",
-    #     subject="Test Email from Python",
-    #     body="This is a test email sent from Python using OutlookHandler class.",
-    #     send_immediately=False  # Save to drafts instead of sending
-    # )
-    
-    # Example: Get recent emails
-    recent_emails = outlook_handler.get_emails(count=5)
-    for email in recent_emails:
-        print(f"Subject: {email['subject']}")
-        print(f"From: {email['sender']}")
-        print(f"Received: {email['received_time']}")
-        print("-" * 50)
-    
-    # Example: Search emails
-    # search_results = outlook_handler.search_emails("meeting", search_in="subject")
-    # print(f"Found {len(search_results)} emails with 'meeting' in subject")
-    
-    # Example: Get unread email count
-    unread_count = outlook_handler.get_unread_count()
-    print(f"Unread emails in Inbox: {unread_count}")
+    def _calculate_date_range(self, start_date, end_date, days_back):
+        """
+        Calculate start and end datetime objects from various input formats
+        """
+        try:
+            if days_back is not None:
+                # Use days_back to calculate range
+                end_dt = datetime.datetime.now()
+                start_dt = end_dt - datetime.timedelta(days=days_back)
+                return start_dt, end_dt
+            
+            # Parse start_date
+            if isinstance(start_date, str):
+                start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+            elif isinstance(start_date, datetime.datetime):
+                start_dt = start_date
+            elif isinstance(start_date, datetime.date):
+                start_dt = datetime.datetime.combine(start_date, datetime.time.min)
+            else:
+                start_dt = datetime.datetime.now() - datetime.timedelta(days=7)  # Default 7 days back
+            
+            # Parse end_date
+            if isinstance(end_date, str):
+                end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d')
+                end_dt = end_dt.replace(hour=23, minute=59, second=59)  # End of day
+            elif isinstance(end_date, datetime.datetime):
+                end_dt = end_date
+            elif isinstance(end_date, datetime.date):
+                end_dt = datetime.datetime.combine(end_date, datetime.time.max)
+            else:
+                end_dt = datetime.datetime.now()  # Default to now
+            
+            return start_dt, end_dt
+            
+        except Exception as e:
+            self.context.add_log(f"Error calculating date range: {str(e)}")
+            return None, None
+
+    def read_emails_last_n_days(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
+                               days: int = 7, include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
+        """
+        Convenience method to read emails from last N days
+        
+        Args:
+            outlook: Outlook application object
+            folder_name: Name of the folder
+            folder_path: Full path to folder for nested folders
+            days: Number of days back from today
+            include_read: Include read emails
+            include_unread: Include unread emails
+        
+        Returns:
+            DataFrame with email data
+        """
+        return self.read_emails_by_period(
+            outlook=outlook,
+            folder_name=folder_name,
+            folder_path=folder_path,
+            days_back=days,
+            include_read=include_read,
+            include_unread=include_unread
+        )
+
+    def read_emails_today(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
+                         include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
+        """
+        Convenience method to read emails from today only
+        """
+        today = datetime.date.today()
+        return self.read_emails_by_period(
+            outlook=outlook,
+            folder_name=folder_name,
+            folder_path=folder_path,
+            start_date=today.strftime('%Y-%m-%d'),
+            end_date=today.strftime('%Y-%m-%d'),
+            include_read=include_read,
+            include_unread=include_unread
+        )
+
+    def read_emails_this_week(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
+                             include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
+        """
+        Convenience method to read emails from this week (Monday to Sunday)
+        """
+        today = datetime.date.today()
+        start_of_week = today - datetime.timedelta(days=today.weekday())  # Monday
+        end_of_week = start_of_week + datetime.timedelta(days=6)  # Sunday
+        
+        return self.read_emails_by_period(
+            outlook=outlook,
+            folder_name=folder_name,
+            folder_path=folder_path,
+            start_date=start_of_week.strftime('%Y-%m-%d'),
+            end_date=end_of_week.strftime('%Y-%m-%d'),
+            include_read=include_read,
+            include_unread=include_unread
+        )
+
+    def read_emails_this_month(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
+                              include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
+        """
+        Convenience method to read emails from this month
+        """
+        today = datetime.date.today()
+        start_of_month = today.replace(day=1)
+        
+        # Get last day of month
+        if today.month == 12:
+            end_of_month = today.replace(year=today.year + 1, month=1, day=1) - datetime.timedelta(days=1)
+        else:
+            end_of_month = today.replace(month=today.month + 1, day=1) - datetime.timedelta(days=1)
+        
+        return self.read_emails_by_period(
+            outlook=outlook,
+            folder_name=folder_name,
+            folder_path=folder_path,
+            start_date=start_of_month.strftime('%Y-%m-%d'),
+            end_date=end_of_month.strftime('%Y-%m-%d'),
+            include_read=include_read,
+            include_unread=include_unread
+        )

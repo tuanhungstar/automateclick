@@ -146,11 +146,15 @@ class Bot_utility:
                 if location!=None:
                     pyautogui.click(location.x + offset_x, location.y + offset_y)
                     self.context.add_log(f"{file_name}")
+                    self.context.send_click_status(f"Image found: {file_name}")
                     return 'left_click_done'
             except:
+                self.context.add_log(f"Image not found: {file_name}")
+                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
         if location is None:
-            self.context.add_log(f"{file_name}")
+            self.context.send_click_status(f"Image not found: {file_name}")
+            self.context.add_log(f"Image not found: {file_name}")
             #print ('left_click_done fail: {}'.format(image_file),str(key))
         return 'left_click_done fail: {}'.format(file_name)
         
