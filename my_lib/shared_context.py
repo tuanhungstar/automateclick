@@ -12,7 +12,7 @@ class GuiCommunicator(QObject):
     """
     log_message_signal = pyqtSignal(str)
     update_module_info_signal = pyqtSignal(str)
-
+    update_click_signal = pyqtSignal(str)
 
 class ExecutionContext:
     """
@@ -59,6 +59,16 @@ class ExecutionContext:
         """Gets the base path to the Click_image folder."""
         return self.click_image_base_dir
     # --- END OF ADDITIONS ---
+    
+    def send_click_status(self,click_status) -> str:
+        """send click image status to Label_Info1"""
+        
+        if self.gui_communicator:
+            self.gui_communicator.update_click_signal.emit(click_status)        
+        
+
+    # --- END OF ADDITIONS ---
+    
     def add_log(self, message):
         """
         Adds a log entry to the context and optionally emits a signal

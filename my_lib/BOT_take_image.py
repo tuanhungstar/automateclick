@@ -793,8 +793,10 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
                         self.screenshotSaved.emit(self.conf_list_cob_img.currentText()) # Emit new selection
                             
                 except OSError as e:
+                    print (f"BOT Take Image Module: Delete Image Error: {e}")
                     self.show_info_messagebox(f"Error removing file '{file_name_with_path}.txt': {e}")
                 except Exception as e:
+                    print (f"BOT Take Image Module: Delete Image Error: {e}")
                     self.show_info_messagebox(f"Error saving updated image file: {e}")
             else:
                 self.show_info_messagebox('Selected image not found in data.')
