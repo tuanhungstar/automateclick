@@ -708,7 +708,10 @@ class ParameterInputDialog(QDialog):
     def __init__(self, method_name: str, parameters_to_configure: Dict[str, Tuple[Any, Any]],
                  current_global_var_names: List[str], image_filenames: List[str],
                  gui_communicator: GuiCommunicator,
-                 initial_parameters_config: Optional[Dict[str, Any]] = None, initial_assign_to_variable_name: Optional[str] = None, parent: Optional[QWidget] = None):
+                 initial_parameters_config: Optional[Dict[str, Any]] = None, 
+                 initial_assign_to_variable_name: Optional[str] = None, 
+                 method_docstring: Optional[str] = None, # <--- NEW ARGUMENT HERE
+                 parent: Optional[QWidget] = None):
 
         super().__init__(parent)
         self.setWindowTitle(f"Configure Parameters for '{method_name}'")
@@ -733,6 +736,20 @@ class ParameterInputDialog(QDialog):
         self.param_kinds: Dict[str, Any] = {}
 
         main_layout, form_layout = QVBoxLayoutDialog(), QFormLayout()
+        
+        # --- NEW: Docstring Display ---
+        if method_docstring:
+            doc_group = QGroupBox("Method Documentation")
+            doc_layout = QVBoxLayout()
+            self.docstring_display = QTextBrowser() # QTextBrowser is read-only by default and supports rich text
+            self.docstring_display.setMarkdown(method_docstring.strip()) # Use setMarkdown for better formatting
+            self.docstring_display.setFixedHeight(100) # Give it a reasonable height
+            self.docstring_display.setReadOnly(True) # Ensure it's read-only
+            doc_layout.addWidget(self.docstring_display)
+            doc_group.setLayout(doc_layout)
+            main_layout.addWidget(doc_group)
+        # --- END NEW ---
+        
         initial_parameters_config = initial_parameters_config if initial_parameters_config is not None else {}
 
         for param_name, (default_value, param_kind) in parameters_to_configure.items():
@@ -3846,7 +3863,8 @@ class MainWindow(QMainWindow):
         self.wait_time_between_steps = {'type': 'hardcoded', 'value': 0}
         self.setWindowTitle("Automate Your Task By Simple Bot - Developed by Phung Tuan Hung")
         
-        # Get the geometry of the primary screen
+
+        #Get the geometry of the primary screen
         screen = QApplication.primaryScreen().geometry()
         width = int(screen.width() * 0.9)
         height = int(screen.height() * 0.9)
@@ -3867,6 +3885,13 @@ class MainWindow(QMainWindow):
         icon_path = os.path.join(self.base_directory, "app_icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+        # 1. Define bot_steps_subfolder and bot_steps_directory FIRST
+        self.bot_steps_subfolder = "Bot_steps"
+        self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
+        
+        # 2. THEN define temp_file_path, using bot_steps_directory
+        self.temp_file_name = "workflow_temp.json"
+        self.temp_file_path = os.path.join(self.bot_steps_directory, self.temp_file_name) # <--- THIS IS THE CRITICAL CHANGE
             
         self.bot_steps_subfolder = "Bot_steps"
         self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
@@ -3916,6 +3941,7 @@ class MainWindow(QMainWindow):
         self.is_bot_running = False
         self.is_paused = False
         self.worker: Optional[ExecutionWorker] = None
+        self._check_for_temp_workflow_recovery()
         
     def init_ui(self) -> None:
         """Initialize the new UI with left menu, center content, and right panels."""
@@ -4549,7 +4575,7 @@ class MainWindow(QMainWindow):
         self.update_status_column_for_all_items()
         self._restore_expansion_state(expanded_state)
         self._update_workflow_tab(switch_to_tab=False)
-
+        self._save_workflow_to_temp_file() # <--- ADD THIS LINE at the end of the method
 
     def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
         item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
@@ -4588,6 +4614,7 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "Confirm Delete", f"Are you sure you want to delete {len(items_to_remove_data)} selected step(s)?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             self.added_steps_data = [s for s in self.added_steps_data if s not in items_to_remove_data]
             self._rebuild_execution_tree()
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
             
     def _find_block_indices(self, start_index: int) -> Tuple[int, int]:
         start_step = self.added_steps_data[start_index]
@@ -4646,6 +4673,7 @@ class MainWindow(QMainWindow):
         
         self.added_steps_data = part_before + block_to_move + part_middle + part_after
         self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
+        self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def _handle_move_down_request(self, step_data: Dict[str, Any]):
         current_pos = step_data.get("original_listbox_row_index")
@@ -4669,6 +4697,7 @@ class MainWindow(QMainWindow):
         
         self.added_steps_data = part_before + part_middle + block_to_move + part_after
         self._rebuild_execution_tree(item_to_focus_data=block_to_move[0])
+        self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def _get_template_names(self) -> List[str]:
         """Returns a sorted list of template names without extensions."""
@@ -5040,6 +5069,7 @@ class MainWindow(QMainWindow):
                 self.added_steps_data[insert_data_index:insert_data_index] = re_id_d_steps
                 self._sync_counters_with_loaded_data()  # ADD THIS LINE
                 self._rebuild_execution_tree(item_to_focus_data=re_id_d_steps[0])
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
                 self._log_to_console(f"Loaded template '{template_name}' with {len(re_id_d_steps)} steps.")
                 workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
                 if self.main_tab_widget.currentIndex() != workflow_tab_index:
@@ -5106,7 +5136,33 @@ class MainWindow(QMainWindow):
             
         display_text, class_name, method_name, module_name, params_for_dialog = item_data
         
-        self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, list(self.global_variables.keys()), self._get_image_filenames(), self.gui_communicator, parent=self)
+        # --- NEW: Retrieve docstring for the method ---
+        method_docstring = ""
+        try:
+            if self.module_directory not in sys.path:
+                sys.path.insert(0, self.module_directory)
+            module = importlib.import_module(module_name)
+            importlib.reload(module)
+            class_obj = getattr(module, class_name)
+            
+            # Instantiate class to get method object
+            init_kwargs_for_inspection: Dict[str, Any] = {}
+            if 'context' in inspect.signature(class_obj.__init__).parameters:
+                init_kwargs_for_inspection['context'] = ExecutionContext()
+            temp_instance = class_obj(**init_kwargs_for_inspection)
+            
+            method_func_obj = getattr(temp_instance, method_name)
+            method_docstring = inspect.getdoc(method_func_obj) or ""
+        except Exception as e:
+            self._log_to_console(f"Warning: Could not retrieve docstring for {class_name}.{method_name}: {e}")
+        finally:
+            if self.module_directory in sys.path:
+                sys.path.remove(self.module_directory)
+        # --- END NEW ---        
+        
+        
+        
+        self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, list(self.global_variables.keys()), self._get_image_filenames(), self.gui_communicator, parent=self,method_docstring=method_docstring)
         self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
         if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
             parameters_config = self.active_param_input_dialog.get_parameters_config()
@@ -5129,6 +5185,7 @@ class MainWindow(QMainWindow):
             insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
             self.added_steps_data.insert(insert_data_index, new_step_data_dict)
             self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
             workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
             if self.main_tab_widget.currentIndex() != workflow_tab_index:
                 self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())
@@ -5167,6 +5224,7 @@ class MainWindow(QMainWindow):
                 self.added_steps_data.insert(insert_data_index + 1, loop_end_data_dict)
                 self._update_original_listbox_row_indices()
                 self._rebuild_execution_tree(item_to_focus_data=new_loop_start_data)
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def add_conditional_block(self) -> None:
         dialog = ConditionalConfigDialog(self.global_variables, parent=self)
@@ -5188,7 +5246,8 @@ class MainWindow(QMainWindow):
                 self.added_steps_data.insert(insert_data_index + 2, new_if_end_data)
                 self._update_original_listbox_row_indices()
                 self._rebuild_execution_tree(item_to_focus_data=new_if_start_data)
-
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+                
 # In the MainWindow class, REPLACE the existing group_selected_steps method with this one:
 
     def group_selected_steps(self) -> None:
@@ -5235,6 +5294,7 @@ class MainWindow(QMainWindow):
             self.added_steps_data.insert(end_index + 2, group_end_data)
 
             self._rebuild_execution_tree(item_to_focus_data=group_start_data)
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def edit_step_in_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
         step_data_dict = self._get_item_data(item)
@@ -5257,6 +5317,8 @@ class MainWindow(QMainWindow):
             parameters_config_with_index = step_data_dict["parameters_config"]
             assign_to_variable_name = step_data_dict["assign_to_variable_name"]
             dialog_parameters_config = {k: v for k, v in parameters_config_with_index.items() if k != "original_listbox_row_index"}
+            method_docstring = ""
+       
             try:
                 if self.module_directory not in sys.path:
                     sys.path.insert(0, self.module_directory)
@@ -5271,13 +5333,28 @@ class MainWindow(QMainWindow):
                 func_to_inspect = method_func_obj.__func__ if inspect.ismethod(method_func_obj) else method_func_obj
                 sig = inspect.signature(func_to_inspect)
                 params_for_dialog: Dict[str, Tuple[Any, Any]] = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
+                
+                method_docstring = inspect.getdoc(method_func_obj) or "" # <--- GET DOCSTRING HERE
+                
             except Exception as e:
                 QMessageBox.critical(self, "Error Editing Step", f"Could not re-inspect method for editing:\n{e}")
                 return
             finally:
                 if self.module_directory in sys.path:
                     sys.path.remove(self.module_directory)
-            self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, list(self.global_variables.keys()), self._get_image_filenames(), self.gui_communicator, initial_parameters_config=dialog_parameters_config, initial_assign_to_variable_name=assign_to_variable_name, parent=self)
+            # --- END NEW ---
+                    
+                    
+                    
+            self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", 
+            params_for_dialog, 
+            list(self.global_variables.keys()), 
+            self._get_image_filenames(), 
+            self.gui_communicator, 
+            initial_parameters_config=dialog_parameters_config, 
+            initial_assign_to_variable_name=assign_to_variable_name, 
+            method_docstring=method_docstring, # <--- PASS THE DOCSTRING HERE
+            parent=self)
             self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
             if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
                 new_parameters_config = self.active_param_input_dialog.get_parameters_config()
@@ -5292,6 +5369,7 @@ class MainWindow(QMainWindow):
                 
                 self.added_steps_data[current_row].update({"parameters_config": new_parameters_config, "assign_to_variable_name": new_assign_to_variable_name})
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
             self.gui_communicator.update_module_info_signal.emit("")
             self.active_param_input_dialog = None
         elif step_type == "loop_start":
@@ -5319,6 +5397,7 @@ class MainWindow(QMainWindow):
                     elif step.get("type") in ["loop_end", "IF_END"]:
                         nesting_level -= 1
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
         elif step_type == "IF_START":
             condition_config = step_data_dict["condition_config"]
             dialog = ConditionalConfigDialog(self.global_variables, parent=self, initial_config=condition_config)
@@ -5341,12 +5420,14 @@ class MainWindow(QMainWindow):
                     elif step.get("type") in ["loop_end", "IF_END"]:
                         nesting_level -= 1
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
         elif step_type == "group_start":
             group_name = step_data_dict.get("group_name", "")
             new_name, ok = QInputDialog.getText(self, "Rename Group", "Enter new group name:", text=group_name)
             if ok and new_name:
                 self.added_steps_data[current_row]["group_name"] = new_name
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
         elif step_type in ["loop_end", "ELSE", "IF_END", "group_end"]:
             QMessageBox.information(self, "Edit Block Marker", "To change parameters, edit the corresponding 'Start' block.")
 
@@ -5359,6 +5440,7 @@ class MainWindow(QMainWindow):
             selected_step_data = [self._get_item_data(item) for item in selected_items]
             self.added_steps_data = [s for s in self.added_steps_data if s not in selected_step_data]
             self._rebuild_execution_tree()
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def _internal_clear_all_steps(self):
             self.execution_tree.clear()
@@ -5383,6 +5465,7 @@ class MainWindow(QMainWindow):
             return
         if QMessageBox.question(self, "Confirm Remove All", "Are you sure you want to remove ALL steps and variables?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             self._internal_clear_all_steps()
+            self._clear_temp_workflow_file() # <--- ADD THIS LINE
             self._log_to_console("All steps cleared by user.")
 
 # In the MainWindow class
@@ -5976,6 +6059,7 @@ class MainWindow(QMainWindow):
                     return
                 self.global_variables[name] = value
                 self._update_variables_list_display()
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def edit_variable(self) -> None:
         selected_item = self.variables_list.currentItem()
@@ -5985,6 +6069,7 @@ class MainWindow(QMainWindow):
         var_name = selected_item.text().split(' = ')[0]
         if var_name not in self.global_variables:
             self._update_variables_list_display()
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
             return
         dialog = GlobalVariableDialog(variable_name=var_name, variable_value=self.global_variables[var_name], parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -5992,6 +6077,7 @@ class MainWindow(QMainWindow):
             if new_name:
                 self.global_variables[new_name] = new_value
             self._update_variables_list_display()
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def delete_variable(self) -> None:
         selected_item = self.variables_list.currentItem()
@@ -6003,6 +6089,7 @@ class MainWindow(QMainWindow):
             if var_name in self.global_variables:
                 del self.global_variables[var_name]
             self._update_variables_list_display()
+            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
 
     def reset_all_variable_values(self) -> None:
         if not self.global_variables:
@@ -6105,6 +6192,7 @@ class MainWindow(QMainWindow):
                     self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
     
                 self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
+                self._save_workflow_to_temp_file() # <--- ADD THIS LINE after successful load
     
             except Exception as e:
                 QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
@@ -6898,6 +6986,64 @@ class MainWindow(QMainWindow):
         self.group_id_counter = max_group_id
         
         self._log_to_console(f"Synced counters - Loop: {self.loop_id_counter}, IF: {self.if_id_counter}, Group: {self.group_id_counter}")
+        
+    def _clear_temp_workflow_file(self):
+        """Empties the temporary workflow file."""
+        try:
+            if os.path.exists(self.temp_file_path):
+                with open(self.temp_file_path, 'w', encoding='utf-8') as f:
+                    json.dump({"added_steps_data": [], "global_variables": {}}, f, indent=4)
+                self._log_to_console(f"Temporary workflow file '{self.temp_file_name}' cleared.")
+        except Exception as e:
+            self._log_to_console(f"Error clearing temporary workflow file: {e}")
+            
+    # Inside MainWindow class
+    def _save_workflow_to_temp_file(self):
+        """Saves the current workflow and global variables to a temporary file."""
+        try:
+            os.makedirs(self.bot_steps_directory, exist_ok=True) # Ensure directory exists
+            
+            data_to_save = {
+                "added_steps_data": self.added_steps_data,
+                "global_variables": self.global_variables
+            }
+            
+            with open(self.temp_file_path, 'w', encoding='utf-8') as f:
+                json.dump(data_to_save, f, indent=4)
+            # self._log_to_console(f"Workflow saved to temporary file '{self.temp_file_name}'.") # Optional: log less frequently
+        except Exception as e:
+            self._log_to_console(f"Error saving workflow to temporary file: {e}")
+            
+            
+    def _check_for_temp_workflow_recovery(self):
+        """Checks if a temporary workflow exists and prompts the user to recover."""
+        if os.path.exists(self.temp_file_path):
+            try:
+                with open(self.temp_file_path, 'r', encoding='utf-8') as f:
+                    temp_data = json.load(f)
+                
+                if temp_data.get("added_steps_data") or temp_data.get("global_variables"):
+                    reply = QMessageBox.question(self, "Recover Unsaved Work",
+                                                 "Unsaved work was detected. Do you want to recover it?",
+                                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                    if reply == QMessageBox.StandardButton.Yes:
+                        # Clear current state before loading temp
+                        self._internal_clear_all_steps()
+
+                        self.added_steps_data = temp_data.get("added_steps_data", [])
+                        self.global_variables = temp_data.get("global_variables", {})
+                        self._sync_counters_with_loaded_data()
+                        self._rebuild_execution_tree()
+                        self._update_variables_list_display()
+                        self._log_to_console("Recovered workflow from temporary file.")
+                        return # Exit after recovery or rejection
+            except json.JSONDecodeError:
+                self._log_to_console("Temporary workflow file is corrupted, cannot recover.")
+            except Exception as e:
+                self._log_to_console(f"Error during temporary workflow recovery: {e}")
+        
+        # If no recovery, or recovery rejected, ensure temp file is clean for fresh start
+        self._clear_temp_workflow_file()
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
