@@ -70,6 +70,13 @@ class handle_excel():
             return None
             
         return None
+    def check_Length_String (self,String):
+        """ Check lenght of a String """
+        try:
+            str_len = len(str(String))
+        except:
+            str_len = 0
+        return str_len
 
     def read_excel_cells(self,workbook,col,row : int):
         """Reads the value from a single cell in an Excel worksheet.
