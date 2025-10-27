@@ -3844,7 +3844,7 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.wait_time_between_steps = {'type': 'hardcoded', 'value': 0}
-        self.setWindowTitle("Automate Your Task By Simple Bot - Designed by Phung Tuan Hung")
+        self.setWindowTitle("Automate Your Task By Simple Bot - Developed by Phung Tuan Hung")
         
         # Get the geometry of the primary screen
         screen = QApplication.primaryScreen().geometry()
