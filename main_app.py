@@ -3858,6 +3858,7 @@ class WorkflowCanvas(QWidget):
         
 # --- MAIN APPLICATION WINDOW ---
 class MainWindow(QMainWindow):
+# In MainWindow class
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.wait_time_between_steps = {'type': 'hardcoded', 'value': 0}
@@ -3885,16 +3886,20 @@ class MainWindow(QMainWindow):
         icon_path = os.path.join(self.base_directory, "app_icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
+            
         # 1. Define bot_steps_subfolder and bot_steps_directory FIRST
         self.bot_steps_subfolder = "Bot_steps"
         self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
         
-        # 2. THEN define temp_file_path, using bot_steps_directory
-        self.temp_file_name = "workflow_temp.json"
-        self.temp_file_path = os.path.join(self.bot_steps_directory, self.temp_file_name) # <--- THIS IS THE CRITICAL CHANGE
+        # --- NEW TEMP FILE LOGIC ---
+        # 2. Define the path for the default "untitled" temp file
+        self.default_temp_file_path = os.path.join(self.bot_steps_directory, "workflow_temp.json")
+        
+        # 3. Define the variable that holds the *currently active* temp file.
+        #    It starts as the default one.
+        self.current_temp_file_path = self.default_temp_file_path
+        # --- END NEW TEMP FILE LOGIC ---
             
-        self.bot_steps_subfolder = "Bot_steps"
-        self.bot_steps_directory = os.path.join(self.base_directory, self.bot_steps_subfolder)
         self.steps_template_subfolder = "Steps_template"
         self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
         self.template_document_directory = os.path.join(self.base_directory, "template_document")
@@ -3913,6 +3918,7 @@ class MainWindow(QMainWindow):
         self.is_bot_running = False
         self.is_paused = False # ADD THIS
         self.worker: Optional[ExecutionWorker] = None # ADD THIS
+        
         # --- Create UI ---
         self.init_ui()
 
@@ -3941,6 +3947,8 @@ class MainWindow(QMainWindow):
         self.is_bot_running = False
         self.is_paused = False
         self.worker: Optional[ExecutionWorker] = None
+        
+        # --- MODIFIED: This startup check now only checks for the default "untitled" temp file ---
         self._check_for_temp_workflow_recovery()
         
     def init_ui(self) -> None:
@@ -4369,25 +4377,47 @@ class MainWindow(QMainWindow):
             # Refresh the "Saved Bots" tab display
             self.load_saved_steps_to_tree()
 
+# In MainWindow class
     def delete_saved_bot(self, bot_name: str):
-        """Deletes the selected bot and its schedule."""
+        """Deletes the selected bot (.csv), its backup (.json), and its schedule."""
         reply = QMessageBox.question(self, "Confirm Delete",
-                                     f"Are you sure you want to permanently delete the bot '{bot_name}' and its schedule?",
+                                     f"Are you sure you want to permanently delete the bot '{bot_name}', "
+                                     "its backup file, and its schedule?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                      QMessageBox.StandardButton.No)
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                bot_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
-                if os.path.exists(bot_path):
-                    os.remove(bot_path)
+                # 1. Define paths for both files
+                bot_path_csv = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+                bot_path_json = os.path.join(self.bot_steps_directory, f"{bot_name}.json")
+                
+                # 2. Delete the .csv file
+                if os.path.exists(bot_path_csv):
+                    os.remove(bot_path_csv)
+                    
+                # 3. Delete the .json backup file
+                if os.path.exists(bot_path_json):
+                    os.remove(bot_path_json)
 
+                # 4. Delete the schedule
                 if bot_name in self.schedules:
                     del self.schedules[bot_name]
-                    self.save_schedules()
+                    self.save_schedules() # Save the updated schedules list
 
                 QMessageBox.information(self, "Success", f"Bot '{bot_name}' has been deleted.")
+                
+                # 5. Check if the deleted bot was the one currently open
+                if self.current_temp_file_path == bot_path_json:
+                    self._log_to_console(f"The currently open bot '{bot_name}' was deleted. Clearing UI.")
+                    # Clear the UI and reset to "untitled" state
+                    self._internal_clear_all_steps()
+                    self.current_temp_file_path = self.default_temp_file_path
+                    self._clear_default_temp_file() # Ensure the default file is empty
+                
+                # 6. Refresh the "Saved Bots" list
                 self.load_saved_steps_to_tree()
+                
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"An error occurred while deleting the bot:\n{e}")
 
@@ -5459,19 +5489,198 @@ class MainWindow(QMainWindow):
             self._log_to_console("Internal clear all steps executed.")
             self._update_workflow_tab(switch_to_tab=False)
             
+# In MainWindow class
     def clear_all_steps(self) -> None:
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Info", "The execution queue and variables are already empty.")
             return
-        if QMessageBox.question(self, "Confirm Remove All", "Are you sure you want to remove ALL steps and variables?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        
+        if QMessageBox.question(self, "Confirm Remove All", "Are you sure you want to remove ALL steps and variables?", 
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            
+            # 1. Clear the UI and internal data
             self._internal_clear_all_steps()
-            self._clear_temp_workflow_file() # <--- ADD THIS LINE
-            self._log_to_console("All steps cleared by user.")
+            
+            # 2. Clear the *currently active* temp file (e.g., MyBot.json or workflow_temp.json)
+            self._clear_temp_workflow_file()
+            
+            # 3. Reset the active temp file path back to the default "untitled" one
+            self.current_temp_file_path = self.default_temp_file_path
+            
+            self._log_to_console("All steps cleared by user. Reset to 'untitled' state.")
 
 # In the MainWindow class
 # In MainWindow class
 # REPLACE your existing _handle_execute_pause_resume method with this one:
+# In MainWindow class
+    def _load_data_from_csv(self, file_path: str) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
+        """
+        Reads a .csv bot file and returns its variables and steps.
+        Returns None if the file cannot be read.
+        """
+        if not os.path.exists(file_path):
+            self._log_to_console(f"Error: Could not find file to read: {file_path}")
+            return None
+            
+        try:
+            section = None
+            loaded_variables, loaded_steps = {}, []
+            with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                for row_num, row in enumerate(reader):
+                    if not row: continue
+                    
+                    header = row[0]
+                    if header == "__SCHEDULE_INFO__":
+                        section = "SCHEDULE"
+                        continue
+                    elif header == "__GLOBAL_VARIABLES__":
+                        section = "VARIABLES"
+                        continue
+                    elif header == "__BOT_STEPS__":
+                        section = "STEPS"
+                        next(reader, None)  # Skip the header row
+                        continue
+                    
+                    if section == "SCHEDULE":
+                        pass  # We don't need schedule info for this
+                    elif section == "VARIABLES":
+                        if len(row) == 2:
+                            loaded_variables[row[0]] = json.loads(row[1])
+                    elif section == "STEPS":
+                        if len(row) == 2:
+                            loaded_steps.append(json.loads(row[1]))
 
+            return loaded_variables, loaded_steps
+
+        except Exception as e:
+            self._log_to_console(f"Error reading .csv file {file_path}: {e}")
+            return None
+            
+# In MainWindow class
+    def _compare_csv_and_json(self, csv_path: str, json_path: str) -> bool:
+        """
+        Compares a .csv bot file and a .json backup file.
+        Returns True if the .json file has changes not present in the .csv file.
+        Returns False if they are identical or if the .json doesn't exist.
+        """
+        if not os.path.exists(json_path):
+            return False # No .json backup, so no changes to recover
+
+        try:
+            # 1. Load data from the .json backup
+            with open(json_path, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+            json_steps = json_data.get("added_steps_data", [])
+            json_vars = json_data.get("global_variables", {})
+
+            # 2. Load data from the .csv file
+            csv_data = self._load_data_from_csv(csv_path)
+            if csv_data is None:
+                # If .csv is unreadable but .json exists, treat .json as having changes
+                self._log_to_console(f"Warning: Could not read {os.path.basename(csv_path)} for comparison.")
+                return True 
+                
+            csv_vars, csv_steps = csv_data
+
+            # 3. Compare the data
+            
+            # Simple check: Compare step counts
+            if len(json_steps) != len(csv_steps):
+                self._log_to_console("Recovery check: Step counts differ.")
+                return True # Different number of steps
+
+            # Simple check: Compare variable counts
+            if len(json_vars) != len(csv_vars):
+                self._log_to_console("Recovery check: Variable counts differ.")
+                return True # Different number of variables
+
+            # In-depth check: Compare the JSON representation of the steps
+            # We re-serialize them to ignore formatting differences
+            json_steps_str = json.dumps(json_steps, sort_keys=True)
+            csv_steps_str = json.dumps(csv_steps, sort_keys=True)
+            
+            if json_steps_str != csv_steps_str:
+                self._log_to_console("Recovery check: Step data differs.")
+                return True # Step content is different
+
+            # In-depth check: Compare variables
+            # We must account for complex objects saved as `null` in the .csv
+            for var_name, json_value in json_vars.items():
+                if var_name not in csv_vars:
+                    self._log_to_console("Recovery check: Variable names differ.")
+                    return True # Variable added in .json
+                
+                csv_value = csv_vars[var_name]
+                
+                # If the .csv value is None, it *could* be a complex object that
+                # was intentionally nullified. We only care if the .json value
+                # is *also* not None (meaning it's a simple, different value).
+                if csv_value is None and json_value is not None:
+                    # Check if json_value is a simple type (str, int, float, bool, list, dict)
+                    # If it's a complex object, it would have been saved as None anyway.
+                    try:
+                        json.dumps(json_value) 
+                        # If json_value is simple AND not None, but csv_value is None,
+                        # they are different.
+                        self._log_to_console(f"Recovery check: Variable '{var_name}' data differs (json has value).")
+                        return True
+                    except TypeError:
+                        pass # It's a complex object, so `None` in csv is correct.
+                
+                # If csv_value is not None, we can do a direct comparison
+                elif csv_value is not None and csv_value != json_value:
+                    self._log_to_console(f"Recovery check: Variable '{var_name}' data differs.")
+                    return True
+
+            # If all checks pass, the files are effectively identical
+            return False
+
+        except Exception as e:
+            self._log_to_console(f"Error comparing .csv and .json: {e}")
+            # Err on the side of caution: if comparison fails, assume changes exist.
+            return True
+# In MainWindow class
+    def _apply_loaded_data_to_ui(self, variables: Dict[str, Any], steps: List[Dict[str, Any]], bot_name: str = ""):
+        """
+        Clears the current state and applies loaded data to the UI.
+        This also saves the loaded data to the *current* temp file.
+        """
+        # 1. Clear the current UI and data
+        self._internal_clear_all_steps()
+
+        # 2. Apply the loaded data
+        self.global_variables = variables
+        self.added_steps_data = steps
+        
+        # 3. Update UI components
+        self._sync_counters_with_loaded_data()
+        self._rebuild_execution_tree()
+        self._update_variables_list_display()
+        
+        if bot_name:
+            self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
+            self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
+
+        # 4. Save this newly loaded data to the *current* temp file
+        #    (which was set by the calling function, e.g., load_steps_from_file)
+        self._save_workflow_to_temp_file()
+        
+        self._log_to_console(f"Applied loaded data for '{bot_name or 'untitled'}' to UI.")
+        
+        
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
+            
     def _handle_execute_pause_resume(self):
         """
         Handles Start/Pause/Resume. Now correctly builds the focus mode UI
@@ -5537,7 +5746,7 @@ class MainWindow(QMainWindow):
                 # Resize window
                 screen = QApplication.primaryScreen().geometry()
                 new_width = int(self.original_geometry.width() * 0.25)
-                new_height = int(self.original_geometry.height() * 0.30)
+                new_height = int(self.original_geometry.height() * 0.80)
                 self.resize(new_width, new_height)
                 self.move(screen.width() - new_width - 10, 10)
 
@@ -6100,103 +6309,177 @@ class MainWindow(QMainWindow):
                 self.global_variables[var_name] = None
             self._update_variables_list_display()
 
+# In MainWindow class
     def save_bot_steps_dialog(self) -> None:
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
             return
+
+        bot_name = None
         
-        os.makedirs(self.bot_steps_directory, exist_ok=True)
-        existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
-        
-        dialog = SaveBotDialog(existing_bots, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            bot_name = dialog.get_bot_name()
-            if not bot_name:
-                return
-    
-            if bot_name in existing_bots:
-                reply = QMessageBox.question(self, "Confirm Overwrite",
-                                             f"A bot named '{bot_name}' already exists. Overwrite it?",
-                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                if reply == QMessageBox.StandardButton.No:
+        # --- NEW LOGIC: Check if we are saving an existing bot or a new one ---
+        is_new_bot = (self.current_temp_file_path == self.default_temp_file_path)
+
+        if is_new_bot:
+            # This is an "untitled" bot, so we must ask for a name.
+            os.makedirs(self.bot_steps_directory, exist_ok=True)
+            existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
+            
+            dialog = SaveBotDialog(existing_bots, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                bot_name = dialog.get_bot_name()
+                if not bot_name:
                     return
-    
-            file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
-            try:
-                variables_to_save = {}
-                for var_name, var_value in self.global_variables.items():
-                    try:
-                        json.dumps(var_value)
-                        variables_to_save[var_name] = var_value
-                    except (TypeError, OverflowError):
-                        variables_to_save[var_name] = None
-    
-                with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(["__GLOBAL_VARIABLES__"])
-                    for var_name, var_value in variables_to_save.items():
-                        writer.writerow([var_name, json.dumps(var_value)])
-                    writer.writerow(["__BOT_STEPS__"])
-                    writer.writerow(["StepType", "DataJSON"])
-                    for step_data_dict in self.added_steps_data:
-                        step_data_to_save = json.loads(json.dumps(step_data_dict))
-                        step_data_to_save.pop("original_listbox_row_index", None)
-                        if step_data_to_save.get("type") == "step" and step_data_to_save.get("parameters_config"):
-                            step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
-                        writer.writerow([step_data_to_save["type"], json.dumps(step_data_to_save)])
-                QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{file_path}\n(Object variables were reset to 'None' in the file.)")
-                self.load_saved_steps_to_tree()
-            except Exception as e:
-                QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
+        
+                if bot_name in existing_bots:
+                    reply = QMessageBox.question(self, "Confirm Overwrite",
+                                                 f"A bot named '{bot_name}' already exists. Overwrite it?",
+                                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                    if reply == QMessageBox.StandardButton.No:
+                        return
+            else:
+                return # User cancelled the "Save As" dialog
+        else:
+            # This is an existing bot. We get the name from the current temp file path.
+            bot_name = os.path.splitext(os.path.basename(self.current_temp_file_path))[0]
+            # We don't need to ask for a name, just save.
+        
+        # --- END NEW LOGIC ---
+
+        if not bot_name:
+            QMessageBox.critical(self, "Save Error", "Could not determine a file name to save.")
+            return
+
+        # Define paths for BOTH .csv and .json files
+        csv_file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+        json_file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.json")
+
+        try:
+            # 1. Prepare data to save (Global Variables)
+            variables_to_save = {}
+            for var_name, var_value in self.global_variables.items():
+                try:
+                    json.dumps(var_value) # Check if serializable
+                    variables_to_save[var_name] = var_value
+                except (TypeError, OverflowError):
+                    # Save non-serializable objects as None
+                    variables_to_save[var_name] = None
+            
+            # 2. Prepare data to save (Bot Steps)
+            steps_to_save = []
+            for step_data_dict in self.added_steps_data:
+                step_data_to_save = json.loads(json.dumps(step_data_dict))
+                # Clean up runtime-only data before saving
+                step_data_to_save.pop("original_listbox_row_index", None)
+                step_data_to_save.pop("execution_status", None)
+                step_data_to_save.pop("execution_result", None)
+                if step_data_to_save.get("type") == "step" and step_data_to_save.get("parameters_config"):
+                    step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
+                steps_to_save.append(step_data_to_save)
+
+            # 3. Save the "official" .csv file
+            with open(csv_file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                # Write schedule info (even if empty, to maintain structure)
+                schedule_data = self._read_schedule_from_csv(csv_file_path) or {}
+                writer.writerow(["__SCHEDULE_INFO__"])
+                writer.writerow([json.dumps(schedule_data)])
+                # Write variables
+                writer.writerow(["__GLOBAL_VARIABLES__"])
+                for var_name, var_value in variables_to_save.items():
+                    writer.writerow([var_name, json.dumps(var_value)])
+                # Write steps
+                writer.writerow(["__BOT_STEPS__"])
+                writer.writerow(["StepType", "DataJSON"])
+                for step_data in steps_to_save:
+                    writer.writerow([step_data["type"], json.dumps(step_data)])
+            
+            # 4. Save the identical .json backup file
+            data_for_json = {
+                "added_steps_data": steps_to_save,
+                "global_variables": variables_to_save
+            }
+            with open(json_file_path, 'w', encoding='utf-8') as f:
+                json.dump(data_for_json, f, indent=4)
+
+            # 5. Handle post-save logic
+            if is_new_bot:
+                # We just saved an "untitled" bot for the first time
+                self._clear_default_temp_file()
+                self.current_temp_file_path = json_file_path
+                self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
+                self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
+
+            QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{csv_file_path}")
+            self.load_saved_steps_to_tree() # Refresh the "Saved Bots" list
+
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
     
 
+# In MainWindow class
     def load_steps_from_file(self, file_path: str, bot_name: str = "") -> None:
-            self._internal_clear_all_steps()
-            try:
-                section = None
-                loaded_variables, loaded_steps = {}, []
-                with open(file_path, 'r', newline='', encoding='utf-8') as csvfile:
-                    reader = csv.reader(csvfile)
-                    for row_num, row in enumerate(reader):
-                        if not row: continue
-                        
-                        header = row[0]
-                        if header == "__SCHEDULE_INFO__":
-                            section = "SCHEDULE"
-                            continue
-                        elif header == "__GLOBAL_VARIABLES__":
-                            section = "VARIABLES"
-                            continue
-                        elif header == "__BOT_STEPS__":
-                            section = "STEPS"
-                            next(reader, None)
-                            continue
-                        
-                        if section == "SCHEDULE":
-                            pass
-                        elif section == "VARIABLES":
-                            if len(row) == 2:
-                                loaded_variables[row[0]] = json.loads(row[1])
-                        elif section == "STEPS":
-                            if len(row) == 2:
-                                loaded_steps.append(json.loads(row[1]))
-    
-                self.global_variables = loaded_variables
-                self._update_variables_list_display()
-                self.added_steps_data = loaded_steps
-                self._sync_counters_with_loaded_data()  # ADD THIS LINE
-                self._rebuild_execution_tree()
-                
-                if bot_name:
-                    self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
-                    self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
-    
-                self._log_to_console(f"Loaded bot from {os.path.basename(file_path)}")
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE after successful load
-    
-            except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the file:\n{e}")
-                self._log_to_console(f"Load Error: {e}")
+        """
+        Loads a bot from a .csv file, checking for unsaved changes in its
+        corresponding .json temp file and prompting for recovery if needed.
+        """
+        if not bot_name:
+            bot_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        # Define the paths for both the .csv and the .json backup
+        csv_path = file_path
+        json_path = os.path.join(self.bot_steps_directory, f"{bot_name}.json")
+
+        loaded_data = None
+        data_source_msg = ""
+
+        # 1. Check if a .json backup file exists and has unsaved changes
+        has_unsaved_changes = self._compare_csv_and_json(csv_path, json_path)
+
+        if has_unsaved_changes:
+            # 2. Ask the user if they want to recover the .json version
+            reply = QMessageBox.question(self, "Recover Unsaved Changes",
+                                         f"Unsaved changes were found for '{bot_name}' in its backup file.\n\n"
+                                         "Do you want to load the unsaved version? (Choosing 'No' will load the last official save from the .csv file).",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # 3a. Load from .json
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        json_data = json.load(f)
+                    loaded_data = (json_data.get("global_variables", {}), json_data.get("added_steps_data", []))
+                    data_source_msg = f"Recovered unsaved version of '{bot_name}' from .json backup."
+                except Exception as e:
+                    self._log_to_console(f"Error loading .json backup: {e}. Defaulting to .csv.")
+                    loaded_data = None # Force fallback to .csv
+            
+            # If user chose "No", loaded_data remains None, and we proceed to load from .csv
+        
+        # 3b. Load from .csv (if no unsaved changes, user chose "No", or .json failed)
+        if loaded_data is None:
+            loaded_data = self._load_data_from_csv(csv_path)
+            if loaded_data:
+                data_source_msg = f"Loaded '{bot_name}' from .csv file."
+        
+        # 4. Check if loading was successful from
+        if loaded_data:
+            loaded_vars, loaded_steps = loaded_data
+
+            # 5. Clear the *default* temp file (we are no longer "untitled")
+            self._clear_default_temp_file()
+
+            # 6. Set the *current* temp file path to this bot's .json
+            self.current_temp_file_path = json_path
+            
+            # 7. Apply the loaded data to the UI
+            self._apply_loaded_data_to_ui(loaded_vars, loaded_steps, bot_name)
+            self._log_to_console(data_source_msg)
+
+        else:
+            # 8. Handle load failure
+            QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading '{bot_name}'.")
+            self._log_to_console(f"Failed to load bot from {os.path.basename(csv_path)}.")
                 
     def show_context_menu(self, position: QPoint):
         item = self.module_tree.itemAt(position)
@@ -6986,75 +7269,99 @@ class MainWindow(QMainWindow):
         self.group_id_counter = max_group_id
         
         self._log_to_console(f"Synced counters - Loop: {self.loop_id_counter}, IF: {self.if_id_counter}, Group: {self.group_id_counter}")
-        
-    def _clear_temp_workflow_file(self):
-        """Empties the temporary workflow file."""
+# In MainWindow class
+    def _clear_default_temp_file(self):
+        """Specifically empties the default 'workflow_temp.json' file."""
         try:
-            if os.path.exists(self.temp_file_path):
-                with open(self.temp_file_path, 'w', encoding='utf-8') as f:
+            if os.path.exists(self.default_temp_file_path):
+                with open(self.default_temp_file_path, 'w', encoding='utf-8') as f:
                     json.dump({"added_steps_data": [], "global_variables": {}}, f, indent=4)
-                self._log_to_console(f"Temporary workflow file '{self.temp_file_name}' cleared.")
+                self._log_to_console(f"Default temp file '{os.path.basename(self.default_temp_file_path)}' cleared.")
         except Exception as e:
-            self._log_to_console(f"Error clearing temporary workflow file: {e}")
+            self._log_to_console(f"Error clearing default temp file: {e}")
+# In MainWindow class
+    def _clear_temp_workflow_file(self):
+        """Empties the currently active temporary workflow file."""
+        try:
+            # Use the currently active temp file path
+            if os.path.exists(self.current_temp_file_path):
+                with open(self.current_temp_file_path, 'w', encoding='utf-8') as f:
+                    json.dump({"added_steps_data": [], "global_variables": {}}, f, indent=4)
+                self._log_to_console(f"Temporary file '{os.path.basename(self.current_temp_file_path)}' cleared.")
+        except Exception as e:
+            self._log_to_console(f"Error clearing temporary file '{self.current_temp_file_path}': {e}")
             
     # Inside MainWindow class
+# In MainWindow class
     def _save_workflow_to_temp_file(self):
-        """Saves the current workflow and global variables to a temporary file."""
+        """Saves the current workflow and global variables to the active temporary file."""
         try:
-            os.makedirs(self.bot_steps_directory, exist_ok=True) # Ensure directory exists
+            # Ensure the main bot directory exists
+            os.makedirs(self.bot_steps_directory, exist_ok=True) 
             
             data_to_save = {
                 "added_steps_data": self.added_steps_data,
                 "global_variables": self.global_variables
             }
             
-            with open(self.temp_file_path, 'w', encoding='utf-8') as f:
+            # Save to the *currently active* temp file path
+            with open(self.current_temp_file_path, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, indent=4)
-            # self._log_to_console(f"Workflow saved to temporary file '{self.temp_file_name}'.") # Optional: log less frequently
+                
+            # self._log_to_console(f"Workflow saved to {os.path.basename(self.current_temp_file_path)}")
         except Exception as e:
-            self._log_to_console(f"Error saving workflow to temporary file: {e}")
+            self._log_to_console(f"Error saving workflow to {self.current_temp_file_path}: {e}")
             
             
     # Inside MainWindow class
+# In MainWindow class
     def _check_for_temp_workflow_recovery(self):
-        """Checks if a temporary workflow exists and prompts the user to recover.
-        If recovery is declined or an error occurs, the temp file is cleared."""
-        if os.path.exists(self.temp_file_path):
+        """Checks if the default 'workflow_temp.json' exists and prompts the user to recover."""
+        
+        # This function now ONLY checks the default temp file path.
+        if os.path.exists(self.default_temp_file_path):
             try:
-                with open(self.temp_file_path, 'r', encoding='utf-8') as f:
+                with open(self.default_temp_file_path, 'r', encoding='utf-8') as f:
                     temp_data = json.load(f)
                 
-                # Check if there's actual data in the temp file
+                # Check if there's actual data in the default temp file
                 has_temp_data = bool(temp_data.get("added_steps_data") or temp_data.get("global_variables"))
 
                 if has_temp_data:
                     reply = QMessageBox.question(self, "Recover Unsaved Work",
-                                                 "Unsaved work was detected. Do you want to recover it?",
+                                                 "Unsaved 'untitled' work was detected. Do you want to recover it?",
                                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     if reply == QMessageBox.StandardButton.Yes:
                         # Clear current state before loading temp
-                        self._internal_clear_all_steps() # This also clears current UI
+                        self._internal_clear_all_steps() 
 
                         self.added_steps_data = temp_data.get("added_steps_data", [])
                         self.global_variables = temp_data.get("global_variables", {})
                         self._sync_counters_with_loaded_data()
-                        self._rebuild_execution_tree() # This will call _save_workflow_to_temp_file()
+                        
+                        # We are loading into an "untitled" session, so the current temp path
+                        # IS the default temp path.
+                        self.current_temp_file_path = self.default_temp_file_path
+                        
+                        self._rebuild_execution_tree()
                         self._update_variables_list_display()
-                        self._log_to_console("Recovered workflow from temporary file.")
-                        return # Recovery successful, no need to clear temp file now
+                        self._log_to_console("Recovered 'untitled' workflow from temporary file.")
+                        
+                        # We don't clear the temp file here, as the user is now working on it.
+                        return 
                 
-                # If temp_data was empty or user said No
-                self._clear_temp_workflow_file() # Clear it
+                # If temp_data was empty or user said No, clear the default temp file
+                self._clear_default_temp_file() 
                 
             except json.JSONDecodeError:
-                self._log_to_console("Temporary workflow file is corrupted, cannot recover. Clearing it.")
-                self._clear_temp_workflow_file() # Clear corrupted file
+                self._log_to_console("Default temporary workflow file is corrupted, cannot recover. Clearing it.")
+                self._clear_default_temp_file()
             except Exception as e:
-                self._log_to_console(f"Error during temporary workflow recovery: {e}. Clearing temp file.")
-                self._clear_temp_workflow_file() # Clear if any other error
+                self._log_to_console(f"Error during default temporary workflow recovery: {e}. Clearing temp file.")
+                self._clear_default_temp_file()
         else:
             # If temp file doesn't exist, create an empty one to start tracking
-            self._clear_temp_workflow_file()
+            self._clear_default_temp_file()
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
