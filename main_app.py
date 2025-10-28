@@ -4011,7 +4011,7 @@ class MainWindow(QMainWindow):
         menu_layout = QVBoxLayout(self.left_menu)
         
         # --- Brand ---
-        self.website_label = QLabel('<a href="http://www.AutomateTask.Click" style="color: #3498db; text-decoration: none; font-size: 18pt; font-weight: bold;">AutomateTask</a>')
+        self.website_label = QLabel('<a href="" style="color: #3498db; text-decoration: none; font-size: 18pt; font-weight: bold;">AutomateTask</a>')
         self.website_label.setOpenExternalLinks(True)
         self.website_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         menu_layout.addWidget(self.website_label)
@@ -7015,35 +7015,46 @@ class MainWindow(QMainWindow):
             self._log_to_console(f"Error saving workflow to temporary file: {e}")
             
             
+    # Inside MainWindow class
     def _check_for_temp_workflow_recovery(self):
-        """Checks if a temporary workflow exists and prompts the user to recover."""
+        """Checks if a temporary workflow exists and prompts the user to recover.
+        If recovery is declined or an error occurs, the temp file is cleared."""
         if os.path.exists(self.temp_file_path):
             try:
                 with open(self.temp_file_path, 'r', encoding='utf-8') as f:
                     temp_data = json.load(f)
                 
-                if temp_data.get("added_steps_data") or temp_data.get("global_variables"):
+                # Check if there's actual data in the temp file
+                has_temp_data = bool(temp_data.get("added_steps_data") or temp_data.get("global_variables"))
+
+                if has_temp_data:
                     reply = QMessageBox.question(self, "Recover Unsaved Work",
                                                  "Unsaved work was detected. Do you want to recover it?",
                                                  QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                     if reply == QMessageBox.StandardButton.Yes:
                         # Clear current state before loading temp
-                        self._internal_clear_all_steps()
+                        self._internal_clear_all_steps() # This also clears current UI
 
                         self.added_steps_data = temp_data.get("added_steps_data", [])
                         self.global_variables = temp_data.get("global_variables", {})
                         self._sync_counters_with_loaded_data()
-                        self._rebuild_execution_tree()
+                        self._rebuild_execution_tree() # This will call _save_workflow_to_temp_file()
                         self._update_variables_list_display()
                         self._log_to_console("Recovered workflow from temporary file.")
-                        return # Exit after recovery or rejection
+                        return # Recovery successful, no need to clear temp file now
+                
+                # If temp_data was empty or user said No
+                self._clear_temp_workflow_file() # Clear it
+                
             except json.JSONDecodeError:
-                self._log_to_console("Temporary workflow file is corrupted, cannot recover.")
+                self._log_to_console("Temporary workflow file is corrupted, cannot recover. Clearing it.")
+                self._clear_temp_workflow_file() # Clear corrupted file
             except Exception as e:
-                self._log_to_console(f"Error during temporary workflow recovery: {e}")
-        
-        # If no recovery, or recovery rejected, ensure temp file is clean for fresh start
-        self._clear_temp_workflow_file()
+                self._log_to_console(f"Error during temporary workflow recovery: {e}. Clearing temp file.")
+                self._clear_temp_workflow_file() # Clear if any other error
+        else:
+            # If temp file doesn't exist, create an empty one to start tracking
+            self._clear_temp_workflow_file()
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
