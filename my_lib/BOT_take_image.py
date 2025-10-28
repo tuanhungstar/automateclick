@@ -559,7 +559,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         
         self.conf_list_cob_img.blockSignals(True)
         self.conf_list_cob_img.clear()
-        
+        self.conf_list_cob_img.addItem("---Add New---") # Add this as the first item
         filtered_list = []
         if selected_folder == "All Folders":
             filtered_list = self._all_image_paths
@@ -614,22 +614,32 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
     # --- UI Slot Methods (MODIFIED) ---
     @pyqtSlot()
     def Start_BOT(self):
-        if self.conf_list_cob_img.currentText():
+        
+# --- MODIFY THIS BLOCK ---
+        current_selection = self.conf_list_cob_img.currentText() # Get selection
+        # Only ask if a *real* file is selected
+        proceed=True
+        if current_selection and current_selection != "---Add New---":
             reply = QMessageBox.question(self, 'Check file', 'Do you want to add to current file?',
                                          QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-            if reply == QMessageBox.StandardButton.Cancel:
-                return
+            if reply == QMessageBox.StandardButton.Ok:
+                proceed = True # User clicked OK, so we will proceed
 
-        self.setWindowState(QtCore.Qt.WindowState.WindowMinimized)
-        self.current_pic = image_text_data() # Update instance attribute
-        self.setWindowState(QtCore.Qt.WindowState.WindowNoState)
-        self.raise_() 
-        
-        if len(self.current_pic) > 20:
-            pic_png = base64_pgn(self.current_pic)
-            qimage = ImageQt(pic_png)
-            pixmap = QtGui.QPixmap.fromImage(qimage)
-            self.click_img.setPixmap(pixmap)
+            else:
+
+                proceed = False # User clicked Cancel, so we will NOT proceed
+            # --- END MODIFICATION ---
+        if proceed:
+            self.setWindowState(QtCore.Qt.WindowState.WindowMinimized)
+            self.current_pic = image_text_data() # Update instance attribute
+            self.setWindowState(QtCore.Qt.WindowState.WindowNoState)
+            self.raise_() 
+            
+            if len(self.current_pic) > 20:
+                pic_png = base64_pgn(self.current_pic)
+                qimage = ImageQt(pic_png)
+                pixmap = QtGui.QPixmap.fromImage(qimage)
+                self.click_img.setPixmap(pixmap)
     @pyqtSlot()
     def Save_img(self):
         if len(self.current_pic) <= 50:
@@ -647,6 +657,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
                 selected_folder = "" # Save to root
             else:
                 self.show_info_messagebox('Please select a specific folder (or "New Folder") before saving.')
+                
                 return
         # ---
 
@@ -660,7 +671,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         file_name_safe = file_name_safe.replace(' ', '_')
         if not file_name_safe:
             self.show_info_messagebox('Invalid file name. Please use alphanumeric characters.')
-            return
+            self.__init__()
         file_name = file_name_safe 
 
         # --- New Path Logic ---
@@ -805,7 +816,16 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         self.KPI_botcomment_txt.clear()
         current_file_name = self.conf_list_cob_img.currentText() # This is now a relative path
         self.label_test_result.setText('')
-
+        
+        # --- ADD THIS BLOCK to handle the new item ---
+        if current_file_name == "---Add New---":
+            self.click_img.clear()
+            self.current_pic = ''
+            self.img_data = {}
+            self.file_name_txt.setText("") # Clear file name box to prompt for new
+            return # Stop processing
+        # --- END OF ADDED BLOCK ---
+        
         if current_file_name:
             file_path_txt = os.path.join(self.click_image_dir, current_file_name + ".txt")
             try:
