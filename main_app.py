@@ -1789,20 +1789,38 @@ class StepInsertionDialog(QDialog):
         return self.selected_parent_item, self.insert_mode
 
 
-# --- REPLACEMENT CLASS: TemplateVariableMappingDialog (with intelligent default) ---
+# --- REPLACEMENT CLASS: TemplateVariableMappingDialog (with 'is' variable filtering) ---
 class TemplateVariableMappingDialog(QDialog):
     """A dialog to map variables from a template to global variables."""
-# In the TemplateVariableMappingDialog class, replace the __init__ method
 
     def __init__(self, template_variables: set, global_variables: list, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Map Template Variables")
-        self.setMinimumWidth(600)  # Increase width to fit the new field
-        self.template_variables = sorted(list(template_variables))
+        self.setMinimumWidth(600)
+
+        # --- THIS IS THE KEY MODIFICATION ---
+        # Filter out any template variable that starts with 'is' (case-insensitive).
+        # These are typically status flags and not user-configurable inputs.
+        filtered_vars = {var for var in template_variables if not var.lower().startswith('is')}
+        self.template_variables = sorted(list(filtered_vars))
+        # --- END MODIFICATION ---
+
         self.global_variables = global_variables
         self.mapping_widgets = {}
 
         main_layout = QVBoxLayout(self)
+        
+        # If all variables were filtered out, show a message and exit.
+        if not self.template_variables:
+            main_layout.addWidget(QLabel("No configurable variables found in this template."))
+            # Add only a close button
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            button_box.rejected.connect(self.reject) # Close rejects the dialog
+            main_layout.addWidget(button_box)
+            self.setLayout(main_layout)
+            return # Stop building the rest of the dialog
+
+        # Original layout code for when there are variables to map
         form_layout = QFormLayout()
 
         for var_name in self.template_variables:
@@ -1818,10 +1836,8 @@ class TemplateVariableMappingDialog(QDialog):
             new_var_name_editor = QLineEdit(var_name)
             new_var_name_editor.setPlaceholderText("Variable Name")
 
-            # --- NEW: Add a textbox for the initial value ---
             new_var_value_editor = QLineEdit()
             new_var_value_editor.setPlaceholderText("Initial Value (optional)")
-            # --- END NEW ---
 
             if var_name in self.global_variables:
                 action_combo.setCurrentText("Map to Existing")
@@ -1832,10 +1848,7 @@ class TemplateVariableMappingDialog(QDialog):
             row_layout.addWidget(action_combo, 1)
             row_layout.addWidget(existing_var_combo, 2)
             row_layout.addWidget(new_var_name_editor, 2)
-            
-            # --- NEW: Add the value editor to the layout ---
             row_layout.addWidget(new_var_value_editor, 2)
-            # --- END NEW ---
             
             form_layout.addRow(QLabel(f"Template Variable '{var_name}':"), row_layout)
 
@@ -1843,7 +1856,7 @@ class TemplateVariableMappingDialog(QDialog):
                 'action': action_combo,
                 'existing': existing_var_combo,
                 'new_name': new_var_name_editor,
-                'new_value': new_var_value_editor # --- NEW: Store the widget ---
+                'new_value': new_var_value_editor
             }
             
             action_combo.currentIndexChanged.connect(
@@ -1857,6 +1870,57 @@ class TemplateVariableMappingDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
+        self.setLayout(main_layout)
+
+
+    def _toggle_inputs(self, var_name: str, index: int):
+        """Shows or hides the input widgets based on the selected action."""
+        widgets = self.mapping_widgets[var_name]
+        is_mapping_to_existing = (index == 0)
+        
+        widgets['existing'].setVisible(is_mapping_to_existing)
+        widgets['new_name'].setVisible(not is_mapping_to_existing)
+        widgets['new_value'].setVisible(not is_mapping_to_existing)
+
+    def get_mapping(self) -> Optional[Tuple[Dict[str, str], Dict[str, Any]]]:
+        # If there were no variables to map in the first place, return empty results.
+        if not self.template_variables:
+            return {}, {}
+
+        mapping = {}
+        new_variables = {}
+        for var_name, widgets in self.mapping_widgets.items():
+            action_index = widgets['action'].currentIndex()
+            
+            if action_index == 0:  # Map to Existing
+                target_var = widgets['existing'].currentText()
+                if target_var == "-- Select Existing --":
+                    QMessageBox.warning(self, "Input Error", f"Please select an existing variable to map '{var_name}' to.")
+                    return None
+                mapping[var_name] = target_var
+            
+            else:  # Create New
+                target_var_name = widgets['new_name'].text().strip()
+                if not target_var_name:
+                    QMessageBox.warning(self, "Input Error", f"The new variable name for '{var_name}' cannot be empty.")
+                    return None
+                
+                mapping[var_name] = target_var_name
+                
+                if target_var_name not in self.global_variables:
+                    initial_value_str = widgets['new_value'].text()
+
+                    if not initial_value_str:
+                        new_variables[target_var_name] = None
+                    else:
+                        try:
+                            parsed_value = ast.literal_eval(initial_value_str)
+                        except (ValueError, SyntaxError):
+                            parsed_value = initial_value_str
+                        
+                        new_variables[target_var_name] = parsed_value
+
+        return mapping, new_variables
 
 
 # In the TemplateVariableMappingDialog class, replace the _toggle_inputs method
