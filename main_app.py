@@ -661,6 +661,8 @@ class ConditionalConfigDialog(QDialog):
             self.right_operand_editor.setText(str(val_to_display))
         self._toggle_left_operand_input(); self._toggle_right_operand_input()
 
+# In main_app.py, REPLACE the entire GlobalVariableDialog class
+
 class GlobalVariableDialog(QDialog):
     def __init__(self, variable_name: str = "", variable_value: Any = "", parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -668,43 +670,149 @@ class GlobalVariableDialog(QDialog):
         self.layout = QFormLayout(self)
 
         self.name_input = QLineEdit(variable_name)
-        self.value_input = QLineEdit(str(variable_value))
+        self.layout.addRow("Name:", self.name_input)
+
+        # --- NEW Type ComboBox ---
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["String", "Number", "List", "Dictionary", "Boolean", "None"])
+        self.layout.addRow("Type:", self.type_combo)
+
+        # --- Value Input (now configured by helpers) ---
+        self.value_input = QLineEdit()
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self._open_file_dialog)
-
-        self.layout.addRow("Name:", self.name_input)
+        
         self.value_layout = QHBoxLayout()
         self.value_layout.addWidget(self.value_input)
         self.value_layout.addWidget(self.browse_button)
         self.layout.addRow("Value:", self.value_layout)
 
+        # --- Set initial state based on variable_value ---
+        self._set_initial_state(variable_value)
+
+        # --- Buttons ---
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.layout.addRow(self.buttons)
 
-        self.name_input.editingFinished.connect(self._toggle_browse_button)
-        self._toggle_browse_button()
+        # --- Connections ---
+        self.type_combo.currentTextChanged.connect(self._update_value_input_state)
+        self.name_input.textChanged.connect(self._update_value_input_state) # For browse button
+        self._update_value_input_state() # Initial call
 
-    def _toggle_browse_button(self):
-        """Shows or hides the browse button based on the variable name."""
-        name = self.name_input.text()
-        if name:
-            self.browse_button.setVisible("link" in name.lower())
-        else:
+    def _set_initial_state(self, variable_value: Any):
+        """Sets the type combo and value text based on an existing value."""
+        if isinstance(variable_value, (int, float)):
+            self.type_combo.setCurrentText("Number")
+            self.value_input.setText(str(variable_value))
+        elif isinstance(variable_value, list):
+            self.type_combo.setCurrentText("List")
+            self.value_input.setText(repr(variable_value)) # Use repr for lists/dicts
+        elif isinstance(variable_value, dict):
+            self.type_combo.setCurrentText("Dictionary")
+            self.value_input.setText(repr(variable_value))
+        elif isinstance(variable_value, bool):
+            self.type_combo.setCurrentText("Boolean")
+            self.value_input.setText(str(variable_value))
+        elif variable_value is None:
+            self.type_combo.setCurrentText("None")
+            self.value_input.setText("")
+        else: # Default to String (covers str and other unhandled types)
+            self.type_combo.setCurrentText("String")
+            self.value_input.setText(str(variable_value))
+
+    def _update_value_input_state(self):
+        """Shows/hides/disables inputs based on type and name."""
+        selected_type = self.type_combo.currentText()
+        var_name = self.name_input.text().lower()
+
+        if selected_type == "None":
+            self.value_input.setEnabled(False)
+            self.value_input.setText("")
             self.browse_button.setVisible(False)
+            self.value_input.setPlaceholderText("")
+        else:
+            self.value_input.setEnabled(True)
+            # Show browse button ONLY if type is String and name contains "link"
+            is_file_link = (selected_type == "String" and "link" in var_name)
+            self.browse_button.setVisible(is_file_link)
+            
+            # Set placeholder text
+            if selected_type == "String":
+                self.value_input.setPlaceholderText("Enter text value (or use Browse if name has 'link')")
+            elif selected_type == "Number":
+                self.value_input.setPlaceholderText("Enter a number (e.g., 123 or 45.6)")
+            elif selected_type == "List":
+                self.value_input.setPlaceholderText("Enter a Python list (e.g., [1, \"a\"] or [\"item\"])")
+            elif selected_type == "Dictionary":
+                self.value_input.setPlaceholderText("Enter a Python dict (e.g., {\"key\": \"value\"})")
+            elif selected_type == "Boolean":
+                self.value_input.setPlaceholderText("Enter True or False")
 
     def _open_file_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
         if file_path:
             self.value_input.setText(file_path)
 
-    def get_variable_data(self) -> Optional[Tuple[str, str]]:
+    def get_variable_data(self) -> Optional[Tuple[str, Any]]:
+        """Parses the value input based on the selected type."""
         name = self.name_input.text().strip()
         if not name:
             QMessageBox.warning(self, "Input Error", "Variable name cannot be empty.")
             return None
-        return name, self.value_input.text()
+        
+        selected_type = self.type_combo.currentText()
+        value_str = self.value_input.text().strip()
+        parsed_value: Any = None
+
+        try:
+            if selected_type == "String":
+                parsed_value = value_str
+            
+            elif selected_type == "None":
+                parsed_value = None
+            
+            elif selected_type == "Boolean":
+                if value_str.lower() == 'true':
+                    parsed_value = True
+                elif value_str.lower() == 'false':
+                    parsed_value = False
+                else:
+                    raise ValueError("Boolean value must be 'True' or 'False'")
+            
+            elif selected_type == "Number":
+                if not value_str: # Treat empty as 0 for numbers
+                    parsed_value = 0
+                else:
+                    parsed_value = ast.literal_eval(value_str)
+                if not isinstance(parsed_value, (int, float)):
+                    raise ValueError("Value is not a valid number.")
+            
+            elif selected_type == "List":
+                if not value_str:
+                    parsed_value = [] # Default to empty list
+                else:
+                    parsed_value = ast.literal_eval(value_str)
+                if not isinstance(parsed_value, list):
+                    raise ValueError("Value is not a valid list.")
+            
+            elif selected_type == "Dictionary":
+                if not value_str:
+                    parsed_value = {} # Default to empty dict
+                else:
+                    parsed_value = ast.literal_eval(value_str)
+                if not isinstance(parsed_value, dict):
+                    raise ValueError("Value is not a valid dictionary.")
+
+            return name, parsed_value
+
+        except (ValueError, SyntaxError) as e:
+            QMessageBox.warning(self, "Input Error", f"Invalid value for type '{selected_type}'.\n\n{e}\n\nPlease check your input.")
+            return None
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
+            return None
 
 class ParameterInputDialog(QDialog):
     request_screenshot = pyqtSignal()
@@ -1801,7 +1909,7 @@ class TemplateVariableMappingDialog(QDialog):
         # --- THIS IS THE KEY MODIFICATION ---
         # Filter out any template variable that starts with 'is' (case-insensitive).
         # These are typically status flags and not user-configurable inputs.
-        filtered_vars = {var for var in template_variables if not var.lower().startswith('is')}
+        filtered_vars = {var for var in template_variables if (not var.lower().startswith('is') and not var.lower().startswith('_') )}
         self.template_variables = sorted(list(filtered_vars))
         # --- END MODIFICATION ---
 
@@ -5580,24 +5688,55 @@ class MainWindow(QMainWindow):
             self._update_workflow_tab(switch_to_tab=False)
             
 # In MainWindow class
+# In MainWindow class
     def clear_all_steps(self) -> None:
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Info", "The execution queue and variables are already empty.")
             return
+
+        # --- NEW SAVE PROMPT LOGIC ---
+        # Only ask to save if there is data *and* we are NOT in the default "untitled" state
+        is_working_on_saved_bot = (self.current_temp_file_path != self.default_temp_file_path)
         
-        if QMessageBox.question(self, "Confirm Remove All", "Are you sure you want to remove ALL steps and variables?", 
-                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+        if is_working_on_saved_bot:
+            # We are working on a named bot, so ask to save first.
+            current_bot_name = os.path.splitext(os.path.basename(self.current_temp_file_path))[0]
             
-            # 1. Clear the UI and internal data
-            self._internal_clear_all_steps()
+            reply = QMessageBox.question(self, "Save Changes",
+                                         f"Do you want to save your changes to '{current_bot_name}' before creating a new bot?",
+                                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                                         QMessageBox.StandardButton.Cancel)
+
+            if reply == QMessageBox.StandardButton.Yes:
+                # User wants to save. Call the save dialog.
+                self.save_bot_steps_dialog()
+                
+                # Check if the save was cancelled (by checking if the temp path was reset)
+                # If save_bot_steps_dialog was successful, self.current_temp_file_path is still set to "MyBot.json"
+                # If the user cancelled the save dialog, we should also cancel the "clear all"
+                if self.current_temp_file_path == self.default_temp_file_path:
+                    # This implies the save dialog was opened but cancelled.
+                    self._log_to_console("Save was cancelled. 'Clear All' operation aborted.")
+                    return # Abort the clear operation
             
-            # 2. Clear the *currently active* temp file (e.g., MyBot.json or workflow_temp.json)
-            self._clear_temp_workflow_file()
+            elif reply == QMessageBox.StandardButton.Cancel:
+                self._log_to_console("'Clear All' operation cancelled by user.")
+                return # User cancelled, do nothing
             
-            # 3. Reset the active temp file path back to the default "untitled" one
-            self.current_temp_file_path = self.default_temp_file_path
-            
-            self._log_to_console("All steps cleared by user. Reset to 'untitled' state.")
+            # If user clicked "No", we just proceed to clear.
+
+        else:
+            # We are in the "untitled" state. Just ask for a simple confirmation.
+            if QMessageBox.question(self, "Confirm Remove All", "Are you sure you want to remove ALL steps and variables?", 
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return # User said no, abort.
+        # --- END NEW SAVE PROMPT LOGIC ---
+
+        # If we got this far, the user either saved, clicked "No" to saving,
+        # or confirmed clearing an "untitled" workflow.
+        
+        # Now, we safely reset the app to a blank, untitled state.
+        self._reset_to_untitled_state()
 
 # In the MainWindow class
 # In MainWindow class
@@ -5833,10 +5972,10 @@ class MainWindow(QMainWindow):
                 # Make the entire focus mode container visible
                 self.focus_mode_widget.setVisible(True)
                 
-                # Resize window
+                # Resize window change_size
                 screen = QApplication.primaryScreen().geometry()
                 new_width = int(self.original_geometry.width() * 0.25)
-                new_height = int(self.original_geometry.height() * 0.80)
+                new_height = int(self.original_geometry.height() * 0.30)
                 self.resize(new_width, new_height)
                 self.move(screen.width() - new_width - 10, 10)
 
@@ -6348,35 +6487,56 @@ class MainWindow(QMainWindow):
                 value_str = value_str[:57] + "..."
             self.variables_list.addItem(f"{name} = {value_str}")
 
+# In MainWindow class, REPLACE the add_variable method
+
     def add_variable(self) -> None:
         dialog = GlobalVariableDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            name, value = dialog.get_variable_data()
-            if name:
-                if name in self.global_variables:
-                    QMessageBox.warning(self, "Duplicate Variable", f"Variable '{name}' already exists.")
-                    return
-                self.global_variables[name] = value
-                self._update_variables_list_display()
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+            data = dialog.get_variable_data() # This now returns Optional[Tuple[str, Any]]
+            if data:
+                name, value = data # Unpack the tuple
+                if name:
+                    if name in self.global_variables:
+                        QMessageBox.warning(self, "Duplicate Variable", f"Variable '{name}' already exists.")
+                        return
+                    self.global_variables[name] = value # Correctly assigns Any type
+                    self._update_variables_list_display()
+                    self._save_workflow_to_temp_file()
+
+# In MainWindow class, REPLACE the edit_variable method
 
     def edit_variable(self) -> None:
         selected_item = self.variables_list.currentItem()
         if not selected_item or selected_item.text() == "No global variables defined.":
             QMessageBox.information(self, "No Selection", "Please select a variable to edit.")
             return
+        
         var_name = selected_item.text().split(' = ')[0]
         if var_name not in self.global_variables:
             self._update_variables_list_display()
-            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
             return
+
+        # Pass the *actual* value, not the string representation
         dialog = GlobalVariableDialog(variable_name=var_name, variable_value=self.global_variables[var_name], parent=self)
+        
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_name, new_value = dialog.get_variable_data()
-            if new_name:
-                self.global_variables[new_name] = new_value
-            self._update_variables_list_display()
-            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+            data = dialog.get_variable_data() # Returns Optional[Tuple[str, Any]]
+            if data:
+                new_name, new_value = data
+                
+                # Check for name collision if the name was changed
+                if new_name != var_name and new_name in self.global_variables:
+                    QMessageBox.warning(self, "Duplicate Variable", f"A variable with the name '{new_name}' already exists.")
+                    return
+                
+                # If name changed, remove the old one
+                if new_name != var_name:
+                    del self.global_variables[var_name]
+                
+                # Add/update the new one
+                self.global_variables[new_name] = new_value # Assigns Any type
+                self._update_variables_list_display()
+                self._save_workflow_to_temp_file()
 
     def delete_variable(self) -> None:
         selected_item = self.variables_list.currentItem()
@@ -6400,6 +6560,7 @@ class MainWindow(QMainWindow):
             self._update_variables_list_display()
 
 # In MainWindow class
+# In MainWindow class
     def save_bot_steps_dialog(self) -> None:
         if not self.added_steps_data and not self.global_variables:
             QMessageBox.information(self, "Nothing to Save", "The execution queue and global variables are empty.")
@@ -6407,34 +6568,46 @@ class MainWindow(QMainWindow):
 
         bot_name = None
         
-        # --- NEW LOGIC: Check if we are saving an existing bot or a new one ---
-        is_new_bot = (self.current_temp_file_path == self.default_temp_file_path)
+        # --- MODIFIED LOGIC: Always show the SaveBotDialog ---
+        # This will always act as "Save As..."
+        
+        # Check if we were working on an "untitled" bot
+        was_new_bot = (self.current_temp_file_path == self.default_temp_file_path)
 
-        if is_new_bot:
-            # This is an "untitled" bot, so we must ask for a name.
-            os.makedirs(self.bot_steps_directory, exist_ok=True)
-            existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
-            
-            dialog = SaveBotDialog(existing_bots, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                bot_name = dialog.get_bot_name()
-                if not bot_name:
-                    return
+        os.makedirs(self.bot_steps_directory, exist_ok=True)
+        existing_bots = [os.path.splitext(f)[0] for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
         
-                if bot_name in existing_bots:
-                    reply = QMessageBox.question(self, "Confirm Overwrite",
-                                                 f"A bot named '{bot_name}' already exists. Overwrite it?",
-                                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                    if reply == QMessageBox.StandardButton.No:
-                        return
+        dialog = SaveBotDialog(existing_bots, self)
+        
+        # --- NEW: Pre-populate the dialog with the current name if it's not a new bot ---
+        if not was_new_bot:
+            current_bot_name = os.path.splitext(os.path.basename(self.current_temp_file_path))[0]
+            if current_bot_name in existing_bots:
+                # Select the existing bot in the dropdown
+                dialog.bots_combo.setCurrentText(current_bot_name)
             else:
-                return # User cancelled the "Save As" dialog
+                # Put the name in the editor (e.g., if the .csv was deleted)
+                dialog.name_editor.setText(current_bot_name)
+        # --- END NEW ---
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            bot_name = dialog.get_bot_name()
+            if not bot_name:
+                return
+    
+            # Check if the chosen name is an existing bot
+            is_overwriting = bot_name in existing_bots
+            
+            if is_overwriting:
+                reply = QMessageBox.question(self, "Confirm Overwrite",
+                                             f"A bot named '{bot_name}' already exists. Overwrite it?",
+                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.No:
+                    return
         else:
-            # This is an existing bot. We get the name from the current temp file path.
-            bot_name = os.path.splitext(os.path.basename(self.current_temp_file_path))[0]
-            # We don't need to ask for a name, just save.
+            return # User cancelled the "Save As" dialog
         
-        # --- END NEW LOGIC ---
+        # --- END MODIFIED LOGIC ---
 
         if not bot_name:
             QMessageBox.critical(self, "Save Error", "Could not determine a file name to save.")
@@ -6458,8 +6631,10 @@ class MainWindow(QMainWindow):
             # 2. Prepare data to save (Bot Steps)
             steps_to_save = []
             for step_data_dict in self.added_steps_data:
+                # Create a deep copy to avoid modifying the in-memory data
                 step_data_to_save = json.loads(json.dumps(step_data_dict))
-                # Clean up runtime-only data before saving
+                
+                # Clean runtime keys
                 step_data_to_save.pop("original_listbox_row_index", None)
                 step_data_to_save.pop("execution_status", None)
                 step_data_to_save.pop("execution_result", None)
@@ -6470,8 +6645,13 @@ class MainWindow(QMainWindow):
             # 3. Save the "official" .csv file
             with open(csv_file_path, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                # Write schedule info (even if empty, to maintain structure)
-                schedule_data = self._read_schedule_from_csv(csv_file_path) or {}
+                
+                # --- NEW: Preserve schedule info if overwriting ---
+                schedule_data = {}
+                if is_overwriting:
+                     schedule_data = self._read_schedule_from_csv(csv_file_path) or {}
+                # --- END NEW ---
+                
                 writer.writerow(["__SCHEDULE_INFO__"])
                 writer.writerow([json.dumps(schedule_data)])
                 # Write variables
@@ -6493,12 +6673,14 @@ class MainWindow(QMainWindow):
                 json.dump(data_for_json, f, indent=4)
 
             # 5. Handle post-save logic
-            if is_new_bot:
+            if was_new_bot:
                 # We just saved an "untitled" bot for the first time
                 self._clear_default_temp_file()
-                self.current_temp_file_path = json_file_path
-                self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
-                self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
+
+            # After saving, the *new* file is our active temp file
+            self.current_temp_file_path = json_file_path
+            self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
+            self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
 
             QMessageBox.information(self, "Save Successful", f"Bot saved to:\n{csv_file_path}")
             self.load_saved_steps_to_tree() # Refresh the "Saved Bots" list
@@ -7383,22 +7565,52 @@ class MainWindow(QMainWindow):
             
     # Inside MainWindow class
 # In MainWindow class
+# In MainWindow class
     def _save_workflow_to_temp_file(self):
-        """Saves the current workflow and global variables to the active temporary file."""
+        """Saves the current workflow and global variables to the active temporary file.
+        This version CLEANS the data before saving, just like the main save function.
+        """
         try:
-            # Ensure the main bot directory exists
-            os.makedirs(self.bot_steps_directory, exist_ok=True) 
+            os.makedirs(self.bot_steps_directory, exist_ok=True)
             
+            # --- NEW CLEANING LOGIC ---
+            # 1. Prepare variables to save (handle non-serializable)
+            variables_to_save = {}
+            for var_name, var_value in self.global_variables.items():
+                try:
+                    json.dumps(var_value) # Check if serializable
+                    variables_to_save[var_name] = var_value
+                except (TypeError, OverflowError):
+                    # Save non-serializable objects as None
+                    variables_to_save[var_name] = None
+            
+            # 2. Prepare steps to save (remove runtime keys)
+            steps_to_save = []
+            for step_data_dict in self.added_steps_data:
+                # Create a deep copy to avoid modifying the in-memory data
+                # Using json.loads(json.dumps()) is a reliable way to deep copy
+                step_data_to_save = json.loads(json.dumps(step_data_dict))
+                
+                # Clean runtime keys
+                step_data_to_save.pop("original_listbox_row_index", None)
+                step_data_to_save.pop("execution_status", None)
+                step_data_to_save.pop("execution_result", None)
+                if step_data_to_save.get("type") == "step" and step_data_to_save.get("parameters_config"):
+                    step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
+                steps_to_save.append(step_data_to_save)
+            # --- END NEW CLEANING LOGIC ---
+
             data_to_save = {
-                "added_steps_data": self.added_steps_data,
-                "global_variables": self.global_variables
+                "added_steps_data": steps_to_save,
+                "global_variables": variables_to_save
             }
             
-            # Save to the *currently active* temp file path
+            # Save the clean data to the currently active temp file
             with open(self.current_temp_file_path, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, indent=4)
                 
             # self._log_to_console(f"Workflow saved to {os.path.basename(self.current_temp_file_path)}")
+                
         except Exception as e:
             self._log_to_console(f"Error saving workflow to {self.current_temp_file_path}: {e}")
             
@@ -7538,6 +7750,23 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self._log_to_console(f"Error while populating data table: {e}")
             self.data_table_view.setModel(None)
+            
+# In MainWindow class
+    def _reset_to_untitled_state(self):
+        """
+        Clears the UI and data, resets the temp file to the default 'untitled' one,
+        and clears that default file.
+        """
+        # 1. Clear the UI and internal data
+        self._internal_clear_all_steps()
+        
+        # 2. Reset the active temp file path back to the default "untitled" one
+        self.current_temp_file_path = self.default_temp_file_path
+        
+        # 3. Clear the default temp file to ensure the new session is blank
+        self._clear_default_temp_file()
+        
+        self._log_to_console("All steps cleared. Reset to 'untitled' state.")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
