@@ -20,6 +20,11 @@ from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
 from PyQt6 import QtWidgets, QtGui, QtCore
 from typing import Optional, List, Dict, Any, Tuple, Union
+import pandas as pd
+from openpyxl.worksheet.worksheet import Worksheet as OpenpyxlWorksheet
+from PyQt6.QtWidgets import QTableView
+from PyQt6.QtGui import QStandardItemModel, QStandardItem
+
 # Ensure my_lib is in the Python path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 my_lib_dir = os.path.join(script_dir, "my_lib")
@@ -4110,6 +4115,7 @@ class MainWindow(QMainWindow):
         self.create_execution_flow_tab()
         self.create_workflow_tab()
         self.create_log_tab()
+        self.create_data_tab() # <--- THIS LINE IS NEW
         normal_mode_layout.addWidget(self.main_tab_widget) # Add tabs to normal widget
 
         # Create the info widget (as before)
@@ -4141,7 +4147,26 @@ class MainWindow(QMainWindow):
 
         # Add the focus mode widget to the main layout
         main_center_layout.addWidget(self.focus_mode_widget)
+    def create_data_tab(self):
+        """Creates the 'Data' tab for viewing DataFrames and Worksheets."""
+        data_widget = QWidget()
+        layout = QVBoxLayout(data_widget)
+        layout.setContentsMargins(5, 5, 5, 5)
 
+        # Add an instruction label
+        instruction_label = QLabel("When this tab is active, double-click a DataFrame or Worksheet variable in the 'Global Variables' list to display it here.")
+        instruction_label.setStyleSheet("font-style: italic; color: #555;")
+        instruction_label.setWordWrap(True)
+        layout.addWidget(instruction_label)
+
+        # Create the table view to display data
+        self.data_table_view = QTableView()
+        self.data_table_view.setEditTriggers(QTableView.EditTrigger.NoEditTriggers) # Make it read-only
+        self.data_table_view.setAlternatingRowColors(True)
+        layout.addWidget(self.data_table_view)
+
+        # Add the completed widget as a new tab
+        self.main_tab_widget.addTab(data_widget, "📊 Data")
     def create_right_panels(self):
         """Creates the right-side panels for modules and variables."""
         self.right_panels = QWidget()
@@ -4233,6 +4258,7 @@ class MainWindow(QMainWindow):
         self.edit_var_button.clicked.connect(self.edit_variable)
         self.delete_var_button.clicked.connect(self.delete_variable)
         self.clear_vars_button.clicked.connect(self.reset_all_variable_values)
+        self.variables_list.itemDoubleClicked.connect(self._handle_variable_double_click) # <--- THIS LINE IS NEW
         
     def create_execution_flow_tab(self):
         """
@@ -7362,6 +7388,92 @@ class MainWindow(QMainWindow):
         else:
             # If temp file doesn't exist, create an empty one to start tracking
             self._clear_default_temp_file()
+            
+    def _handle_variable_double_click(self, item: QListWidgetItem) -> None:
+        """
+        Handles double-clicking a variable in the list. If the 'Data' tab is
+        active, it attempts to display the variable's data in the table.
+        Now inspects lists for worksheets.
+        """
+        # 1. Check if the "Data" tab is the active tab
+        data_tab_index = -1
+        for i in range(self.main_tab_widget.count()):
+            if self.main_tab_widget.tabText(i) == "📊 Data":
+                data_tab_index = i
+                break
+        
+        if self.main_tab_widget.currentIndex() != data_tab_index:
+            return # Do nothing if the data tab is not active
+
+        # 2. Get the variable name and value
+        var_name = item.text().split(' = ')[0]
+        if var_name not in self.global_variables:
+            return
+            
+        value = self.global_variables.get(var_name)
+
+        df = None
+        worksheet_to_display = None
+
+        # 3. Check the type of the value
+        try:
+            if isinstance(value, pd.DataFrame):
+                df = value
+            elif isinstance(value, OpenpyxlWorksheet):
+                worksheet_to_display = value
+            elif isinstance(value, list):
+                # --- NEW: Check first 5 items in the list ---
+                for sub_item in value[:5]: # Slices list, safe for lists < 5 items
+                    if isinstance(sub_item, OpenpyxlWorksheet):
+                        worksheet_to_display = sub_item
+                        self._log_to_console(f"Displaying worksheet found in list '@{var_name}'.")
+                        break # Found one, no need to check further
+            
+            # 4. Convert worksheet to DataFrame if one was found
+            if worksheet_to_display is not None:
+                # Convert openpyxl.Worksheet to a pandas DataFrame
+                data = worksheet_to_display.values
+                # Get the first row as columns
+                columns = next(data)[0:] 
+                # Create the DataFrame
+                df = pd.DataFrame(data, columns=columns)
+            
+            # 5. Display the DataFrame or clear the table
+            if df is not None:
+                self._display_dataframe_in_table(df)
+            else:
+                # Clear the table if the type is not displayable
+                self.data_table_view.setModel(None)
+                
+        except Exception as e:
+            self._log_to_console(f"Error displaying variable '{var_name}': {e}")
+            self.data_table_view.setModel(None)
+            
+    def _display_dataframe_in_table(self, df: pd.DataFrame) -> None:
+        """
+        Converts a pandas DataFrame into a QStandardItemModel and displays it
+        in the data_table_view.
+        """
+        try:
+            # Create a new model
+            model = QStandardItemModel(self)
+            
+            # Set headers
+            model.setHorizontalHeaderLabels(df.columns.astype(str))
+            
+            # Set rows
+            for i, row in df.iterrows():
+                items = [
+                    QStandardItem(str(value)) for value in row
+                ]
+                model.insertRow(i, items)
+                
+            # Apply the model to the table view
+            self.data_table_view.setModel(model)
+            
+        except Exception as e:
+            self._log_to_console(f"Error while populating data table: {e}")
+            self.data_table_view.setModel(None)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
