@@ -134,7 +134,7 @@ class Bot_utility:
         file_name= image_to_click
         full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click)
         full_path_with_ext = full_path_without_ext + ".txt"
-
+        confidence = float(confidence)
         with open(full_path_with_ext) as json_file:
             
             image_file = json.load(json_file)
@@ -144,7 +144,7 @@ class Bot_utility:
             try:
                 location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
                 if location!=None:
-                    pyautogui.click(location.x + offset_x, location.y + offset_y)
+                    pyautogui.click(location.x + int(offset_x), location.y + int(offset_y))
                     self.context.add_log(f"{file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     return 'left_click_done'
@@ -197,6 +197,109 @@ class Bot_utility:
             self.context.add_log(f"{file_name}")
             #print ('left_click_done fail: {}'.format(image_file),str(key))
         return 'right_click_done fail: {}'.format(file_name)
+
+    def get_image_location(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
+        """ Find and return image location
+        """
+        location=None
+        file_name= image_to_click
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
+            image_file = json.load(json_file)
+        for key, data in image_file.items():
+            #print (key)
+            image_file = self._base64_pgn(data)
+            try:
+                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                if location!=None:
+                    
+                    self.context.add_log(f"{file_name}")
+                    self.context.send_click_status(f"Image found: {file_name}")
+                    return location
+            except:
+                self.context.add_log(f"Image not found: {file_name}")
+                self.context.send_click_status(f"Image not found: {file_name}")
+                pass
+        if location is None:
+            self.context.send_click_status(f"Image not found: {file_name}")
+            self.context.add_log(f"Image not found: {file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+        return None
+        
+    def left_click_cross_2_images(self,image_to_click_x,image_to_click_y,offset_x=0,offset_y=0,confidence=0.92):
+        """ Find and return image location
+        """
+        location=None
+        x_position=None
+        file_name= image_to_click_x
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click_x)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
+            image_file = json.load(json_file)
+        for key, data in image_file.items():
+            #print (key)
+            image_file = self._base64_pgn(data)
+            try:
+                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                if location!=None:
+                    
+                    self.context.add_log(f"{file_name}")
+                    self.context.send_click_status(f"Image found: {file_name}")
+                    x_position = location.x
+            except:
+                self.context.add_log(f"Image not found: {file_name}")
+                self.context.send_click_status(f"Image not found: {file_name}")
+                pass
+        if location is None:
+            self.context.send_click_status(f"Image not found: {file_name}")
+            self.context.add_log(f"Image not found: {file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+            return None      
+
+
+
+        location=None
+        y_position=None
+        file_name= image_to_click_y
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click_y)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
+            image_file = json.load(json_file)
+        for key, data in image_file.items():
+            #print (key)
+            image_file = self._base64_pgn(data)
+            try:
+                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                if location!=None:
+                    
+                    self.context.add_log(f"{file_name}")
+                    self.context.send_click_status(f"Image found: {file_name}")
+                    y_position = location.y
+            except:
+                self.context.add_log(f"Image not found: {file_name}")
+                self.context.send_click_status(f"Image not found: {file_name}")
+                pass
+        if location is None:
+            self.context.send_click_status(f"Image not found: {file_name}")
+            self.context.add_log(f"Image not found: {file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+            return None      
+
+        if x_position is not None and y_position is not None:
+        
+            pyautogui.click(x_position + int(offset_x),y_position+int(offset_y))
+            self.context.add_log(f"left_click_cross_2_images :{image_to_click_x} and {image_to_click_y} is done")
+            return "done"
+
+
+        
 
     def activate_window(self,title):
         """Brings a window with a matching title to the foreground.
@@ -420,11 +523,12 @@ class Bot_utility:
         """
         time.sleep(value)
         return f'sleep {value} second'  
+
     def screenshot(self,image_link):
         im2 = pyautogui.screenshot(f'screenshot/{image_link}.png')
         pyperclipimg.copy(im2)
         return "done"
-    
+        
 class Bot_SAP:
     '''
     A class containing methods specifically designed for automating tasks within
@@ -494,7 +598,7 @@ class Bot_SAP:
         self.enter_tcode('')
         return 
     
-    def open_table_se16(self,table_name):
+    def open_table(self,table_name='/n/RB94/XX_PRCL_MO'):
         """Navigates to transaction SE16 and opens a specified table.
 
         Args:
@@ -516,7 +620,7 @@ class Bot_SAP:
             time.sleep(1)
             keyboard.press_and_release( 'ctrl+a')
             time.sleep(1)
-            keyboard.write('/n/RB94/XX_PRCL_MO')
+            keyboard.write(table_name)
             time.sleep(1)
             keyboard.send('ENTER')
         return
@@ -664,5 +768,112 @@ class Bot_SAP:
                 break
         workbook.save(file_link)
         workbook.close()
-
         return True    
+        
+            
+            
+    def un_block_BP(self,bp_number,reason_unblock):
+        #bot_sap.enter_tcode('/nbp')
+        time.sleep(1)
+        if bot_utility.check_image_exits('SAP_unblockBP_open_icon',timeout=10):
+            time.sleep(1)
+            bot_utility.left_click('SAP_unblockBP_open_icon',0,0,0.92)
+        else:
+            return 'BP number {} could not unblock step 1'.format(bp_number)        
+        if bot_utility.check_image_exits('SAP_unblockBP_BP_box',15):
+            time.sleep(0.5)
+            bot_utility.left_click('SAP_unblockBP_BP_box',20,0,0.92)
+            keyboard.press_and_release( 'ctrl+a')
+            time.sleep(1)
+            keyboard.write('{}'.format(bp_number))
+            time.sleep(1)
+            keyboard.send('ENTER')
+            time.sleep(1)
+        else:
+            return 'BP number {} could not unblock step 2'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_GTS_tab',5):
+            bot_utility.left_click('SAP_unblockBP_GTS_tab',0,0,0.92)
+            
+        else:
+            return 'BP number {} could not unblock step 3'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_change_mode',1) is not True:
+            bot_utility.left_click('SAP_unblockBP_to_change_mode',0,0,0.92)
+
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_remove_block',2):
+            count =0
+            while bot_utility.check_image_exits('SAP_unblockBP_remove_block',2) and count < 5:
+                bot_utility.left_click('SAP_unblockBP_remove_block',0,4,0.92)
+                time.sleep(1)
+                bot_utility.left_click('SAP_unblockBP_GTS_tab',0,0,0.92)
+                time.sleep(0.1)
+                bot_utility.left_click('SAP_unblockBP_GTS_tab',0,0,0.92)
+                count +=1
+
+        else:
+            return 'BP number {} could not unblock step 4'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_remove_neg',2):
+            count =0
+            while bot_utility.check_image_exits('SAP_unblockBP_remove_neg',2) and count < 5:
+        
+                bot_utility.left_click('SAP_unblockBP_remove_neg',0,1,0.92)
+                keyboard.send('DELETE')
+                time.sleep(1)
+                bot_utility.left_click('SAP_unblockBP_GTS_tab',0,0,0.92)
+                time.sleep(0.1)
+                bot_utility.left_click('SAP_unblockBP_GTS_tab',0,0,0.92)
+                count +=1
+        else:
+            return 'BP number {} could not unblock step 5'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_remove_neg_done',2) and bot_utility.check_image_exits('SAP_unblockBP_remove_block_done',2):
+            print ('remove done')
+            bot_utility.left_click('SAP_unblockBP_accept_entries',0,0,0.92)
+        
+        if bot_utility.check_image_exits('SAP_unblockBP_reason',5):
+            bot_utility.left_click('SAP_unblockBP_reason',0,0,0.92)
+            time.sleep(1)
+        else:
+            return 'BP number {} could not unblock step 6'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_reason_other',5):
+            
+            bot_utility.left_click('SAP_unblockBP_reason_other',0,0,0.92)
+            time.sleep(1)
+        else:
+            return 'BP number {} could not unblock step 7'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_BP_block_reason_header',5):
+            time.sleep(1)
+            bot_utility.left_click('SAP_BP_block_reason_header',0,80,0.92)
+            time.sleep(0.2)
+            keyboard.write(reason_unblock)
+            time.sleep(1)
+        else:
+            return 'BP number {} could not unblock step 8'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_BP_block_reason_check_icon',5):
+            bot_utility.left_click('SAP_BP_block_reason_check_icon',0,0,0.92)
+        
+        else:
+            return 'BP number {} could not unblock step 9'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_save',5):
+            count =0
+            while bot_utility.check_image_exits('SAP_unblockBP_saved',1) is not True and count < 3:
+                count +=1
+                bot_utility.left_click('SAP_unblockBP_save',0,0,0.92)
+                time.sleep(0.1)
+                bot_utility.left_click('SAP_unblockBP_save',0,0,0.92)
+                time.sleep(3)
+        else:
+            return 'BP number {} could not unblock step 10'.format(bp_number)
+            
+        if bot_utility.check_image_exits('SAP_unblockBP_saved',5):
+            return 'BP number {} is unblocked'.format(bp_number)
+        else:
+            return 'BP number {} could not unblock step 11'.format(bp_number)
+
