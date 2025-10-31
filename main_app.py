@@ -17,7 +17,7 @@ from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor, QAction
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF, QTime
 from PyQt6 import QtWidgets, QtGui, QtCore
 from typing import Optional, List, Dict, Any, Tuple, Union
 import pandas as pd
@@ -40,7 +40,7 @@ from PyQt6.QtWidgets import (
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
     QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator,
-    QScrollArea, QTabWidget, QFrame, QMenu, 
+    QScrollArea, QTabWidget, QFrame, QMenu, QTimeEdit
 )
 
 from PyQt6.QtGui import QIntValidator
@@ -889,7 +889,7 @@ class ParameterInputDialog(QDialog):
                 param_h_layout.addWidget(browse_button)
 
             # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
-            if param_name == "image_to_click":
+            if param_name.startswith("image_to_click"):
                 file_source_combo = QComboBox()
                 file_source_combo.addItems(["Select from Files", "Global Variable"])
                 self.param_value_source_combos[param_name] = file_source_combo
@@ -1135,7 +1135,7 @@ class ParameterInputDialog(QDialog):
 
     def _on_file_selection_changed(self, param_name: str, index: int) -> None:
         # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
-        if param_name == "image_to_click" and param_name in self.file_selector_combos:
+        if param_name.startswith("image_to_click") and param_name in self.file_selector_combos:
             file_selector_combo = self.file_selector_combos[param_name]
             selected_text = file_selector_combo.currentText()
             if selected_text == "--- Add new image ---":
@@ -1158,7 +1158,7 @@ class ParameterInputDialog(QDialog):
         
         for param_name, combo_box in self.file_selector_combos.items():
             # 3. Check for the correct parameter name
-            if param_name == "image_to_click":
+            if param_name.startswith("image_to_click"):
                 folder_combo = self.folder_selector_combos.get(param_name)
                 
                 # 4. Determine which folder should be selected
@@ -1232,7 +1232,7 @@ class ParameterInputDialog(QDialog):
         config_data: Dict[str, Any] = {}
         for param_name, source_combo in self.param_value_source_combos.items():
             # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
-            if param_name == "image_to_click" and param_name in self.file_selector_combos:
+            if param_name.startswith("image_to_click") and param_name in self.file_selector_combos:
                 value_source_index = source_combo.currentIndex()
                 if value_source_index == 0:
                     # The file name is now a relative path, e.g., "Folder/image"
@@ -2861,12 +2861,15 @@ class CodeEditorDialog(QDialog):
             count += 1
         QMessageBox.information(self, "Finished", f"Replaced {count} occurrence(s).")
 
+# In main_app.py
+# REPLACE the entire ScheduleTaskDialog class with this one:
+
 class ScheduleTaskDialog(QDialog):
     """A dialog for scheduling bot execution."""
     def __init__(self, bot_name: str, schedule_data: Optional[Dict[str, Any]] = None, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle(f"Schedule Task for '{bot_name}'")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(450)
 
         self.layout = QFormLayout(self)
 
@@ -2881,28 +2884,103 @@ class ScheduleTaskDialog(QDialog):
         self.repeat_combo.addItems(["Do not repeat", "Hourly", "Daily", "Monthly"])
         self.layout.addRow("Repeat:", self.repeat_combo)
 
+        # --- NEW: Days of Week Group ---
+        self.days_of_week_group = QGroupBox("Run on Specific Days")
+        days_layout = QHBoxLayout()
+        self.day_checkboxes = {}
+        for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+            cb = QCheckBox(day)
+            self.day_checkboxes[day] = cb
+            days_layout.addWidget(cb)
+        self.days_of_week_group.setLayout(days_layout)
+        self.layout.addRow(self.days_of_week_group)
+
+        # --- NEW: Time Boundary Group ---
+        self.time_boundary_group = QGroupBox("Time Boundary")
+        time_boundary_form_layout = QFormLayout()
+        
+        self.enable_time_boundary_check = QCheckBox("Only run between specific times")
+        time_boundary_form_layout.addRow(self.enable_time_boundary_check)
+        
+        self.start_time_edit = QTimeEdit(QTime(8, 0))
+        self.end_time_edit = QTimeEdit(QTime(17, 0))
+        
+        time_boundary_form_layout.addRow("Start Time:", self.start_time_edit)
+        time_boundary_form_layout.addRow("End Time:", self.end_time_edit)
+        
+        self.time_boundary_group.setLayout(time_boundary_form_layout)
+        self.layout.addRow(self.time_boundary_group)
+
+        # --- Buttons ---
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         self.layout.addRow(self.buttons)
 
+        # --- Connections for new widgets ---
+        self.repeat_combo.currentTextChanged.connect(self._update_widget_visibility)
+        self.enable_time_boundary_check.toggled.connect(self._update_widget_visibility)
+
+        # --- Load existing data ---
         if schedule_data:
             self.enable_checkbox.setChecked(schedule_data.get("enabled", False))
             start_datetime_str = schedule_data.get("start_datetime")
             if start_datetime_str:
                 self.date_edit.setDateTime(QDateTime.fromString(start_datetime_str, Qt.DateFormat.ISODate))
+            
             repeat_str = schedule_data.get("repeat")
             if repeat_str:
                 index = self.repeat_combo.findText(repeat_str, Qt.MatchFlag.MatchFixedString)
                 if index >= 0:
                     self.repeat_combo.setCurrentIndex(index)
 
+            # Load new properties
+            selected_days = schedule_data.get("selected_days", [])
+            for day, cb in self.day_checkboxes.items():
+                cb.setChecked(day in selected_days)
+
+            self.enable_time_boundary_check.setChecked(schedule_data.get("time_boundary_enabled", False))
+            
+            start_time_str = schedule_data.get("start_time", "08:00:00")
+            self.start_time_edit.setTime(QTime.fromString(start_time_str, Qt.DateFormat.ISODate))
+            
+            end_time_str = schedule_data.get("end_time", "17:00:00")
+            self.end_time_edit.setTime(QTime.fromString(end_time_str, Qt.DateFormat.ISODate))
+
+        # --- Initial visibility update ---
+        self._update_widget_visibility()
+
+    def _update_widget_visibility(self):
+        """Shows/hides the new groups based on user selection."""
+        repeat_mode = self.repeat_combo.currentText()
+        
+        # Show Day of Week only for "Daily" or "Hourly"
+        is_daily_or_hourly = repeat_mode in ["Daily", "Hourly"]
+        self.days_of_week_group.setVisible(is_daily_or_hourly)
+        
+        # Show Time Boundary for any repeat mode
+        is_repeat = repeat_mode != "Do not repeat"
+        self.time_boundary_group.setVisible(is_repeat)
+        
+        # Enable/disable time edits based on the checkbox
+        time_boundary_enabled = self.enable_time_boundary_check.isChecked()
+        self.start_time_edit.setEnabled(time_boundary_enabled)
+        self.end_time_edit.setEnabled(time_boundary_enabled)
+
     def get_schedule_data(self) -> Dict[str, Any]:
-        """Returns the schedule data from the dialog."""
+        """Returns the schedule data from the dialog, including new properties."""
+        
+        # Get selected days
+        selected_days = [day for day, cb in self.day_checkboxes.items() if cb.isChecked()]
+        
         return {
             "enabled": self.enable_checkbox.isChecked(),
             "start_datetime": self.date_edit.dateTime().toString(Qt.DateFormat.ISODate),
-            "repeat": self.repeat_combo.currentText()
+            "repeat": self.repeat_combo.currentText(),
+            "selected_days": selected_days,
+            "time_boundary_enabled": self.enable_time_boundary_check.isChecked(),
+            "start_time": self.start_time_edit.time().toString(Qt.DateFormat.ISODate),
+            "end_time": self.end_time_edit.time().toString(Qt.DateFormat.ISODate)
         }
 class UpdateDialog(QDialog):
     def __init__(self, update_folder, target_folder, parent=None):
@@ -6873,6 +6951,9 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not open the code editor: {e}")
     
+# In main_app.py
+# In the MainWindow class, REPLACE the check_schedules method with this one:
+
     def check_schedules(self):
         """Timer-triggered function to check for and run scheduled bots."""
         # --- ADD THIS CHECK AT THE BEGINNING ---
@@ -6901,13 +6982,41 @@ class MainWindow(QMainWindow):
                 start_datetime = QDateTime.fromString(schedule_data.get("start_datetime"), Qt.DateFormat.ISODate)
 
                 if now >= start_datetime:
+                    
+                    # --- NEW CONSTRAINT LOGIC START ---
+                    repeat_mode = schedule_data.get("repeat")
+                    current_day_str = now.toString("ddd") # e.g., "Mon"
+                    current_time = now.time()
+
+                    # 1. Check Day of Week constraint
+                    if repeat_mode in ["Daily", "Hourly"]:
+                        selected_days = schedule_data.get("selected_days", [])
+                        # Only check if the user actually selected specific days
+                        if selected_days and current_day_str not in selected_days:
+                            self._log_to_console(f"Skipping '{bot_name}': Not scheduled for {current_day_str}.")
+                            continue # Skip to the next bot file
+
+                    # 2. Check Time Boundary constraint
+                    if schedule_data.get("time_boundary_enabled", False):
+                        start_time_str = schedule_data.get("start_time")
+                        end_time_str = schedule_data.get("end_time")
+                        
+                        if start_time_str and end_time_str:
+                            start_time = QTime.fromString(start_time_str, Qt.DateFormat.ISODate)
+                            end_time = QTime.fromString(end_time_str, Qt.DateFormat.ISODate)
+                            
+                            if not (start_time <= current_time <= end_time):
+                                self._log_to_console(f"Skipping '{bot_name}': Current time {current_time.toString()} is outside boundary {start_time.toString()} - {end_time.toString()}.")
+                                continue # Skip to the next bot file
+                    # --- NEW CONSTRAINT LOGIC END ---
+
                     self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
                     
                     self.load_steps_from_file(file_path)
                     self._handle_execute_pause_resume() # This will now set the is_bot_running flag
 
                     # The rest of the logic for rescheduling remains the same...
-                    repeat_mode = schedule_data.get("repeat")
+                    repeat_mode = schedule_data.get("repeat") # Get it again in case it was modified
                     if repeat_mode != "Do not repeat":
                         new_start_time = start_datetime
                         if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
@@ -6926,7 +7035,6 @@ class MainWindow(QMainWindow):
                         schedule_data["enabled"] = False
                         self._write_schedule_to_csv(file_path, schedule_data)
                         self._log_to_console(f"Disabled non-repeating schedule for '{bot_name}'.")
-
     def _read_schedule_from_csv(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Reads only the schedule info from a bot's CSV file."""
         if not os.path.exists(file_path):
