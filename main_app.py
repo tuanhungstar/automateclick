@@ -1898,6 +1898,9 @@ class StepInsertionDialog(QDialog):
 
 
 # --- REPLACEMENT CLASS: TemplateVariableMappingDialog (with 'is' variable filtering) ---
+# In main_app.py, REPLACE the entire TemplateVariableMappingDialog class
+
+# --- REPLACEMENT CLASS: TemplateVariableMappingDialog (with 'is' variable filtering) ---
 class TemplateVariableMappingDialog(QDialog):
     """A dialog to map variables from a template to global variables."""
 
@@ -1920,13 +1923,15 @@ class TemplateVariableMappingDialog(QDialog):
         
         # If all variables were filtered out, show a message and exit.
         if not self.template_variables:
-            main_layout.addWidget(QLabel("No configurable variables found in this template."))
-            # Add only a close button
-            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-            button_box.rejected.connect(self.reject) # Close rejects the dialog
+            # --- THIS IS THE FIX ---
+            main_layout.addWidget(QLabel("No configurable variables found in this template. Click OK to proceed."))
+            # Add an OK button that accepts the dialog
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok) 
+            button_box.accepted.connect(self.accept) # Accept the dialog
             main_layout.addWidget(button_box)
             self.setLayout(main_layout)
             return # Stop building the rest of the dialog
+            # --- END OF FIX ---
 
         # Original layout code for when there are variables to map
         form_layout = QFormLayout()
@@ -2029,7 +2034,6 @@ class TemplateVariableMappingDialog(QDialog):
                         new_variables[target_var_name] = parsed_value
 
         return mapping, new_variables
-
 
 # In the TemplateVariableMappingDialog class, replace the _toggle_inputs method
 
