@@ -198,3 +198,55 @@ class Excel:
         print("Attempting to save DataFrame back to original file...")
         # Calls save_excel with save_path=None and sheet_name=None
         self.save_excel(index=index)
+        
+    def filter_by_value(self,df, column_name: str, value_to_match: object) -> pd.DataFrame:
+            """
+            Filters the DataFrame to find rows where a specific column matches a given value.
+            
+            Args:
+                column_name (str): The name of the column to filter.
+                value_to_match (object): The value to match in the column.
+            
+            Returns:
+                pd.DataFrame: A new DataFrame containing only the matching rows.
+            """
+            try:
+                # This is the core filtering logic
+                filtered_df = df[df[column_name] == value_to_match].copy()
+                
+                if filtered_df.empty:
+                    print(f"Warning: No rows found where '{column_name}' == {value_to_match}")
+                    
+                return filtered_df
+            
+            except KeyError:
+                print(f"Error: Column '{column_name}' not found in the DataFrame.")
+                return pd.DataFrame() # Return an empty DataFrame on error
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                return pd.DataFrame()
+                
+    def read_csv(self, file_link: str) -> pd.DataFrame:
+        """
+        Read CSV file into a pandas DataFrame
+        
+        Args:
+            file_link (str): Path to the CSV file
+            **kwargs: Additional arguments for pd.read_csv()
+        
+        Returns:
+            pd.DataFrame: Loaded DataFrame
+        """
+        try:
+            self.file_link = file_link
+            df = pd.read_csv(file_link)
+            return df
+        except FileNotFoundError:
+            print(f"Error: File '{file_link}' not found.")
+            return None
+        except Exception as e:
+            print(f"Error reading CSV: {str(e)}")
+            return None
+            
+    def df_len(self, df) -> int:
+        return len(df)
