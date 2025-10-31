@@ -420,8 +420,11 @@ class Bot_utility:
         """
         time.sleep(value)
         return f'sleep {value} second'  
-
-        
+    def screenshot(self,image_link):
+        im2 = pyautogui.screenshot(f'screenshot/{image_link}.png')
+        pyperclipimg.copy(im2)
+        return "done"
+    
 class Bot_SAP:
     '''
     A class containing methods specifically designed for automating tasks within
@@ -661,4 +664,5 @@ class Bot_SAP:
                 break
         workbook.save(file_link)
         workbook.close()
+
         return True    
