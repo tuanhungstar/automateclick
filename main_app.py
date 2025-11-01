@@ -4023,9 +4023,47 @@ class WorkflowCanvas(QWidget):
         if step_type == "step":
             method_name = step_data.get("method_name", "Unknown")
             assign_var = step_data.get("assign_to_variable_name")
+            
+            # --- NEW LOGIC TO ADD PARAMETER VALUES ---
+            params_config = step_data.get("parameters_config", {})
+            param_values = []
+            
+            for name, config in params_config.items():
+                # Skip this internal-use parameter
+                if name == "original_listbox_row_index":
+                    continue
+
+                value_display = ""
+                param_type = config.get('type')
+
+                if param_type == 'hardcoded':
+                    # Use repr() to get 'quotes' for strings
+                    value_display = repr(config['value'])
+                elif param_type == 'hardcoded_file':
+                    # Get just the filename
+                    base_name = os.path.basename(config['value'])
+                    value_display = f"File:'{base_name}'"
+                elif param_type == 'variable':
+                    # Show the variable name
+                    value_display = f"@{config['value']}"
+                else:
+                    value_display = "???"
+
+                # Truncate very long values to keep the node clean
+                if len(value_display) > 20:
+                    value_display = value_display[:17] + "..."
+
+                param_values.append(value_display)
+            
+            # Join all formatted values with a comma and space
+            param_str = ", ".join(param_values)
+            # --- END NEW LOGIC ---
+            
             if assign_var:
-                return f"{title_prefix}@{assign_var} = {method_name}()"
-            return f"{title_prefix}{method_name}()"
+                # Updated to include param_str
+                return f"{title_prefix}@{assign_var} = {method_name}({param_str})"
+            # Updated to include param_str
+            return f"{title_prefix}{method_name}({param_str})"
             
         elif step_type == "loop_start":
             config = step_data.get("loop_config", {})
@@ -4037,19 +4075,33 @@ class WorkflowCanvas(QWidget):
             
         elif step_type == "IF_START":
             cond = step_data.get("condition_config", {}).get("condition", {})
-            left = cond.get("left_operand", {}).get("value", "L")
+            left_val = cond.get("left_operand", {}).get("value", "L")
             if cond.get("left_operand", {}).get("type") == "variable":
-                left = f"@{left}"
-            right = cond.get("right_operand", {}).get("value", "R")
+                left = f"@{left_val}"
+            else:
+                left = repr(left_val) # Use repr for clarity
+
+            right_val = cond.get("right_operand", {}).get("value", "R")
             if cond.get("right_operand", {}).get("type") == "variable":
-                right = f"@{right}"
+                right = f"@{right_val}"
+            else:
+                right = repr(right_val) # Use repr for clarity
+                
             op = cond.get("operator", "??")
+            
+            # Truncate long values
+            if len(left) > 15: left = left[:12] + "..."
+            if len(right) > 15: right = right[:12] + "..."
+            
             return f"{title_prefix}IF ({left} {op} {right})"
             
         elif step_type == "ELSE":
             return f"{title_prefix}ELSE"
         elif step_type == "group_start":
-            return f"{title_prefix}Group: {step_data.get('group_name', 'Unnamed')}"
+            group_name = step_data.get('group_name', 'Unnamed')
+            if len(group_name) > 25:
+                group_name = group_name[:22] + "..."
+            return f"{title_prefix}Group: {group_name}"
         elif step_type in ["loop_end", "IF_END", "group_end"]:
             return f"End {step_type.split('_')[0].capitalize()}"
             
