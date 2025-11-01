@@ -1711,15 +1711,35 @@ class RearrangeStepItemWidget(QWidget):
         """
         step_type = self.step_data.get("type")
         step_num = self.step_number
+        
+        # --- NEW LOGIC: Get block name if it exists ---
+        block_name_str = ""
+        if step_type == "group_start" or step_type == "group_end":
+            name = self.step_data.get("group_name")
+            if name: block_name_str = f": '{name}'"
+        elif step_type == "loop_start" or step_type == "loop_end":
+            config = self.step_data.get("loop_config", {})
+            name = config.get("loop_name")
+            if name: block_name_str = f": '{name}'"
+        elif step_type == "IF_START" or step_type == "ELSE" or step_type == "IF_END":
+            config = self.step_data.get("condition_config", {})
+            name = config.get("block_name")
+            if name: block_name_str = f": '{name}'"
+        # --- END NEW LOGIC ---
 
         # For non-step types (loops, ifs, etc.), use the reliable formatting from ExecutionStepCard
         if step_type != "step":
             temp_card = ExecutionStepCard(self.step_data, step_num)
-            base_title = temp_card.step_label.text()
+            
+            # --- MODIFIED: Add the block name ---
+            base_title = temp_card.step_label.text().replace(":", "") # Remove default colon
+            # --- END MODIFIED ---
+            
             details_text = temp_card.method_label.text() if temp_card.method_label else ""
+            
             if details_text:
-                return f"{base_title}: {details_text}"
-            return base_title
+                return f"{base_title}{block_name_str}: {details_text}"
+            return f"{base_title}{block_name_str}"
 
         # --- THIS IS THE UPDATED LOGIC FOR 'step' TYPE ---
         
@@ -1766,21 +1786,37 @@ class RearrangeStepItemWidget(QWidget):
         
         # 5. Join all the parts together with spaces.
         return " ".join(display_parts)
+        
+    def set_bold(self, bold: bool):
+        """Sets the font of the main label to bold or normal."""
+        font = self.label.font()
+        font.setBold(bold)
+        self.label.setFont(font)
+    
 # --- NEW DIALOG: RearrangeStepsDialog ---
+
+# --- DIALOG: RearrangeStepsDialog (WITH MULTI-SELECT AND EDITING) ---
+
+# --- DIALOG: RearrangeStepsDialog (WITH MULTI-SELECT AND EDITING) ---
 
 class RearrangeStepsDialog(QDialog):
     """A dialog to reorder steps using drag-and-drop."""
     def __init__(self, steps_data: List[Dict[str, Any]], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Rearrange Bot Steps")
-        self.setMinimumSize(800, 700) # Give it a good default size
+        # --- CHANGE 1: Made the dialog wider (1000 instead of 800) ---
+        self.setMinimumSize(1000, 700) 
+        # --- END CHANGE 1 ---
+        
+        # This is a reference to the main window to access counters
+        self.main_window_ref = parent 
         
         self.original_steps = steps_data
         
         main_layout = QVBoxLayout(self)
 
         # Instructions
-        info_label = QLabel("Drag and drop the steps below to change their execution order.")
+        info_label = QLabel("Drag and drop to reorder. Use Ctrl or Shift to select multiple items.")
         info_label.setStyleSheet("font-style: italic; color: #555;")
         main_layout.addWidget(info_label)
 
@@ -1789,47 +1825,196 @@ class RearrangeStepsDialog(QDialog):
         
         # --- Critical part: Enable Drag and Drop ---
         self.steps_list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.steps_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        
+        # --- Enable Multi-Selection ---
+        self.steps_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        
         self.steps_list_widget.setAlternatingRowColors(True)
         self.steps_list_widget.setStyleSheet("font-size: 12pt;")
         main_layout.addWidget(self.steps_list_widget)
 
         # Populate the list with our custom widgets
-        self.populate_list()
+        self.populate_list(self.original_steps)
         
+        # --- Add new buttons for editing ---
+        edit_button_layout = QHBoxLayout()
+        self.group_selected_button = QPushButton("📦 Group Selected")
+        self.delete_selected_button = QPushButton("🗑️ Delete Selected")
+        
+        edit_button_layout.addWidget(self.group_selected_button)
+        edit_button_layout.addStretch()
+        edit_button_layout.addWidget(self.delete_selected_button)
+        
+        main_layout.addLayout(edit_button_layout)
+
         # OK and Cancel buttons
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
+        
+        # --- Connect new button signals ---
+        self.delete_selected_button.clicked.connect(self.delete_selected)
+        self.group_selected_button.clicked.connect(self.group_selected)
+        self.steps_list_widget.itemSelectionChanged.connect(self.on_selection_changed)
 
-    def populate_list(self):
-        """Fills the QListWidget with the steps."""
+    def populate_list(self, steps_to_load: List[Dict[str, Any]]):
+        """Fills the QListWidget with the steps and updates step numbers."""
         self.steps_list_widget.clear()
-        for i, step_data in enumerate(self.original_steps):
+        
+        for i, step_data in enumerate(steps_to_load):
             list_item = QListWidgetItem(self.steps_list_widget)
             
-            # Use our custom widget for the display
+            # Use our custom widget for the display, passing the *current* step number
             item_widget = RearrangeStepItemWidget(step_data, i + 1)
             
-            # Store the original data with the item
+            # Store the data with the item
             list_item.setData(Qt.ItemDataRole.UserRole, step_data)
             
             # Set the size hint and associate the widget with the list item
             list_item.setSizeHint(item_widget.sizeHint())
-            self.steps_list_widget.addItem(list_item)
             self.steps_list_widget.setItemWidget(list_item, item_widget)
 
-    def get_rearranged_steps(self) -> List[Dict[str, Any]]:
-        """Returns the new, reordered list of step data."""
-        new_steps_data = []
+    def get_current_steps_from_list(self) -> List[Dict[str, Any]]:
+        """Helper to get the current list of data from the list widget."""
+        steps_data = []
         for i in range(self.steps_list_widget.count()):
             list_item = self.steps_list_widget.item(i)
             # Retrieve the data we stored earlier
             step_data = list_item.data(Qt.ItemDataRole.UserRole)
-            new_steps_data.append(step_data)
-        return new_steps_data
+            steps_data.append(step_data)
+        return steps_data
+
+    def get_rearranged_steps(self) -> List[Dict[str, Any]]:
+        """Returns the new, reordered list of step data."""
+        # This method now just gets the final state of the dynamic list
+        return self.get_current_steps_from_list()
+
+    def delete_selected(self):
+        """Removes all currently selected items from the list."""
+        selected_items = self.steps_list_widget.selectedItems()
+        if not selected_items:
+            return
+
+        reply = QMessageBox.question(self, "Confirm Delete",
+                                     f"Are you sure you want to delete {len(selected_items)} selected step(s)?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
         
+        if reply == QMessageBox.StandardButton.Yes:
+            # We must iterate in reverse when removing items
+            for item in reversed(selected_items):
+                row = self.steps_list_widget.row(item)
+                self.steps_list_widget.takeItem(row)
+            
+            # After deleting, we must re-populate to fix the step numbers
+            self.populate_list(self.get_current_steps_from_list())
+
+    def group_selected(self):
+        """Wraps the currently selected items in a Group block."""
+        selected_items = self.steps_list_widget.selectedItems()
+        if not selected_items:
+            QMessageBox.information(self, "No Selection", "Please select one or more steps to group.")
+            return
+
+        # Find the row of the first selected item
+        # We need to get the rows *before* modifying the list
+        selected_rows = sorted([self.steps_list_widget.row(item) for item in selected_items])
+        first_row = selected_rows[0]
+        last_row = selected_rows[-1]
+
+        group_name, ok = QInputDialog.getText(self, "Create Group", "Enter a name for the group:")
+        if ok and group_name:
+            # Get a new group ID from the main window's counter
+            if self.main_window_ref and hasattr(self.main_window_ref, 'group_id_counter'):
+                self.main_window_ref.group_id_counter += 1
+                group_id = f"group_{self.main_window_ref.group_id_counter}"
+            else:
+                # Fallback if reference is lost
+                import time
+                group_id = f"group_temp_{int(time.time())}"
+
+            # Create new step data
+            group_start_data = {"type": "group_start", "group_id": group_id, "group_name": group_name}
+            group_end_data = {"type": "group_end", "group_id": group_id, "group_name": group_name}
+            
+            # Create list items
+            start_list_item = QListWidgetItem()
+            start_list_item.setData(Qt.ItemDataRole.UserRole, group_start_data)
+            
+            end_list_item = QListWidgetItem()
+            end_list_item.setData(Qt.ItemDataRole.UserRole, group_end_data)
+            
+            # Insert the 'group_start' item *before* the first selection
+            self.steps_list_widget.insertItem(first_row, start_list_item)
+            
+            # Insert the 'group_end' item *after* the last selection
+            # The index is +1 (for after) and +1 again (because we added the start item)
+            self.steps_list_widget.insertItem(last_row + 2, end_list_item)
+            
+            # Now that the data is correct, re-populate the entire list
+            # This fixes all step numbers and applies the correct widgets
+            self.populate_list(self.get_current_steps_from_list())
+            
+    def get_step_identifier(self, step_data: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+        """Returns a hashable identifier (tuple) for a block step, or None."""
+        step_type = step_data.get("type")
+
+        if step_type in ["group_start", "group_end"]:
+            group_id = step_data.get("group_id")
+            if group_id: return ("group", group_id)
+        
+        elif step_type in ["loop_start", "loop_end"]:
+            loop_id = step_data.get("loop_id")
+            if loop_id: return ("loop", loop_id)
+
+        elif step_type in ["IF_START", "ELSE", "IF_END"]:
+            if_id = step_data.get("if_id")
+            if if_id: return ("if", if_id)
+        
+        return None
+
+    def on_selection_changed(self):
+        """Called when list selection changes. Bolds all related block parts."""
+        
+        # 1. Build a map of {identifier: [row_index_1, row_index_2]}
+        identifier_to_rows = {}
+        
+        # First, un-bold everything
+        for i in range(self.steps_list_widget.count()):
+            item = self.steps_list_widget.item(i)
+            widget = self.steps_list_widget.itemWidget(item)
+            if widget and hasattr(widget, 'set_bold'):
+                widget.set_bold(False)
+            
+            # Now, map the item
+            step_data = item.data(Qt.ItemDataRole.UserRole)
+            identifier = self.get_step_identifier(step_data)
+            
+            if identifier:
+                if identifier not in identifier_to_rows:
+                    identifier_to_rows[identifier] = []
+                identifier_to_rows[identifier].append(i)
+
+        # 2. Find all rows that need to be bolded
+        rows_to_bold = set()
+        selected_items = self.steps_list_widget.selectedItems()
+        
+        for item in selected_items:
+            step_data = item.data(Qt.ItemDataRole.UserRole)
+            identifier = self.get_step_identifier(step_data)
+            
+            # If the selected item is part of a block...
+            if identifier in identifier_to_rows:
+                #...add all rows related to that block to the set
+                rows_to_bold.update(identifier_to_rows[identifier])
+
+        # 3. Apply bolding
+        for row in rows_to_bold:
+            item = self.steps_list_widget.item(row)
+            widget = self.steps_list_widget.itemWidget(item)
+            if widget and hasattr(widget, 'set_bold'):
+                widget.set_bold(True)
 class StepInsertionDialog(QDialog):
     def __init__(self, execution_tree: QTreeWidget, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -4388,7 +4573,7 @@ class MainWindow(QMainWindow):
         self.update_app_btn = QPushButton("🔄 Update App")
         self.always_on_top_button = QPushButton("📌 Always On Top: Off")
         self.toggle_log_checkbox = QCheckBox("📋 Show Log")
-        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
+        #create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
         create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
         
         # Connections
