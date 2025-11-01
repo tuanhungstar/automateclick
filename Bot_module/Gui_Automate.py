@@ -228,7 +228,7 @@ class Bot_utility:
             try:
                 location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
                 if location!=None:
-                    pyautogui.doubleClick(location.x + offset_x, location.y + offset_y)
+                    pyautogui.doubleClick(location.x + int(offset_x), location.y + int(offset_y))
                     self.context.add_log(f"{file_name}")
                     return 'double_click_done'
             except:
