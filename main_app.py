@@ -24,7 +24,7 @@ import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet as OpenpyxlWorksheet
 from PyQt6.QtWidgets import QTableView
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
-
+ #hung comment
 # Ensure my_lib is in the Python path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 my_lib_dir = os.path.join(script_dir, "my_lib")
@@ -3134,10 +3134,10 @@ class WorkflowCanvas(QWidget):
         self.merge_lines: List[Tuple[int, int]] = []
         
         # Smart layout parameters
-        self.NODE_WIDTH = 220
-        self.NODE_HEIGHT = 50
+        self.NODE_WIDTH = 320
+        self.NODE_HEIGHT = 80
         self.V_SPACING = 40
-        self.H_SPACING = 120
+        self.H_SPACING = 220
         self.GRID_SIZE = 20
         
         # Canvas navigation
@@ -4024,12 +4024,11 @@ class WorkflowCanvas(QWidget):
             method_name = step_data.get("method_name", "Unknown")
             assign_var = step_data.get("assign_to_variable_name")
             
-            # --- NEW LOGIC TO ADD PARAMETER VALUES ---
+            # --- LOGIC TO ADD PARAMETER VALUES ---
             params_config = step_data.get("parameters_config", {})
             param_values = []
             
             for name, config in params_config.items():
-                # Skip this internal-use parameter
                 if name == "original_listbox_row_index":
                     continue
 
@@ -4037,73 +4036,92 @@ class WorkflowCanvas(QWidget):
                 param_type = config.get('type')
 
                 if param_type == 'hardcoded':
-                    # Use repr() to get 'quotes' for strings
                     value_display = repr(config['value'])
                 elif param_type == 'hardcoded_file':
-                    # Get just the filename
                     base_name = os.path.basename(config['value'])
                     value_display = f"File:'{base_name}'"
                 elif param_type == 'variable':
-                    # Show the variable name
                     value_display = f"@{config['value']}"
                 else:
                     value_display = "???"
 
-                # Truncate very long values to keep the node clean
                 if len(value_display) > 20:
                     value_display = value_display[:17] + "..."
 
                 param_values.append(value_display)
             
-            # Join all formatted values with a comma and space
             param_str = ", ".join(param_values)
-            # --- END NEW LOGIC ---
+            # --- END PARAMETER LOGIC ---
             
             if assign_var:
-                # Updated to include param_str
                 return f"{title_prefix}@{assign_var} = {method_name}({param_str})"
-            # Updated to include param_str
             return f"{title_prefix}{method_name}({param_str})"
             
         elif step_type == "loop_start":
             config = step_data.get("loop_config", {})
+            # --- NEW: Add Loop Name ---
+            loop_name = config.get("loop_name")
+            name_str = f"'{loop_name}': " if loop_name else "Loop "
+            # --- END NEW ---
             count_config = config.get("iteration_count_config", {})
             val = count_config.get("value", "N")
             if count_config.get("type") == "variable":
                 val = f"@{val}"
-            return f"{title_prefix}Loop {val} times"
+            return f"{title_prefix}{name_str}{val} times"
             
         elif step_type == "IF_START":
-            cond = step_data.get("condition_config", {}).get("condition", {})
+            config = step_data.get("condition_config", {})
+            # --- NEW: Add IF Name ---
+            block_name = config.get("block_name")
+            name_str = f"'{block_name}': " if block_name else "IF "
+            # --- END NEW ---
+            cond = config.get("condition", {})
             left_val = cond.get("left_operand", {}).get("value", "L")
             if cond.get("left_operand", {}).get("type") == "variable":
                 left = f"@{left_val}"
             else:
-                left = repr(left_val) # Use repr for clarity
+                left = repr(left_val) 
 
             right_val = cond.get("right_operand", {}).get("value", "R")
             if cond.get("right_operand", {}).get("type") == "variable":
                 right = f"@{right_val}"
             else:
-                right = repr(right_val) # Use repr for clarity
+                right = repr(right_val)
                 
             op = cond.get("operator", "??")
             
-            # Truncate long values
             if len(left) > 15: left = left[:12] + "..."
             if len(right) > 15: right = right[:12] + "..."
             
-            return f"{title_prefix}IF ({left} {op} {right})"
+            return f"{title_prefix}{name_str}({left} {op} {right})"
             
         elif step_type == "ELSE":
             return f"{title_prefix}ELSE"
+            
         elif step_type == "group_start":
             group_name = step_data.get('group_name', 'Unnamed')
             if len(group_name) > 25:
                 group_name = group_name[:22] + "..."
             return f"{title_prefix}Group: {group_name}"
-        elif step_type in ["loop_end", "IF_END", "group_end"]:
-            return f"End {step_type.split('_')[0].capitalize()}"
+        
+        # --- NEW: Handle End Caps with Names ---
+        elif step_type == "loop_end":
+            config = step_data.get("loop_config", {})
+            loop_name = config.get("loop_name")
+            name_str = f" '{loop_name}'" if loop_name else ""
+            return f"End Loop{name_str}"
+            
+        elif step_type == "IF_END":
+            config = step_data.get("condition_config", {})
+            block_name = config.get("block_name")
+            name_str = f" '{block_name}'" if block_name else ""
+            return f"End IF{name_str}"
+            
+        elif step_type == "group_end":
+            group_name = step_data.get("group_name")
+            name_str = f" '{group_name}'" if group_name else ""
+            return f"End Group{name_str}"
+        # --- END NEW ---
             
         return f"{title_prefix}{step_type.replace('_', ' ').title()}"
 
@@ -5646,7 +5664,9 @@ class MainWindow(QMainWindow):
             group_id = f"group_{self.group_id_counter}"
             
             group_start_data = {"type": "group_start", "group_id": group_id, "group_name": group_name}
-            group_end_data = {"type": "group_end", "group_id": group_id}
+            # --- THIS IS THE MODIFICATION ---
+            group_end_data = {"type": "group_end", "group_id": group_id, "group_name": group_name}
+            # --- END MODIFICATION ---
 
             # Insert the 'group_start' data before the first selected item
             self.added_steps_data.insert(start_index, group_start_data)
