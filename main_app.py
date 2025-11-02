@@ -4429,9 +4429,11 @@ class MainWindow(QMainWindow):
         self.minimized_for_execution = False
         self.original_geometry = None
         self.widget_homes = {}
+
         self.is_bot_running = False
         self.is_paused = False # ADD THIS
         self.worker: Optional[ExecutionWorker] = None # ADD THIS
+        self.workflow_tab_index: int = 2 # <--- ADD THIS LINE
         
         # --- Create UI ---
         self.init_ui()
@@ -5415,7 +5417,12 @@ class MainWindow(QMainWindow):
                     module_item.setToolTip(0, f"Module: {module_name}")
             
                     for name, obj in inspect.getmembers(module):
-                        if inspect.isclass(obj) and obj.__module__ == module.__name__:
+                        # --- THIS IS THE MODIFIED LOGIC ---
+                        if (inspect.isclass(obj) and 
+                            obj.__module__ == module.__name__ and 
+                            not name.startswith('_')): # <-- This new check hides helper classes
+                            # --- END MODIFICATION ---
+                            
                             class_name = name
                             self.all_parsed_method_data[module_name][class_name] = []
                             class_item = QTreeWidgetItem(module_item)
@@ -5432,6 +5439,8 @@ class MainWindow(QMainWindow):
                                 self._log_to_console(f"Warning: Could not instantiate class '{class_name}' for inspection: {e}")
                                 class_item.addChild(QTreeWidgetItem(["(Init error, cannot inspect methods)"]))
                                 continue
+                            
+                            # This loop already (correctly) ignores methods starting with '_'
                             for method_name, method_obj in inspect.getmembers(temp_instance):
                                 if (not method_name.startswith('_') and callable(method_obj) and not inspect.isclass(method_obj) and not isinstance(method_obj, staticmethod) and not isinstance(method_obj, classmethod)):
                                     func_obj = method_obj.__func__ if inspect.ismethod(method_obj) else method_obj
@@ -5690,6 +5699,7 @@ class MainWindow(QMainWindow):
     def add_item_to_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
         item_data = self._get_item_data(item)
 
+        # --- Handle Template Loading ---
         if isinstance(item_data, dict) and item_data.get('type') == 'template':
             template_name = item_data.get('name')
             if template_name:
@@ -5701,7 +5711,89 @@ class MainWindow(QMainWindow):
             
         display_text, class_name, method_name, module_name, params_for_dialog = item_data
         
-        # --- NEW: Retrieve docstring for the method ---
+        # =================================================================
+        # --- LOGIC FOR CUSTOM GUI MODULES ---
+        # =================================================================
+        
+        if method_name == "configure_data_hub":
+            try:
+                # 1. Instantiate the module class
+                if self.module_directory not in sys.path:
+                    sys.path.insert(0, self.module_directory)
+                module = importlib.import_module(module_name)
+                importlib.reload(module) # Ensure we have the latest version
+                class_obj = getattr(module, class_name)
+                
+                dummy_context = ExecutionContext()
+                dummy_context.set_gui_communicator(self.gui_communicator)
+                instance = class_obj(context=dummy_context)
+
+                # 2. Call the magic method to get the custom dialog
+                dialog = instance.configure_data_hub(
+                    parent_window=self, 
+                    global_variables=list(self.global_variables.keys())
+                )
+
+                # 3. Run the custom dialog
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    # 4. Get the config and execution info from the dialog
+                    config_data = dialog.get_config_data()
+                    executor_method_name = dialog.get_executor_method_name()
+                    assign_to_variable_name = dialog.get_assignment_variable()
+
+                    if config_data is None or assign_to_variable_name is None:
+                        self._log_to_console("Custom configuration was cancelled.")
+                        return
+
+                    # 5. Handle new variable creation
+                    if assign_to_variable_name and assign_to_variable_name not in self.global_variables:
+                        self.global_variables[assign_to_variable_name] = None
+                        self._update_variables_list_display()
+
+                    # 6. Build the final step_data for the *executor* method
+                    parameters_config = {
+                        "config_data": {"type": "hardcoded", "value": config_data}
+                    }
+                    
+                    new_step_data_dict: Dict[str, Any] = {
+                        "type": "step",
+                        "class_name": class_name,
+                        "method_name": executor_method_name, # Use the executor method name
+                        "module_name": module_name,
+                        "parameters_config": parameters_config, # Pass the config dict
+                        "assign_to_variable_name": assign_to_variable_name
+                    }
+                    
+                    # 7. Add the new step to the execution tree
+                    insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+                    if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+                        selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
+                        insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
+                        self.added_steps_data.insert(insert_data_index, new_step_data_dict)
+                        self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
+                        self._save_workflow_to_temp_file()
+                        
+                        # --- MODIFIED LINE ---
+                        # Switch to the Workflow tab
+                        self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
+                    
+                    self._log_to_console(f"Added custom step '{class_name}.{executor_method_name}'")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Custom Module Error", f"Could not load custom configuration GUI:\n{e}")
+                self._log_to_console(f"ERROR: {e}")
+            finally:
+                if self.module_directory in sys.path:
+                    sys.path.remove(self.module_directory)
+            return
+        # --- END OF CUSTOM BLOCK ---
+        
+        # =================================================================
+        # --- END OF NEW LOGIC ---
+        # =================================================================
+
+        # --- This is the ORIGINAL logic for all other "normal" methods ---
+        
         method_docstring = ""
         try:
             if self.module_directory not in sys.path:
@@ -5710,7 +5802,6 @@ class MainWindow(QMainWindow):
             importlib.reload(module)
             class_obj = getattr(module, class_name)
             
-            # Instantiate class to get method object
             init_kwargs_for_inspection: Dict[str, Any] = {}
             if 'context' in inspect.signature(class_obj.__init__).parameters:
                 init_kwargs_for_inspection['context'] = ExecutionContext()
@@ -5723,12 +5814,18 @@ class MainWindow(QMainWindow):
         finally:
             if self.module_directory in sys.path:
                 sys.path.remove(self.module_directory)
-        # --- END NEW ---        
         
-        
-        
-        self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, list(self.global_variables.keys()), self._get_image_filenames(), self.gui_communicator, parent=self,method_docstring=method_docstring)
+        self.active_param_input_dialog = ParameterInputDialog(
+            f"{class_name}.{method_name}", 
+            params_for_dialog, 
+            list(self.global_variables.keys()), 
+            self._get_image_filenames(), 
+            self.gui_communicator, 
+            parent=self,
+            method_docstring=method_docstring
+        )
         self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
+        
         if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
             parameters_config = self.active_param_input_dialog.get_parameters_config()
             if parameters_config is None:
@@ -5743,17 +5840,26 @@ class MainWindow(QMainWindow):
             self.global_variables[assign_to_variable_name] = None
             self._update_variables_list_display()
 
-        new_step_data_dict: Dict[str, Any] = {"type": "step", "class_name": class_name, "method_name": method_name, "module_name": module_name, "parameters_config": parameters_config, "assign_to_variable_name": assign_to_variable_name}
+        new_step_data_dict: Dict[str, Any] = {
+            "type": "step", 
+            "class_name": class_name, 
+            "method_name": method_name, 
+            "module_name": module_name, 
+            "parameters_config": parameters_config, 
+            "assign_to_variable_name": assign_to_variable_name
+        }
+        
         insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
         if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
             selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
             insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
             self.added_steps_data.insert(insert_data_index, new_step_data_dict)
             self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
-            self._save_workflow_to_temp_file() # <--- ADD THIS LINE
-            workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
-            if self.main_tab_widget.currentIndex() != workflow_tab_index:
-                self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())
+            self._save_workflow_to_temp_file()
+
+            # --- MODIFIED LINES ---
+            # Switch to the Workflow tab
+            self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
         
         self.gui_communicator.update_module_info_signal.emit("")
         self.active_param_input_dialog = None
