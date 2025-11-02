@@ -5841,14 +5841,14 @@ class MainWindow(QMainWindow):
             self._update_variables_list_display()
 
         new_step_data_dict: Dict[str, Any] = {
-            "type": "step", 
-            "class_name": class_name, 
-            "method_name": method_name, 
-            "module_name": module_name, 
-            "parameters_config": parameters_config, 
-            "assign_to_variable_name": assign_to_variable_name
-        }
-        
+                        "type": "step",
+                        "class_name": class_name,
+                        "method_name": executor_method_name, # Use the executor method name
+                        "module_name": module_name,
+                        "parameters_config": parameters_config, # Pass the config dict
+                        "assign_to_variable_name": assign_to_variable_name,
+                        "custom_config_method": method_name # <-- ADD THIS LINE
+                    }
         insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
         if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
             selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
@@ -5985,7 +5985,89 @@ class MainWindow(QMainWindow):
                  QMessageBox.critical(self, "Error", "Could not find selected item in internal data model for editing. Data may be out of sync.")
                  return
         
-        if step_type == "step":
+        # =================================================================
+        # --- ROBUST BLOCK FOR EDITING CUSTOM GUI MODULES ---
+        # =================================================================
+        
+        # --- NEW: Check for the tag OR the known executor method names ---
+        custom_config_method_name = step_data_dict.get("custom_config_method")
+        executor_method_name = step_data_dict.get("method_name")
+
+        if not custom_config_method_name:
+            # This is an old step. Let's find its config method by its executor.
+            if executor_method_name == "_execute_data_hub_task":
+                custom_config_method_name = "configure_data_hub"
+
+        if custom_config_method_name:
+            try:
+                # 1. Get all the data we need from the saved step
+                class_name = step_data_dict["class_name"]
+                module_name = step_data_dict["module_name"]
+                initial_config = step_data_dict["parameters_config"]["config_data"]["value"]
+                initial_variable = step_data_dict["assign_to_variable_name"]
+
+                # 2. Import the module and get the class instance
+                if self.module_directory not in sys.path:
+                    sys.path.insert(0, self.module_directory)
+                module = importlib.import_module(module_name)
+                importlib.reload(module)
+                class_obj = getattr(module, class_name)
+                
+                dummy_context = ExecutionContext()
+                dummy_context.set_gui_communicator(self.gui_communicator)
+                instance = class_obj(context=dummy_context)
+                
+                # 3. Get the magic config method (e.g., "configure_data_hub")
+                config_method = getattr(instance, custom_config_method_name)
+
+                # 4. Call it, passing in the initial config data
+                dialog = config_method(
+                    parent_window=self,
+                    global_variables=list(self.global_variables.keys()),
+                    initial_config=initial_config,
+                    initial_variable=initial_variable
+                )
+
+                # 5. Run the dialog and get the *new* data
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    new_config_data = dialog.get_config_data()
+                    new_executor_method_name = dialog.get_executor_method_name()
+                    new_assign_to_variable_name = dialog.get_assignment_variable()
+
+                    if new_config_data is None or new_assign_to_variable_name is None:
+                        self._log_to_console("Custom configuration was cancelled.")
+                        return
+
+                    # 6. Handle variable changes
+                    if new_assign_to_variable_name and new_assign_to_variable_name not in self.global_variables:
+                        self.global_variables[new_assign_to_variable_name] = None
+                        self._update_variables_list_display()
+
+                    # 7. Update the step_data_dict in our main list
+                    new_parameters_config = {"config_data": {"type": "hardcoded", "value": new_config_data}}
+                    self.added_steps_data[current_row].update({
+                        "parameters_config": new_parameters_config,
+                        "assign_to_variable_name": new_assign_to_variable_name,
+                        "method_name": new_executor_method_name,
+                        "custom_config_method": custom_config_method_name # --- Add tag if it was missing
+                    })
+                    
+                    self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
+                    self._save_workflow_to_temp_file()
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Custom Module Error", f"Could not load custom configuration GUI for editing:\n{e}")
+                self._log_to_console(f"ERROR: {e}")
+            finally:
+                if self.module_directory in sys.path:
+                    sys.path.remove(self.module_directory)
+            return
+
+        # =================================================================
+        # --- END OF CUSTOM GUI BLOCK ---
+        # =================================================================
+
+        elif step_type == "step":
             class_name, method_name, module_name = step_data_dict["class_name"], step_data_dict["method_name"], step_data_dict["module_name"]
             parameters_config_with_index = step_data_dict["parameters_config"]
             assign_to_variable_name = step_data_dict["assign_to_variable_name"]
@@ -6007,7 +6089,7 @@ class MainWindow(QMainWindow):
                 sig = inspect.signature(func_to_inspect)
                 params_for_dialog: Dict[str, Tuple[Any, Any]] = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
                 
-                method_docstring = inspect.getdoc(method_func_obj) or "" # <--- GET DOCSTRING HERE
+                method_docstring = inspect.getdoc(method_func_obj) or ""
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error Editing Step", f"Could not re-inspect method for editing:\n{e}")
@@ -6015,9 +6097,6 @@ class MainWindow(QMainWindow):
             finally:
                 if self.module_directory in sys.path:
                     sys.path.remove(self.module_directory)
-            # --- END NEW ---
-                    
-                    
                     
             self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", 
             params_for_dialog, 
@@ -6026,7 +6105,7 @@ class MainWindow(QMainWindow):
             self.gui_communicator, 
             initial_parameters_config=dialog_parameters_config, 
             initial_assign_to_variable_name=assign_to_variable_name, 
-            method_docstring=method_docstring, # <--- PASS THE DOCSTRING HERE
+            method_docstring=method_docstring,
             parent=self)
             self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
             if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
@@ -6042,7 +6121,7 @@ class MainWindow(QMainWindow):
                 
                 self.added_steps_data[current_row].update({"parameters_config": new_parameters_config, "assign_to_variable_name": new_assign_to_variable_name})
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+                self._save_workflow_to_temp_file()
             self.gui_communicator.update_module_info_signal.emit("")
             self.active_param_input_dialog = None
         elif step_type == "loop_start":
@@ -6070,7 +6149,7 @@ class MainWindow(QMainWindow):
                     elif step.get("type") in ["loop_end", "IF_END"]:
                         nesting_level -= 1
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+                self._save_workflow_to_temp_file()
         elif step_type == "IF_START":
             condition_config = step_data_dict["condition_config"]
             dialog = ConditionalConfigDialog(self.global_variables, parent=self, initial_config=condition_config)
@@ -6093,14 +6172,14 @@ class MainWindow(QMainWindow):
                     elif step.get("type") in ["loop_end", "IF_END"]:
                         nesting_level -= 1
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+                self._save_workflow_to_temp_file()
         elif step_type == "group_start":
             group_name = step_data_dict.get("group_name", "")
             new_name, ok = QInputDialog.getText(self, "Rename Group", "Enter new group name:", text=group_name)
             if ok and new_name:
                 self.added_steps_data[current_row]["group_name"] = new_name
                 self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
+                self._save_workflow_to_temp_file()
         elif step_type in ["loop_end", "ELSE", "IF_END", "group_end"]:
             QMessageBox.information(self, "Edit Block Marker", "To change parameters, edit the corresponding 'Start' block.")
 

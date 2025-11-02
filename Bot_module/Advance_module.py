@@ -87,24 +87,26 @@ class _DataHubConfigDialog(QDialog):
     The single custom GUI with two tabs: File Loader and Outlook Reader.
     """
     
-    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None):
+    # --- MODIFIED: Added initial_config and initial_variable ---
+    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None, 
+                 initial_config: Optional[Dict[str, Any]] = None, 
+                 initial_variable: Optional[str] = None):
         super().__init__(parent)
         self.setWindowTitle("Data Hub Configuration")
         self.setMinimumSize(800, 700)
         self.global_variables = global_variables
         self.df_preview: Optional[pd.DataFrame] = None
         self.folder_loader_thread = None
+        self.initial_config = initial_config # --- NEW: Store initial config
 
         main_layout = QVBoxLayout(self)
 
         # --- 1. Tab Widget ---
         self.tab_widget = QTabWidget()
         
-        # Create the two tabs
         self.file_loader_tab = QWidget()
         self.outlook_reader_tab = QWidget()
         
-        # Populate each tab
         self._create_file_loader_tab(self.file_loader_tab)
         self._create_outlook_reader_tab(self.outlook_reader_tab)
         
@@ -114,20 +116,17 @@ class _DataHubConfigDialog(QDialog):
         main_layout.addWidget(self.tab_widget)
 
         # --- 2. Shared Variable Assignment Group ---
-        # This is outside the tabs and applies to whichever task is run
         assignment_group = QGroupBox("Assign Results to Variable")
         assignment_layout = QVBoxLayout(assignment_group)
         self.assign_checkbox = QCheckBox("Assign results (DataFrame) to a variable")
-        self.assign_checkbox.setChecked(True)
         assignment_layout.addWidget(self.assign_checkbox)
         
         self.new_var_radio = QRadioButton("New Variable Name:")
-        self.new_var_input = QLineEdit("new_data") # Default name
+        self.new_var_input = QLineEdit("new_data")
         self.existing_var_radio = QRadioButton("Existing Variable:")
         self.existing_var_combo = QComboBox()
         self.existing_var_combo.addItem("-- Select Variable --")
         self.existing_var_combo.addItems(self.global_variables)
-        self.new_var_radio.setChecked(True)
 
         assign_form = QFormLayout()
         assign_form.addRow(self.new_var_radio, self.new_var_input)
@@ -148,12 +147,15 @@ class _DataHubConfigDialog(QDialog):
         
         # --- Initial State ---
         self._toggle_assignment_widgets()
+        
+        # --- NEW: Populate fields if initial data was provided ---
+        self._populate_from_initial_config(initial_config, initial_variable)
+
 
     # --- TAB 1: FILE LOADER ---
     def _create_file_loader_tab(self, tab_widget: QWidget):
         layout = QVBoxLayout(tab_widget)
         
-        # File Selection
         file_group = QGroupBox("File Source")
         file_layout = QFormLayout(file_group)
         self.file_type_combo = QComboBox()
@@ -168,7 +170,6 @@ class _DataHubConfigDialog(QDialog):
         file_layout.addRow("File Path:", path_layout)
         layout.addWidget(file_group)
 
-        # File Options
         self.options_group = QGroupBox("File Options")
         self.options_layout = QFormLayout(self.options_group)
         self.sheet_name_edit = QLineEdit("0")
@@ -182,7 +183,6 @@ class _DataHubConfigDialog(QDialog):
         self.options_layout.addRow(self.orient_label, self.orient_edit)
         layout.addWidget(self.options_group)
 
-        # Preview
         preview_group = QGroupBox("Data Preview (First 50 Rows)")
         preview_layout = QVBoxLayout(preview_group)
         self.preview_button = QPushButton("Load Preview")
@@ -193,7 +193,6 @@ class _DataHubConfigDialog(QDialog):
         preview_layout.addWidget(self.preview_table)
         layout.addWidget(preview_group)
 
-        # Column Selection
         column_group = QGroupBox("Column Selection")
         column_layout = QVBoxLayout(column_group)
         self.column_list_widget = QListWidget()
@@ -206,7 +205,6 @@ class _DataHubConfigDialog(QDialog):
         column_layout.addLayout(col_button_layout)
         layout.addWidget(column_group)
         
-        # Connections
         self.browse_button.clicked.connect(self._on_browse_file)
         self.preview_button.clicked.connect(self._on_preview_file)
         self.file_type_combo.currentTextChanged.connect(self._update_file_options_ui)
@@ -219,18 +217,22 @@ class _DataHubConfigDialog(QDialog):
     def _create_outlook_reader_tab(self, tab_widget: QWidget):
         layout = QVBoxLayout(tab_widget)
         
-        # Folder Selection
         folder_group = QGroupBox("Select Folders to Read")
         folder_layout = QVBoxLayout(folder_group)
         self.load_folders_button = QPushButton("Load Outlook Folders")
+        
+        # --- NEW: Status label ---
+        self.folder_status_label = QLabel("Click 'Load Outlook Folders' to select folders.")
+        self.folder_status_label.setStyleSheet("font-style: italic; color: #555;")
+        
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderLabels(["Outlook Folders"])
         self.folder_tree.setToolTip("Check the boxes for all folders you want to search.")
         folder_layout.addWidget(self.load_folders_button)
+        folder_layout.addWidget(self.folder_status_label) # <-- NEW
         folder_layout.addWidget(self.folder_tree)
         layout.addWidget(folder_group)
         
-        # Time/Status Filter
         time_group = QGroupBox("Filter by Time and Status")
         time_layout = QFormLayout(time_group)
         self.end_time_edit = QDateTimeEdit(QDateTime.currentDateTime())
@@ -249,7 +251,6 @@ class _DataHubConfigDialog(QDialog):
         time_layout.addRow("Status:", self.read_status_combo)
         layout.addWidget(time_group)
         
-        # Content Filter
         filter_group = QGroupBox("Filter by Content (Use * as wildcard)")
         filter_layout = QFormLayout(filter_group)
         self.sender_filter = QLineEdit()
@@ -266,7 +267,6 @@ class _DataHubConfigDialog(QDialog):
         filter_layout.addRow("Attachment Name:", self.attachment_filter)
         layout.addWidget(filter_group)
 
-        # Attachment Options
         attachment_group = QGroupBox("Attachment Options")
         attachment_layout = QFormLayout(attachment_group)
         self.save_attachments_checkbox = QCheckBox("Save attachments from matching emails")
@@ -280,13 +280,11 @@ class _DataHubConfigDialog(QDialog):
         attachment_layout.addRow("Save Location:", attachment_path_layout)
         layout.addWidget(attachment_group)
         
-        # Connections
         self.load_folders_button.clicked.connect(self._start_folder_load)
         self.browse_save_path_button.clicked.connect(self._on_browse_save_path)
         self.save_attachments_checkbox.toggled.connect(self._toggle_save_path_widgets)
         self.use_current_end_time_check.toggled.connect(self.end_time_edit.setDisabled)
         
-        # Initial State
         self._toggle_save_path_widgets(False)
         self.use_current_end_time_check.setChecked(True)
         self.end_time_edit.setDisabled(True)
@@ -381,6 +379,7 @@ class _DataHubConfigDialog(QDialog):
         self.folder_tree.expandToDepth(0)
         self.load_folders_button.setText("Reload Folders")
         self.load_folders_button.setEnabled(True)
+        self.folder_status_label.setText("Folders loaded. Check boxes to select.")
 
     def _add_folder_to_tree(self, parent_item: QTreeWidgetItem, folder_data: Dict):
         item = QTreeWidgetItem(parent_item, [folder_data["name"]])
@@ -418,10 +417,81 @@ class _DataHubConfigDialog(QDialog):
         self.existing_var_radio.setVisible(is_assign_enabled)
         self.existing_var_combo.setVisible(is_assign_enabled and self.existing_var_radio.isChecked())
 
+    # --- NEW: Method to populate GUI from saved config ---
+    def _populate_from_initial_config(self, config: Optional[Dict[str, Any]], variable: Optional[str]):
+        if config is None:
+            return # This is a new step, not an edit
+
+        # 1. Set the correct tab
+        task = config.get("task_to_run")
+        if task == "file_loader":
+            self.tab_widget.setCurrentIndex(0)
+            file_config = config.get("file_loader_config", {})
+            
+            # Populate file loader tab
+            self.path_edit.setText(file_config.get("file_path", ""))
+            self.file_type_combo.setCurrentText(file_config.get("file_type", "Excel"))
+            self.sheet_name_edit.setText(file_config.get("sheet_name", "0"))
+            self.delimiter_edit.setText(file_config.get("delimiter", ","))
+            self.orient_edit.setText(file_config.get("json_orient", "records"))
+            
+            # We don't auto-load the preview, but we can re-populate the column list
+            # for reference, assuming they came from a preview.
+            cols = file_config.get("selected_columns", [])
+            self.column_list_widget.clear()
+            for col in cols:
+                item = QListWidgetItem(col)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked)
+                self.column_list_widget.addItem(item)
+
+        elif task == "outlook_reader":
+            self.tab_widget.setCurrentIndex(1)
+            outlook_config = config.get("outlook_reader_config", {})
+            
+            # Populate outlook reader tab
+            self.start_time_edit.setDateTime(QDateTime.fromString(outlook_config.get("start_time"), Qt.DateFormat.ISODate))
+            
+            use_current = outlook_config.get("use_current_end_time", True)
+            self.use_current_end_time_check.setChecked(use_current)
+            self.end_time_edit.setDisabled(use_current)
+            self.end_time_edit.setDateTime(QDateTime.fromString(outlook_config.get("end_time"), Qt.DateFormat.ISODate))
+
+            self.read_status_combo.setCurrentText(outlook_config.get("read_status_filter", "All Emails"))
+            self.sender_filter.setText(outlook_config.get("sender_filter", ""))
+            self.subject_filter.setText(outlook_config.get("subject_filter", ""))
+            self.body_filter.setText(outlook_config.get("body_filter", ""))
+            self.attachment_filter.setText(outlook_config.get("attachment_filter", ""))
+            
+            save_attach = outlook_config.get("save_attachments", False)
+            self.save_attachments_checkbox.setChecked(save_attach)
+            self.attachment_path_edit.setText(outlook_config.get("save_path", ""))
+            self._toggle_save_path_widgets(save_attach)
+            
+            # Update status label for folders
+            folder_ids = outlook_config.get("selected_folder_ids", [])
+            if folder_ids:
+                self.folder_status_label.setText(f"Previously selected {len(folder_ids)} folders. Click 'Load' to view or change.")
+
+        # 2. Populate variable assignment
+        if variable:
+            self.assign_checkbox.setChecked(True)
+            # Check if it's an existing variable
+            if variable in self.global_variables:
+                self.existing_var_radio.setChecked(True)
+                self.existing_var_combo.setCurrentText(variable)
+            else:
+                self.new_var_radio.setChecked(True)
+                self.new_var_input.setText(variable)
+        else:
+            self.assign_checkbox.setChecked(False)
+        
+        self._toggle_assignment_widgets()
+
+
     # --- Methods for main_app to call ---
 
     def get_executor_method_name(self) -> str:
-        # This points to the single, smart executor
         return "_execute_data_hub_task"
 
     def _get_file_loader_config(self) -> Optional[Dict[str, Any]]:
@@ -433,9 +503,14 @@ class _DataHubConfigDialog(QDialog):
             item = self.column_list_widget.item(i)
             if item.checkState() == Qt.CheckState.Checked:
                 selected_columns.append(item.text())
+        
+        # If preview was loaded and no columns are selected, that's an error
         if self.df_preview is not None and not selected_columns:
             QMessageBox.warning(self, "Input Error (File Loader)", "Please select at least one column.")
             return None
+        
+        # If no preview was loaded, just return an empty list (load all columns)
+        
         return {
             "file_path": self.path_edit.text(),
             "file_type": self.file_type_combo.currentText(),
@@ -447,14 +522,23 @@ class _DataHubConfigDialog(QDialog):
 
     def _get_outlook_reader_config(self) -> Optional[Dict[str, Any]]:
         selected_folder_ids = self._get_selected_folders()
+        
+        # --- MODIFIED: Re-use old folder IDs if user didn't reload ---
+        if not selected_folder_ids and self.initial_config:
+            # User is editing and didn't click "Load Folders", re-use old IDs
+            old_outlook_config = self.initial_config.get("outlook_reader_config", {})
+            selected_folder_ids = old_outlook_config.get("selected_folder_ids", [])
+
         if not selected_folder_ids:
             QMessageBox.warning(self, "Input Error (Outlook Reader)", "Please load and select at least one Outlook folder.")
             return None
+            
         save_attachments = self.save_attachments_checkbox.isChecked()
         save_path = self.attachment_path_edit.text()
         if save_attachments and not os.path.isdir(save_path):
             QMessageBox.warning(self, "Input Error (Outlook Reader)", "Please select a valid folder for saving attachments.")
             return None
+            
         return {
             "selected_folder_ids": selected_folder_ids,
             "start_time": self.start_time_edit.dateTime().toString(Qt.DateFormat.ISODate),
@@ -478,19 +562,17 @@ class _DataHubConfigDialog(QDialog):
         file_config = None
         outlook_config = None
         
-        # Validate the config for the *active* tab
         if task_to_run == "file_loader":
             file_config = self._get_file_loader_config()
-            if file_config is None: return None # Validation failed
-        else: # task_to_run == "outlook_reader"
+            if file_config is None: return None
+        else:
             outlook_config = self._get_outlook_reader_config()
-            if outlook_config is None: return None # Validation failed
+            if outlook_config is None: return None
             
-        # Return the master config
         return {
             "task_to_run": task_to_run,
-            "file_loader_config": file_config or {}, # Send empty dict if not active
-            "outlook_reader_config": outlook_config or {}, # Send empty dict if not active
+            "file_loader_config": file_config or {},
+            "outlook_reader_config": outlook_config or {},
         }
 
     def get_assignment_variable(self) -> Optional[str]:
@@ -533,7 +615,10 @@ class DataHub:
     #
     # --- 1. The "Configuration" Method (User-facing) ---
     #
-    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str]) -> QDialog:
+    # --- MODIFIED: Added default args for initial config ---
+    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str], 
+                           initial_config: Optional[Dict[str, Any]] = None, 
+                           initial_variable: Optional[str] = None) -> QDialog:
         """
         Configures data loading from either a File or Outlook.
         The active tab in the dialog will be the task that runs.
@@ -541,7 +626,12 @@ class DataHub:
         MAGIC METHOD: main_app will call this to get the custom GUI.
         """
         self._log("Opening Data Hub configuration...")
-        return _DataHubConfigDialog(global_variables=global_variables, parent=parent_window)
+        return _DataHubConfigDialog(
+            global_variables=global_variables, 
+            parent=parent_window,
+            initial_config=initial_config,
+            initial_variable=initial_variable
+        )
 
     #
     # --- 2. The "Execution" Methods (Hidden) ---
@@ -598,6 +688,7 @@ class DataHub:
                 raise ValueError("File type not supported or loading failed.")
 
             selected_cols = config_data.get("selected_columns")
+            # --- MODIFIED: If selected_cols is empty, load all columns ---
             if selected_cols:
                 existing_cols = [col for col in selected_cols if col in df.columns]
                 missing_cols = set(selected_cols) - set(existing_cols)
