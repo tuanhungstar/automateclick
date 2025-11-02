@@ -44,7 +44,9 @@ class youmodule2:
 
         raise Exception("User Reqeust stop workflow")
         return 
+    def do_nothing(self):
 
+        return 'do nothing'
 class yourmodule1:
     """A generic base class for bot steps."""
     def __init__(self, context: Context):
