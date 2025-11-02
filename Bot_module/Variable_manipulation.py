@@ -48,4 +48,4 @@ class change_variable_value:
 
     def math_add_variable (self, var1,var2):
 
-        return var1 + var2
+        return int(var1) + int(var2)

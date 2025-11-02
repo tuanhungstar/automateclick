@@ -2,7 +2,7 @@ import pandas as pd
 import clipboard
 import os # Used for the example
 
-class Excel:
+class DataFrame:
     """
     A class to read and interact with Excel files using a pandas DataFrame.
     """
@@ -14,31 +14,6 @@ class Excel:
         df = None
         self.original_file_link = None
         self.original_sheetname = None
-
-    def read_excel(self, file_link: str, sheetname: str | int) -> pd.DataFrame:
-        """
-        Reads a specific sheet from an Excel file into a pandas DataFrame.
-
-        Args:
-            file_link: The file path or URL to the Excel file.
-            sheetname: The name (str) or index (int) of the sheet to read.
-
-        Returns:
-            The pandas DataFrame containing the sheet's data.
-        """
-        try:
-            df = pd.read_excel(file_link, sheet_name=sheetname)
-            self.original_file_link = file_link
-            self.original_sheetname = sheetname
-            print(f"Successfully read '{sheetname}' from '{file_link}'.")
-            return df
-        except FileNotFoundError:
-            print(f"Error: File not found at '{file_link}'")
-            return df
-        except Exception as e:
-            # Catches other errors like 'sheet not found'
-            print(f"An error occurred: {e}")
-            return None
 
     def _check_df(self,df) -> bool:
         """Internal helper to check if a DataFrame is loaded."""
@@ -226,27 +201,6 @@ class Excel:
                 print(f"An error occurred: {e}")
                 return pd.DataFrame()
                 
-    def read_csv(self, file_link: str) -> pd.DataFrame:
-        """
-        Read CSV file into a pandas DataFrame
-        
-        Args:
-            file_link (str): Path to the CSV file
-            **kwargs: Additional arguments for pd.read_csv()
-        
-        Returns:
-            pd.DataFrame: Loaded DataFrame
-        """
-        try:
-            self.file_link = file_link
-            df = pd.read_csv(file_link)
-            return df
-        except FileNotFoundError:
-            print(f"Error: File '{file_link}' not found.")
-            return None
-        except Exception as e:
-            print(f"Error reading CSV: {str(e)}")
-            return None
             
     def df_len(self, df) -> int:
         return len(df)

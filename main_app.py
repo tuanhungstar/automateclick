@@ -5735,6 +5735,7 @@ class MainWindow(QMainWindow):
                 )
 
                 # 3. Run the custom dialog
+                # --- FIX IS HERE: All logic is now INSIDE this "if" block ---
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     # 4. Get the config and execution info from the dialog
                     config_data = dialog.get_config_data()
@@ -5742,7 +5743,7 @@ class MainWindow(QMainWindow):
                     assign_to_variable_name = dialog.get_assignment_variable()
 
                     if config_data is None or assign_to_variable_name is None:
-                        self._log_to_console("Custom configuration was cancelled.")
+                        self._log_to_console("Custom configuration was cancelled or invalid.")
                         return
 
                     # 5. Handle new variable creation
@@ -5761,7 +5762,8 @@ class MainWindow(QMainWindow):
                         "method_name": executor_method_name, # Use the executor method name
                         "module_name": module_name,
                         "parameters_config": parameters_config, # Pass the config dict
-                        "assign_to_variable_name": assign_to_variable_name
+                        "assign_to_variable_name": assign_to_variable_name,
+                        "custom_config_method": method_name # Add the tag for editing
                     }
                     
                     # 7. Add the new step to the execution tree
@@ -5773,8 +5775,6 @@ class MainWindow(QMainWindow):
                         self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
                         self._save_workflow_to_temp_file()
                         
-                        # --- MODIFIED LINE ---
-                        # Switch to the Workflow tab
                         self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
                     
                     self._log_to_console(f"Added custom step '{class_name}.{executor_method_name}'")
@@ -5841,14 +5841,14 @@ class MainWindow(QMainWindow):
             self._update_variables_list_display()
 
         new_step_data_dict: Dict[str, Any] = {
-                        "type": "step",
-                        "class_name": class_name,
-                        "method_name": executor_method_name, # Use the executor method name
-                        "module_name": module_name,
-                        "parameters_config": parameters_config, # Pass the config dict
-                        "assign_to_variable_name": assign_to_variable_name,
-                        "custom_config_method": method_name # <-- ADD THIS LINE
-                    }
+            "type": "step", 
+            "class_name": class_name, 
+            "method_name": method_name, 
+            "module_name": module_name, 
+            "parameters_config": parameters_config, 
+            "assign_to_variable_name": assign_to_variable_name
+        }
+        
         insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
         if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
             selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
@@ -5857,8 +5857,6 @@ class MainWindow(QMainWindow):
             self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
             self._save_workflow_to_temp_file()
 
-            # --- MODIFIED LINES ---
-            # Switch to the Workflow tab
             self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
         
         self.gui_communicator.update_module_info_signal.emit("")
@@ -5989,12 +5987,10 @@ class MainWindow(QMainWindow):
         # --- ROBUST BLOCK FOR EDITING CUSTOM GUI MODULES ---
         # =================================================================
         
-        # --- NEW: Check for the tag OR the known executor method names ---
         custom_config_method_name = step_data_dict.get("custom_config_method")
         executor_method_name = step_data_dict.get("method_name")
 
         if not custom_config_method_name:
-            # This is an old step. Let's find its config method by its executor.
             if executor_method_name == "_execute_data_hub_task":
                 custom_config_method_name = "configure_data_hub"
 
@@ -6044,12 +6040,13 @@ class MainWindow(QMainWindow):
                         self._update_variables_list_display()
 
                     # 7. Update the step_data_dict in our main list
+                    # --- THIS BLOCK IS NOW CORRECTLY INDENTED ---
                     new_parameters_config = {"config_data": {"type": "hardcoded", "value": new_config_data}}
                     self.added_steps_data[current_row].update({
                         "parameters_config": new_parameters_config,
                         "assign_to_variable_name": new_assign_to_variable_name,
                         "method_name": new_executor_method_name,
-                        "custom_config_method": custom_config_method_name # --- Add tag if it was missing
+                        "custom_config_method": custom_config_method_name
                     })
                     
                     self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
