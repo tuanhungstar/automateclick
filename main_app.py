@@ -5999,8 +5999,20 @@ class MainWindow(QMainWindow):
                 # 1. Get all the data we need from the saved step
                 class_name = step_data_dict["class_name"]
                 module_name = step_data_dict["module_name"]
-                initial_config = step_data_dict["parameters_config"]["config_data"]["value"]
-                initial_variable = step_data_dict["assign_to_variable_name"]
+                
+                # --- THIS IS THE FIX ---
+                # Safely get the initial config, handling None at each step
+                params_config = step_data_dict.get("parameters_config")
+                config_data_val = params_config.get("config_data") if params_config else None
+                initial_config = config_data_val.get("value") if config_data_val else None
+                
+                # If it's still None, default to an empty dict so the dialog can open
+                if initial_config is None:
+                    initial_config = {}
+                    self._log_to_console("Warning: Step has no config. Opening with defaults.")
+                # --- END FIX ---
+                
+                initial_variable = step_data_dict.get("assign_to_variable_name")
 
                 # 2. Import the module and get the class instance
                 if self.module_directory not in sys.path:
@@ -6040,7 +6052,6 @@ class MainWindow(QMainWindow):
                         self._update_variables_list_display()
 
                     # 7. Update the step_data_dict in our main list
-                    # --- THIS BLOCK IS NOW CORRECTLY INDENTED ---
                     new_parameters_config = {"config_data": {"type": "hardcoded", "value": new_config_data}}
                     self.added_steps_data[current_row].update({
                         "parameters_config": new_parameters_config,
@@ -6066,8 +6077,16 @@ class MainWindow(QMainWindow):
 
         elif step_type == "step":
             class_name, method_name, module_name = step_data_dict["class_name"], step_data_dict["method_name"], step_data_dict["module_name"]
-            parameters_config_with_index = step_data_dict["parameters_config"]
-            assign_to_variable_name = step_data_dict["assign_to_variable_name"]
+            
+            # --- THIS IS THE FIX ---
+            # Safely get parameters, defaulting to an empty dict if None
+            parameters_config_with_index = step_data_dict.get("parameters_config")
+            if parameters_config_with_index is None:
+                self._log_to_console(f"Warning: Step '{method_name}' has no parameters. Opening with defaults.")
+                parameters_config_with_index = {}
+            # --- END FIX ---
+                
+            assign_to_variable_name = step_data_dict.get("assign_to_variable_name")
             dialog_parameters_config = {k: v for k, v in parameters_config_with_index.items() if k != "original_listbox_row_index"}
             method_docstring = ""
        

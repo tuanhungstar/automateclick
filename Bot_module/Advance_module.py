@@ -87,7 +87,6 @@ class _DataHubConfigDialog(QDialog):
     The single custom GUI with two tabs: File Loader and Outlook Reader.
     """
     
-    # --- MODIFIED: Added initial_config and initial_variable ---
     def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None, 
                  initial_config: Optional[Dict[str, Any]] = None, 
                  initial_variable: Optional[str] = None):
@@ -97,7 +96,7 @@ class _DataHubConfigDialog(QDialog):
         self.global_variables = global_variables
         self.df_preview: Optional[pd.DataFrame] = None
         self.folder_loader_thread = None
-        self.initial_config = initial_config # --- NEW: Store initial config
+        self.initial_config = initial_config
 
         main_layout = QVBoxLayout(self)
 
@@ -122,11 +121,16 @@ class _DataHubConfigDialog(QDialog):
         assignment_layout.addWidget(self.assign_checkbox)
         
         self.new_var_radio = QRadioButton("New Variable Name:")
-        self.new_var_input = QLineEdit("new_data")
+        self.new_var_input = QLineEdit("new_data") # Default name
         self.existing_var_radio = QRadioButton("Existing Variable:")
         self.existing_var_combo = QComboBox()
         self.existing_var_combo.addItem("-- Select Variable --")
         self.existing_var_combo.addItems(self.global_variables)
+        
+        # --- MODIFIED: Set defaults for new step ---
+        self.assign_checkbox.setChecked(True)
+        self.new_var_radio.setChecked(True)
+        # --- END MODIFIED ---
 
         assign_form = QFormLayout()
         assign_form.addRow(self.new_var_radio, self.new_var_input)
@@ -148,7 +152,6 @@ class _DataHubConfigDialog(QDialog):
         # --- Initial State ---
         self._toggle_assignment_widgets()
         
-        # --- NEW: Populate fields if initial data was provided ---
         self._populate_from_initial_config(initial_config, initial_variable)
 
 
@@ -221,7 +224,6 @@ class _DataHubConfigDialog(QDialog):
         folder_layout = QVBoxLayout(folder_group)
         self.load_folders_button = QPushButton("Load Outlook Folders")
         
-        # --- NEW: Status label ---
         self.folder_status_label = QLabel("Click 'Load Outlook Folders' to select folders.")
         self.folder_status_label.setStyleSheet("font-style: italic; color: #555;")
         
@@ -229,7 +231,7 @@ class _DataHubConfigDialog(QDialog):
         self.folder_tree.setHeaderLabels(["Outlook Folders"])
         self.folder_tree.setToolTip("Check the boxes for all folders you want to search.")
         folder_layout.addWidget(self.load_folders_button)
-        folder_layout.addWidget(self.folder_status_label) # <-- NEW
+        folder_layout.addWidget(self.folder_status_label)
         folder_layout.addWidget(self.folder_tree)
         layout.addWidget(folder_group)
         
@@ -417,11 +419,13 @@ class _DataHubConfigDialog(QDialog):
         self.existing_var_radio.setVisible(is_assign_enabled)
         self.existing_var_combo.setVisible(is_assign_enabled and self.existing_var_radio.isChecked())
 
-    # --- NEW: Method to populate GUI from saved config ---
     def _populate_from_initial_config(self, config: Optional[Dict[str, Any]], variable: Optional[str]):
         if config is None:
-            return # This is a new step, not an edit
+            # This is a new step. Defaults from __init__ are already set.
+            return
 
+        # --- This is an existing step, so populate it ---
+        
         # 1. Set the correct tab
         task = config.get("task_to_run")
         if task == "file_loader":
@@ -435,8 +439,6 @@ class _DataHubConfigDialog(QDialog):
             self.delimiter_edit.setText(file_config.get("delimiter", ","))
             self.orient_edit.setText(file_config.get("json_orient", "records"))
             
-            # We don't auto-load the preview, but we can re-populate the column list
-            # for reference, assuming they came from a preview.
             cols = file_config.get("selected_columns", [])
             self.column_list_widget.clear()
             for col in cols:
@@ -468,15 +470,13 @@ class _DataHubConfigDialog(QDialog):
             self.attachment_path_edit.setText(outlook_config.get("save_path", ""))
             self._toggle_save_path_widgets(save_attach)
             
-            # Update status label for folders
             folder_ids = outlook_config.get("selected_folder_ids", [])
             if folder_ids:
                 self.folder_status_label.setText(f"Previously selected {len(folder_ids)} folders. Click 'Load' to view or change.")
 
-        # 2. Populate variable assignment
+        # --- MODIFIED: Populate variable assignment ---
         if variable:
             self.assign_checkbox.setChecked(True)
-            # Check if it's an existing variable
             if variable in self.global_variables:
                 self.existing_var_radio.setChecked(True)
                 self.existing_var_combo.setCurrentText(variable)
@@ -484,7 +484,11 @@ class _DataHubConfigDialog(QDialog):
                 self.new_var_radio.setChecked(True)
                 self.new_var_input.setText(variable)
         else:
-            self.assign_checkbox.setChecked(False)
+            # This is the change: default to ON even if no variable was set before
+            self.assign_checkbox.setChecked(True)
+            self.new_var_radio.setChecked(True)
+            self.new_var_input.setText("new_data") # Set the default text
+        # --- END MODIFIED ---
         
         self._toggle_assignment_widgets()
 
@@ -504,12 +508,9 @@ class _DataHubConfigDialog(QDialog):
             if item.checkState() == Qt.CheckState.Checked:
                 selected_columns.append(item.text())
         
-        # If preview was loaded and no columns are selected, that's an error
         if self.df_preview is not None and not selected_columns:
             QMessageBox.warning(self, "Input Error (File Loader)", "Please select at least one column.")
             return None
-        
-        # If no preview was loaded, just return an empty list (load all columns)
         
         return {
             "file_path": self.path_edit.text(),
@@ -523,9 +524,7 @@ class _DataHubConfigDialog(QDialog):
     def _get_outlook_reader_config(self) -> Optional[Dict[str, Any]]:
         selected_folder_ids = self._get_selected_folders()
         
-        # --- MODIFIED: Re-use old folder IDs if user didn't reload ---
         if not selected_folder_ids and self.initial_config:
-            # User is editing and didn't click "Load Folders", re-use old IDs
             old_outlook_config = self.initial_config.get("outlook_reader_config", {})
             selected_folder_ids = old_outlook_config.get("selected_folder_ids", [])
 
@@ -615,7 +614,6 @@ class DataHub:
     #
     # --- 1. The "Configuration" Method (User-facing) ---
     #
-    # --- MODIFIED: Added default args for initial config ---
     def configure_data_hub(self, parent_window: QWidget, global_variables: List[str], 
                            initial_config: Optional[Dict[str, Any]] = None, 
                            initial_variable: Optional[str] = None) -> QDialog:
@@ -688,7 +686,6 @@ class DataHub:
                 raise ValueError("File type not supported or loading failed.")
 
             selected_cols = config_data.get("selected_columns")
-            # --- MODIFIED: If selected_cols is empty, load all columns ---
             if selected_cols:
                 existing_cols = [col for col in selected_cols if col in df.columns]
                 missing_cols = set(selected_cols) - set(existing_cols)
