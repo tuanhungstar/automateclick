@@ -7590,7 +7590,8 @@ class MainWindow(QMainWindow):
 
     def update_application(self):
 
-        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
+        #github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
+        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         
         zip_path = os.path.join(self.update_dir, "update.zip")
@@ -7598,26 +7599,14 @@ class MainWindow(QMainWindow):
         os.makedirs(self.update_dir, exist_ok=True)
 
         # --- ADDED PROXY CONFIGURATION ---
-        proxies = {'https':'rb-proxy-de.bosch.com:8080','https':'rb-proxy-special.bosch.com:8080'}
-        
-        try:
-            # Configure the proxy handler and opener
-            proxy_handler = urllib.request.ProxyHandler(proxies)
-            opener = urllib.request.build_opener(proxy_handler)
-            # Install this opener as the default for all 'urllib.request' calls
-            urllib.request.install_opener(opener)
-            
-            self._log_to_console("Using proxy: http://127.0.0.1:3128 for update.")
-        except Exception as e:
-            self._log_to_console(f"Warning: Failed to configure proxy handler: {e}")
-            # Continue anyway, it might work without a proxy
-        # --- END OF PROXY CONFIGURATION ---
+        proxies = {}
+
 
         try:
             # This 'urlopen' will now use the installed opener (with proxies)
+            
             with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-            
             # --- ADDED VALIDATION ---
             if not zipfile.is_zipfile(zip_path):
                 # Try to read file content for logging
@@ -7674,7 +7663,7 @@ class MainWindow(QMainWindow):
 
             extracted_folder_name = ""
             for item in os.listdir(self.update_dir):
-                if os.path.isdir(os.path.join(self.update_dir, item)) and "AutomateTask" in item:
+                if os.path.isdir(os.path.join(self.update_dir, item)) and "automateclick" in item:
                     extracted_folder_name = item
                     break
 
@@ -7994,37 +7983,7 @@ class MainWindow(QMainWindow):
         self._rebuild_execution_tree(item_to_focus_data=steps_to_move[0])
         
         self._log_to_console(f"Moved step block from index {source_index} to {actual_target}")
-    '''
-    def _calculate_smart_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
-        """Enhanced insertion calculation that properly handles block structures."""
-        if selected_tree_item is None:
-            # If no item is selected, insert at the end of the entire list.
-            return len(self.added_steps_data)
-
-        selected_item_data = self._get_item_data(selected_tree_item)
-        if not selected_item_data:
-            # If the item has no associated data, treat as inserting at the end.
-            return len(self.added_steps_data)
-
-        try:
-            selected_flat_index = self.added_steps_data.index(selected_item_data)
-        except ValueError as e:
-            error_content = str(e)
-            self._log_to_console(f"ValueError in insertion index calculation: {error_content}")
-            print ("error:", str(ValueError))
-            # If the selected item's data is not found in the flat list, insert at the end.
-            return len(self.added_steps_data)
-        
-        selected_step_type = selected_item_data.get("type")
-
-        if insert_mode == "before":
-            return selected_flat_index
-        elif insert_mode == "after":
-            return selected_flat_index + 1
-        
-        # Fallback, should not be reached with "before" or "after" modes.
-        return len(self.added_steps_data)
-        '''
+   
     def _calculate_smart_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
         """Enhanced insertion calculation that properly handles block structures."""
         if selected_tree_item is None:
