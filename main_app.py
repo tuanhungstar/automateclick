@@ -3049,6 +3049,9 @@ class CodeEditorDialog(QDialog):
 # In main_app.py
 # REPLACE the entire ScheduleTaskDialog class with this one:
 
+# In main_app.py
+# REPLACE the entire ScheduleTaskDialog class with this one:
+
 class ScheduleTaskDialog(QDialog):
     """A dialog for scheduling bot execution."""
     def __init__(self, bot_name: str, schedule_data: Optional[Dict[str, Any]] = None, parent: Optional[QWidget] = None):
@@ -3168,14 +3171,19 @@ class ScheduleTaskDialog(QDialog):
             "end_time": self.end_time_edit.time().toString(Qt.DateFormat.ISODate)
         }
 class UpdateDialog(QDialog):
-    def __init__(self, update_folder, target_folder, parent=None):
+    def __init__(self, update_dir, target_folder, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Update Application")
         self.resize(800, 600)
 
-        self.update_folder = update_folder
+        # update_dir is the root extraction folder (e.g., "update/")
+        # target_folder is the app's base directory
+        self.update_dir_root = update_dir 
         self.target_folder = target_folder
         
+        # This is the new logic: find the *actual* source of the files
+        self.update_source_folder = self._find_update_source_folder(update_dir)
+
         self.layout = QVBoxLayout(self)
 
         self.tree = QTreeWidget()
@@ -3205,7 +3213,37 @@ class UpdateDialog(QDialog):
         
         self.layout.addLayout(button_layout)
 
-        self.populate_tree()
+        if self.update_source_folder is None:
+             QMessageBox.critical(self, "Update Error", "Could not find 'main_app.py' in the extracted update files. The update file may be corrupt or in an unrecognized format.")
+        else:
+            self.populate_tree()
+
+    def _find_update_source_folder(self, update_dir):
+        """
+        Determines the correct source folder for the update files.
+        This handles both "flat" zips and "Repo-main" nested zips.
+        """
+        # Case 1: "Flat" zip (main_app.py is directly in update_dir)
+        if os.path.exists(os.path.join(update_dir, "main_app.py")):
+            return update_dir
+
+        # Case 2: "Nested" zip (e.g., AutomateTask-main/main_app.py)
+        # Look for sub-directories
+        try:
+            sub_items = os.listdir(update_dir)
+        except FileNotFoundError:
+            return None # update_dir doesn't exist
+
+        potential_dirs = [d for d in sub_items if os.path.isdir(os.path.join(update_dir, d))]
+        
+        for dir_name in potential_dirs:
+            potential_path = os.path.join(update_dir, dir_name)
+            if os.path.exists(os.path.join(potential_path, "main_app.py")):
+                # This is our source folder
+                return potential_path
+        
+        # Case 3: Could not find it
+        return None
 
     def _set_all_items_checked_state(self, state):
         """Helper function to set the check state of all items."""
@@ -3222,10 +3260,20 @@ class UpdateDialog(QDialog):
         self._set_all_items_checked_state(Qt.CheckState.Unchecked)
 
     def populate_tree(self):
-        for root, _, files in os.walk(self.update_folder):
+        if self.update_source_folder is None:
+            return
+
+        for root, _, files in os.walk(self.update_source_folder):
+            
             for file in files:
                 update_path = os.path.join(root, file)
-                relative_path = os.path.relpath(update_path, self.update_folder)
+                # Get relpath from the *source* folder
+                relative_path = os.path.relpath(update_path, self.update_source_folder)
+                
+                # Exclude .git files/folders
+                if ".git" in relative_path.split(os.sep):
+                    continue
+
                 target_path = os.path.join(self.target_folder, relative_path)
 
                 status = "New"
@@ -3264,10 +3312,17 @@ class UpdateDialog(QDialog):
             return
             
         for item_path in checked_items:
-            source_path = os.path.join(self.update_folder, item_path)
+            # Use self.update_source_folder as the base
+            source_path = os.path.join(self.update_source_folder, item_path)
             dest_path = os.path.join(self.target_folder, item_path)
+            
+            if not os.path.exists(source_path):
+                print(f"Warning: Source file not found, skipping: {source_path}")
+                continue
+
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             shutil.copy2(source_path, dest_path)
+            
         QMessageBox.information(self, "Update Complete", "Selected files have been updated.")
         self.accept()
 
@@ -4397,7 +4452,7 @@ class MainWindow(QMainWindow):
         self.schedules_directory = os.path.join(self.base_directory, "Schedules")
         self.schedules = {}
         
-        icon_path = os.path.join(self.base_directory, "app_icon.png")
+        icon_path = os.path.join(self.base_directory, "app_icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             
@@ -4880,35 +4935,31 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "File Not Found", f"The bot file '{bot_name}.csv' was not found.")
             self.load_saved_steps_to_tree()
 
+    # In MainWindow class, replace the schedule_bot method
     def schedule_bot(self, bot_name: str):
         """Opens the scheduling dialog for the selected bot."""
-        # This correctly reads from the central 'schedules.json' for the dialog
         schedule_data = self.schedules.get(bot_name)
         dialog = ScheduleTaskDialog(bot_name, schedule_data, self)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Get the new schedule data from the dialog
             new_schedule_data = dialog.get_schedule_data()
 
             # --- FIX STARTS HERE ---
-
-            # 1. Write to System 1 (schedules.json) - This part is the same as before
+            # 1. Write to System 1 (schedules.json) for central management
             self.schedules[bot_name] = new_schedule_data
             self.save_schedules()
 
-            # 2. Write to System 2 (the bot's .csv file) - This is the new, required logic
+            # 2. Write to System 2 (the bot's .csv file) which the scheduler reads
             bot_file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
             
             if not os.path.exists(bot_file_path):
                 QMessageBox.warning(self, "Error", f"Could not find bot file '{bot_name}.csv' to save schedule.")
                 return
 
-            # Use the existing helper function to write the schedule into the .csv
             if not self._write_schedule_to_csv(bot_file_path, new_schedule_data):
                 QMessageBox.critical(self, "Schedule Save Error", f"Failed to write schedule data to {bot_name}.csv.")
             else:
                 self._log_to_console(f"Schedule for '{bot_name}' saved to .json and .csv")
-                
             # --- FIX ENDS HERE ---
 
             # Refresh the "Saved Bots" tab display
@@ -7412,13 +7463,12 @@ class MainWindow(QMainWindow):
 # In main_app.py
 # In the MainWindow class, REPLACE the check_schedules method with this one:
 
+# In MainWindow class, replace the check_schedules method
     def check_schedules(self):
         """Timer-triggered function to check for and run scheduled bots."""
-        # --- ADD THIS CHECK AT THE BEGINNING ---
         if self.is_bot_running:
             self._log_to_console("Scheduler check skipped: A bot is currently running.")
             return
-        # --- END ---
 
         self._log_to_console("Scheduler checking for due bots...")
         now = QDateTime.currentDateTime()
@@ -7426,11 +7476,9 @@ class MainWindow(QMainWindow):
         bot_files = [f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
 
         for bot_file in bot_files:
-            # --- ADD ANOTHER CHECK INSIDE THE LOOP ---
             if self.is_bot_running:
                 self._log_to_console("Scheduler check halted: A bot started execution during the check.")
-                break # Exit the loop if a bot has started
-            # --- END ---
+                break 
 
             bot_name = os.path.splitext(bot_file)[0]
             file_path = os.path.join(self.bot_steps_directory, bot_file)
@@ -7443,16 +7491,15 @@ class MainWindow(QMainWindow):
                     
                     # --- NEW CONSTRAINT LOGIC START ---
                     repeat_mode = schedule_data.get("repeat")
-                    current_day_str = now.toString("ddd") # e.g., "Mon"
+                    current_day_str = now.toString("ddd")
                     current_time = now.time()
 
                     # 1. Check Day of Week constraint
                     if repeat_mode in ["Daily", "Hourly"]:
                         selected_days = schedule_data.get("selected_days", [])
-                        # Only check if the user actually selected specific days
                         if selected_days and current_day_str not in selected_days:
                             self._log_to_console(f"Skipping '{bot_name}': Not scheduled for {current_day_str}.")
-                            continue # Skip to the next bot file
+                            continue
 
                     # 2. Check Time Boundary constraint
                     if schedule_data.get("time_boundary_enabled", False):
@@ -7465,16 +7512,14 @@ class MainWindow(QMainWindow):
                             
                             if not (start_time <= current_time <= end_time):
                                 self._log_to_console(f"Skipping '{bot_name}': Current time {current_time.toString()} is outside boundary {start_time.toString()} - {end_time.toString()}.")
-                                continue # Skip to the next bot file
+                                continue
                     # --- NEW CONSTRAINT LOGIC END ---
 
                     self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
                     
                     self.load_steps_from_file(file_path)
-                    self._handle_execute_pause_resume() # This will now set the is_bot_running flag
+                    self._handle_execute_pause_resume()
 
-                    # The rest of the logic for rescheduling remains the same...
-                    repeat_mode = schedule_data.get("repeat") # Get it again in case it was modified
                     if repeat_mode != "Do not repeat":
                         new_start_time = start_datetime
                         if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
@@ -7544,24 +7589,61 @@ class MainWindow(QMainWindow):
         self.log_console.append(f"[{timestamp}] {message}")
 
     def update_application(self):
-        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
+
+        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
+        
         zip_path = os.path.join(self.update_dir, "update.zip")
 
         os.makedirs(self.update_dir, exist_ok=True)
 
+        # --- ADDED PROXY CONFIGURATION ---
+        proxies = {'https':'rb-proxy-de.bosch.com:8080','https':'rb-proxy-special.bosch.com:8080'}
+        
         try:
+            # Configure the proxy handler and opener
+            proxy_handler = urllib.request.ProxyHandler(proxies)
+            opener = urllib.request.build_opener(proxy_handler)
+            # Install this opener as the default for all 'urllib.request' calls
+            urllib.request.install_opener(opener)
+            
+            self._log_to_console("Using proxy: http://127.0.0.1:3128 for update.")
+        except Exception as e:
+            self._log_to_console(f"Warning: Failed to configure proxy handler: {e}")
+            # Continue anyway, it might work without a proxy
+        # --- END OF PROXY CONFIGURATION ---
+
+        try:
+            # This 'urlopen' will now use the installed opener (with proxies)
             with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
+            
+            # --- ADDED VALIDATION ---
+            if not zipfile.is_zipfile(zip_path):
+                # Try to read file content for logging
+                file_content = ""
+                try:
+                    with open(zip_path, 'r', encoding='utf-8') as f:
+                        file_content = f.read(500) # Read first 500 chars
+                except Exception:
+                    file_content = "(Could not read file content, may be binary)"
+
+                self._log_to_console(f"Error: Downloaded file '{zip_path}' is not a valid zip file. It might be an HTML error page from the proxy. Content preview: {file_content}")
+                # Raise an error to be caught by the except block and trigger manual download
+                raise urllib.error.URLError("Downloaded file is not a zip file. Check proxy/network response.")
+            # --- END VALIDATION ---
+
             self._process_zip_file(zip_path)
 
-        except urllib.error.URLError:
+        except urllib.error.URLError as e: # More specific catch
+            self._log_to_console(f"Update download failed: {e}. Check proxy/network.") # Log the new error
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Icon.Critical)
             msg_box.setWindowTitle("Download Failed")
             msg_box.setTextFormat(Qt.TextFormat.RichText)
             msg_box.setText(
-                "Could not download the update automatically.<br><br>"
+                f"Could not download the update automatically.<br><b>Error: {e}</b><br><br>"
+                "This may be a network or proxy issue.<br><br>"
                 "<b>Step 1:</b> Please download the file manually from this link:<br>"
                 f"<a href='{github_zip_url}'>{github_zip_url}</a><br><br>"
                 "<b>Step 2:</b> After the download is complete, click the <b>'Downloaded'</b> button below and select the file you just saved."
@@ -7573,10 +7655,17 @@ class MainWindow(QMainWindow):
             if msg_box.clickedButton() == downloaded_button:
                 file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded File", "", "Zip Files (*.zip)")
                 if file_path:
+                    # --- ADDED VALIDATION for manual file ---
+                    if not zipfile.is_zipfile(file_path):
+                        QMessageBox.critical(self, "Invalid File", "The file you selected is not a valid .zip file. Please download the correct file and try again.")
+                        return # Stop here
+                    # --- END VALIDATION ---
                     self._process_zip_file(file_path)
 
         except Exception as e:
+            self._log_to_console(f"General update error: {e}")
             QMessageBox.critical(self, "Update Error", f"An error occurred: {e}")
+            
 
     def _process_zip_file(self, zip_path):
         try:
@@ -7585,7 +7674,7 @@ class MainWindow(QMainWindow):
 
             extracted_folder_name = ""
             for item in os.listdir(self.update_dir):
-                if os.path.isdir(os.path.join(self.update_dir, item)) and "automateclick" in item:
+                if os.path.isdir(os.path.join(self.update_dir, item)) and "AutomateTask" in item:
                     extracted_folder_name = item
                     break
 
