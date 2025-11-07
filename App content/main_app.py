@@ -1315,11 +1315,11 @@ class ExecutionWorker(QThread):
     execution_item_finished = pyqtSignal(dict, str, int)
     execution_error = pyqtSignal(dict, str, int)
     execution_finished_all = pyqtSignal(ExecutionContext, bool, int)
-    loop_iteration_started = pyqtSignal(str, int)  # loop_id, iteration_number
+    loop_iteration_started = pyqtSignal(str, int)
 
     def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
                  global_variables_ref: Dict[str, Any], 
-                 wait_config: Dict[str, Any],  # <-- ARGUMENT IS NOW A DICT
+                 wait_config: Dict[str, Any],
                  parent: Optional[QWidget] = None,
                  single_step_mode: bool = False, selected_start_index: int = 0):
         super().__init__(parent)
@@ -1333,12 +1333,14 @@ class ExecutionWorker(QThread):
         self._is_stopped = False
         self.loop_stack: List[Dict[str, Any]] = []
         self.conditional_stack: List[Dict[str, Any]] = []
+        self.group_stack: List[Dict[str, Any]] = [] 
         self.single_step_mode = single_step_mode
         self.selected_start_index = selected_start_index
         self.next_step_index_to_select: int = -1
         self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
-        self._is_paused = False # ADD THIS LINE
-        self.wait_config = wait_config # <-- STORE THE CONFIG DICT
+        self._is_paused = False
+        self.wait_config = wait_config
+
     def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
         count_config = loop_config["iteration_count_config"]
         if count_config["type"] == "variable":
@@ -1373,7 +1375,6 @@ class ExecutionWorker(QThread):
             else: raise ValueError(f"Unknown operator: {operator}")
         except Exception as e: raise ValueError(f"Error evaluating condition '{left_val} {operator} {right_val}': {e}")
 
-    
     def run(self) -> None:
         self.execution_started.emit("Starting execution...")
         if not self.steps_to_execute: 
@@ -1381,67 +1382,45 @@ class ExecutionWorker(QThread):
             return
             
         total_steps_for_progress = len(self.steps_to_execute) * 2 if not self.single_step_mode else 1
-        if total_steps_for_progress == 0: 
-            total_steps_for_progress = 1
+        if total_steps_for_progress == 0: total_steps_for_progress = 1
             
         current_execution_item_count = 0
         original_sys_path = sys.path[:]
         
-        if self.module_directory not in sys.path: 
-            sys.path.insert(0, self.module_directory)
+        if self.module_directory not in sys.path: sys.path.insert(0, self.module_directory)
             
         self.context.set_click_image_base_dir(self.click_image_dir)    
         self.loop_stack = []
         self.conditional_stack = []
+        self.group_stack = []
         step_index = self.selected_start_index if self.single_step_mode else 0
         original_listbox_row_index = 0
         
         try:
             while step_index < len(self.steps_to_execute):
-                
-                # --- ADD THIS BLOCK for PAUSE logic ---
                 while self._is_paused:
-                    if self._is_stopped: # Allow stop to break out of pause
-                        break
-                    QThread.msleep(100) # Sleep while paused
-                # --- END ADD ---                
+                    if self._is_stopped: break
+                    QThread.msleep(100)
                 
-                if self._is_stopped: 
-                    break
-                if self.single_step_mode and current_execution_item_count >= 1: 
-                    break
+                if self._is_stopped: break
+                if self.single_step_mode and current_execution_item_count >= 1: break
                 
-                # --- REPLACE THE OLD WAIT LOGIC WITH THIS NEW, DYNAMIC LOGIC ---
                 if current_execution_item_count > 0 and not self.single_step_mode:
                     wait_seconds = 0
-                    
-                    # 1. Resolve the wait time from the config
                     if self.wait_config['type'] == 'variable':
                         var_name = self.wait_config['value']
-                        # Get the current value from the shared global variables dict
                         var_value = self.global_variables.get(var_name, 0)
                         try:
-                            # Ensure the value from the variable is a valid number
                             wait_seconds = float(var_value)
                         except (ValueError, TypeError):
                             self.context.add_log(f"Warning: Global variable '@{var_name}' does not contain a valid number for wait time. Using 0.")
                             wait_seconds = 0
-                    else: # It's hardcoded
+                    else:
                         wait_seconds = self.wait_config['value']
 
-                    # 2. Perform the wait if necessary
                     if wait_seconds > 0:
                         self.context.add_log(f"Waiting for {wait_seconds:.2f} second(s)...")
-                        # QThread.msleep() takes milliseconds, so we multiply by 1000
                         QThread.msleep(int(wait_seconds * 1000))
-                # --- END OF REPLACEMENT ---
-
-
-
-
-
-
-
                 
                 step_data = self.steps_to_execute[step_index]
                 step_type = step_data["type"]
@@ -1450,29 +1429,36 @@ class ExecutionWorker(QThread):
                 progress_percentage = int((current_execution_item_count / total_steps_for_progress) * 100)
                 self.execution_progress.emit(min(progress_percentage, 100))
                 
-                # Check for conditional skipping logic
                 is_skipping = False
                 if self.conditional_stack:
-                    current_if = self.conditional_stack[-1]
-                    if not current_if.get('condition_result', True) and not current_if.get('else_taken', False):
-                        if not (step_type == "ELSE" and step_data.get("if_id") == current_if["if_id"]): 
+                    current_if_context = self.conditional_stack[-1]
+                    is_in_false_if_branch = not current_if_context.get('condition_result', True) and not current_if_context.get('else_taken', False)
+                    is_in_true_else_branch = current_if_context.get('condition_result', False) and current_if_context.get('else_taken', False)
+
+                    if is_in_false_if_branch:
+                        if not (step_type == "ELSE" and step_data.get("if_id") == current_if_context["if_id"]):
                             is_skipping = True
-                    elif current_if.get('condition_result', False) and current_if.get('else_taken', False):
-                        if not (step_type == "IF_END" and step_data.get("if_id") == current_if["if_id"]): 
+                    elif is_in_true_else_branch:
+                        if not (step_type == "IF_END" and step_data.get("if_id") == current_if_context["if_id"]):
                             is_skipping = True
                 
                 if is_skipping:
                     self.execution_item_started.emit(step_data, original_listbox_row_index)
-                    if step_type == "IF_START": 
+                    if step_type == "IF_START":
                         self.conditional_stack.append({'if_id': step_data['if_id'], 'skipped_marker': True})
-                    elif step_type == "loop_start": 
+                    elif step_type == "loop_start":
                         self.loop_stack.append({'loop_id': step_data['loop_id'], 'skipped_marker': True})
+                    elif step_type == "group_start":
+                        self.group_stack.append({'group_id': step_data['group_id'], 'skipped_marker': True})
                     elif step_type == "IF_END":
-                        if self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'): 
+                        if self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'):
                             self.conditional_stack.pop()
                     elif step_type == "loop_end":
-                        if self.loop_stack and self.loop_stack[-1].get('skipped_marker'): 
+                        if self.loop_stack and self.loop_stack[-1].get('skipped_marker'):
                             self.loop_stack.pop()
+                    elif step_type == "group_end":
+                        if self.group_stack and self.group_stack[-1].get('skipped_marker'):
+                            self.group_stack.pop()
                     self.execution_item_finished.emit(step_data, "SKIPPED", original_listbox_row_index)
                     step_index += 1
                     continue
@@ -1482,58 +1468,41 @@ class ExecutionWorker(QThread):
 
                 if step_type in ["group_start", "group_end"]:
                     self.execution_item_finished.emit(step_data, "Organizational Step", original_listbox_row_index)
-                    step_index += 1
-                    continue
 
-                # ENHANCED LOOP HANDLING WITH RESET LOGIC
                 elif step_type == "loop_start":
                     loop_id, loop_config = step_data["loop_id"], step_data["loop_config"]
                     is_new_loop = not (self.loop_stack and self.loop_stack[-1].get('loop_id') == loop_id)
-                    
                     if is_new_loop:
-                        # First time entering this loop
-                        loop_end_index, nesting_level = -1, 0
-                        for i in range(step_index + 1, len(self.steps_to_execute)):
-                            s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
-                            if s_type in ["loop_start", "IF_START"]: 
-                                nesting_level += 1
-                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0: 
-                                loop_end_index = i
-                                break
-                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: 
-                                nesting_level -= 1
-                                
-                        if loop_end_index == -1: 
-                            raise ValueError(f"Loop '{loop_id}' has no matching 'loop_end' marker.")
-                            
                         total_iterations = self._resolve_loop_count(loop_config)
-                        current_loop_info = {
+                        self.loop_stack.append({
                             'loop_id': loop_id, 
                             'start_index': step_index, 
-                            'end_index': loop_end_index, 
                             'current_iteration': 1, 
                             'total_iterations': total_iterations, 
                             'loop_config': loop_config
-                        }
-                        self.loop_stack.append(current_loop_info)
-                        
-                        # Emit signal for first iteration (no reset needed for first iteration)
+                        })
                         self.loop_iteration_started.emit(loop_id, 1)
-                        
                     else:
-                        # Subsequent iterations - RESET LOOP STEPS HERE
                         current_loop_info = self.loop_stack[-1]
                         current_loop_info['current_iteration'] += 1
                         current_loop_info['total_iterations'] = self._resolve_loop_count(loop_config)
-                        
-                        # Emit signal to reset loop steps before continuing
-                        iteration_num = current_loop_info['current_iteration']
-                        self.loop_iteration_started.emit(loop_id, iteration_num)
+                        self.loop_iteration_started.emit(loop_id, current_loop_info['current_iteration'])
 
                     current_loop_info = self.loop_stack[-1]
-                    if current_loop_info['current_iteration'] > current_loop_info['total_iterations']: 
+                    if current_loop_info['current_iteration'] > current_loop_info['total_iterations']:
                         self.loop_stack.pop()
-                        step_index = current_loop_info['end_index']
+                        nesting_level, loop_end_index = 0, -1
+                        for i in range(step_index + 1, len(self.steps_to_execute)):
+                            s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
+                            if s_type in ["loop_start", "IF_START", "group_start"]: nesting_level += 1
+                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0:
+                                loop_end_index = i
+                                break
+                            elif s_type in ["loop_end", "IF_END", "group_end"] and nesting_level > 0: nesting_level -= 1
+                        
+                        # --- [DEFINITIVE FIX IS HERE] ---
+                        if loop_end_index != -1:
+                            step_index = loop_end_index # Jump past the loop
                         self.execution_item_finished.emit(step_data, "Loop Finished", original_listbox_row_index)
                     else:
                         assign_var = loop_config.get("assign_iteration_to_variable")
@@ -1547,18 +1516,14 @@ class ExecutionWorker(QThread):
                         raise ValueError(f"Mismatched loop_end for ID: {step_data['loop_id']}")
                     step_index = self.loop_stack[-1]['start_index'] - 1
                     self.execution_item_finished.emit(step_data, "Looping...", original_listbox_row_index)
-
-                # ... (keep all other step type handling logic the same) ...
                 
                 elif step_type == "step":
                     class_name, method_name, module_name = step_data["class_name"], step_data["method_name"], step_data["module_name"]
                     parameters_config = step_data["parameters_config"]
                     assign_to_variable_name = step_data["assign_to_variable_name"]
                     resolved_parameters, params_str_debug = {}, []
-                    
                     for param_name, config in parameters_config.items():
-                        if param_name == "original_listbox_row_index": 
-                            continue
+                        if param_name == "original_listbox_row_index": continue
                         if config['type'] == 'hardcoded': 
                             resolved_parameters[param_name] = config['value']
                             params_str_debug.append(f"{param_name}={repr(config['value'])}")
@@ -1570,42 +1535,28 @@ class ExecutionWorker(QThread):
                             if var_name in self.global_variables: 
                                 resolved_parameters[param_name] = self.global_variables[var_name]
                                 params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
-                            else: 
-                                raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
-                    
+                            else: raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
                     self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
-                    
                     try:
                         module = importlib.import_module(module_name)
                         importlib.reload(module)
                         class_obj = getattr(module, class_name)
                         instance_key = (class_name, module_name)
-                        
                         if instance_key not in self.instantiated_objects:
                             init_kwargs = {}
-                            if 'context' in inspect.signature(class_obj.__init__).parameters: 
-                                init_kwargs['context'] = self.context
+                            if 'context' in inspect.signature(class_obj.__init__).parameters: init_kwargs['context'] = self.context
                             self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
-                        
                         instance = self.instantiated_objects[instance_key]
                         method_func = getattr(instance, method_name)
                         method_kwargs = {k:v for k,v in resolved_parameters.items()}
-                        
-                        if 'context' in inspect.signature(method_func).parameters: 
-                            method_kwargs['context'] = self.context
-                            
+                        if 'context' in inspect.signature(method_func).parameters: method_kwargs['context'] = self.context
                         result = method_func(**method_kwargs)
-                        
                         if assign_to_variable_name: 
                             self.global_variables[assign_to_variable_name] = result
                             result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
-                        else: 
-                            result_msg = f"Result: {result}"
-                            
+                        else: result_msg = f"Result: {result}"
                         self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
-                        
-                    except Exception as e: 
-                        raise e
+                    except Exception as e: raise e
 
                 elif step_type == "IF_START":
                     condition_config = step_data["condition_config"]
@@ -1614,6 +1565,23 @@ class ExecutionWorker(QThread):
                     self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}")
                     self.conditional_stack.append({'if_id': if_id, 'condition_result': condition_result, 'else_taken': False})
                     self.execution_item_finished.emit(step_data, f"Condition: {condition_result}", original_listbox_row_index)
+                    
+                    # --- [DEFINITIVE FIX IS HERE] ---
+                    if not condition_result:
+                        # Condition is false, find ELSE or IF_END and jump to it
+                        nesting_level, target_index = 0, -1
+                        for i in range(step_index + 1, len(self.steps_to_execute)):
+                            s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
+                            if s_type in ["loop_start", "IF_START", "group_start"]: nesting_level += 1
+                            elif s_type in ["ELSE", "IF_END"] and s.get("if_id") == if_id and nesting_level == 0:
+                                target_index = i
+                                break
+                            elif s_type in ["loop_end", "IF_END", "group_end"] and nesting_level > 0: nesting_level -= 1
+                        
+                        if target_index != -1:
+                            step_index = target_index - 1 # Set index to one before the target, as it will be incremented
+                        else:
+                            raise ValueError(f"Mismatched IF_START for ID: {if_id}, no ELSE or IF_END found.")
 
                 elif step_type == "ELSE":
                     if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: 
@@ -1623,16 +1591,21 @@ class ExecutionWorker(QThread):
                     self.execution_item_finished.emit(step_data, "Branching", original_listbox_row_index)
                     
                     if current_if.get('condition_result', False):
-                        nesting_level = 0
+                        nesting_level, target_index = 0, -1
                         for i in range(step_index + 1, len(self.steps_to_execute)):
                             s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
-                            if s_type in ["loop_start", "IF_START"]: 
-                                nesting_level += 1
+                            if s_type in ["loop_start", "IF_START", "group_start"]: nesting_level += 1
                             elif s_type == "IF_END" and s.get("if_id") == current_if["if_id"] and nesting_level == 0: 
-                                step_index = i-1
+                                target_index = i
                                 break
-                            elif s_type in ["loop_end", "IF_END"] and nesting_level > 0: 
-                                nesting_level -= 1
+                            elif s_type in ["loop_end", "IF_END", "group_end"] and nesting_level > 0: nesting_level -= 1
+                        
+                        # --- [DEFINITIVE FIX IS HERE] ---
+                        if target_index != -1:
+                            step_index = target_index - 1 # Jump to the IF_END
+                        else:
+                            raise ValueError(f"Mismatched ELSE for ID: {current_if['if_id']}, no IF_END found.")
+
 
                 elif step_type == "IF_END":
                     if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: 
@@ -1657,20 +1630,15 @@ class ExecutionWorker(QThread):
                 self.next_step_index_to_select = next_index
             self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
 
-# Add these new methods anywhere inside the ExecutionWorker class
     def pause(self):
-        """Sets the pause flag and logs the action."""
         self._is_paused = True
         self.context.add_log("Execution PAUSED.")
-        self.execution_started.emit("Execution PAUSED.") # Re-use signal for logging
+        self.execution_started.emit("Execution PAUSED.")
 
     def resume(self):
-        """Clears the pause flag and logs the action."""
         self._is_paused = False
         self.context.add_log("Execution RESUMED.")
-        self.execution_started.emit("Execution RESUMED.") # Re-use signal for logging
-# --- NEW WIDGET: RearrangeStepItemWidget ---
-# --- REPLACEMENT WIDGET: RearrangeStepItemWidget (WITH GUARANTEED STEP NUMBER FIRST) ---
+        self.execution_started.emit("Execution RESUMED.")
 class RearrangeStepItemWidget(QWidget):
     """A compact widget to display a step's details for the rearrange dialog."""
     def __init__(self, step_data: Dict[str, Any], step_number: int, parent: Optional[QWidget] = None):
@@ -3049,9 +3017,6 @@ class CodeEditorDialog(QDialog):
 # In main_app.py
 # REPLACE the entire ScheduleTaskDialog class with this one:
 
-# In main_app.py
-# REPLACE the entire ScheduleTaskDialog class with this one:
-
 class ScheduleTaskDialog(QDialog):
     """A dialog for scheduling bot execution."""
     def __init__(self, bot_name: str, schedule_data: Optional[Dict[str, Any]] = None, parent: Optional[QWidget] = None):
@@ -3396,6 +3361,7 @@ class WorkflowCanvas(QWidget):
         self._smart_redraw_layout()
         self._adjust_canvas_size()
         self.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding)
+
         
     def _should_show_group_collapsed(self, group_start_index: int) -> bool:
         """
@@ -4365,26 +4331,30 @@ class WorkflowCanvas(QWidget):
             
         return f"{title_prefix}{step_type.replace('_', ' ').title()}"
 
+# In main_app.py, inside the WorkflowCanvas class
+# REPLACE this entire method:
+
     def _adjust_canvas_size(self):
-        """Recalculates the minimum size of the canvas to fit all nodes."""
+        """Recalculates and sets the minimum size of the canvas to fit all nodes."""
         if not self.nodes:
-            # If no nodes, a small default is fine.
+            # If there are no nodes, a small default is fine.
             self.setMinimumSize(100, 100)
             return
 
-        # Calculate the actual bounds of all nodes
+        # Calculate the actual bounds of all drawn nodes
         max_x = 0
         max_y = 0
         for rect, _, _, _ in self.nodes:
             max_x = max(max_x, rect.right())
             max_y = max(max_y, rect.bottom())
         
-        # Add a 200px padding around the content
+        # Add a comfortable padding around the content
         required_width = max_x + 200
         required_height = max_y + 200
         
-        # THIS IS THE KEY: Set the minimum size to the actual required size.
-        # This tells the parent QScrollArea how big the canvas needs to be.
+        # THIS IS THE CRITICAL FIX: Set the minimum size to the *actual required size*.
+        # This tells the parent QScrollArea exactly how big the canvas needs to be,
+        # which in turn enables the horizontal scrollbar correctly.
         self.setMinimumSize(required_width, required_height)
         
     def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
@@ -4935,31 +4905,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "File Not Found", f"The bot file '{bot_name}.csv' was not found.")
             self.load_saved_steps_to_tree()
 
-    # In MainWindow class, replace the schedule_bot method
     def schedule_bot(self, bot_name: str):
         """Opens the scheduling dialog for the selected bot."""
+        # This correctly reads from the central 'schedules.json' for the dialog
         schedule_data = self.schedules.get(bot_name)
         dialog = ScheduleTaskDialog(bot_name, schedule_data, self)
         
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Get the new schedule data from the dialog
             new_schedule_data = dialog.get_schedule_data()
 
             # --- FIX STARTS HERE ---
-            # 1. Write to System 1 (schedules.json) for central management
+
+            # 1. Write to System 1 (schedules.json) - This part is the same as before
             self.schedules[bot_name] = new_schedule_data
             self.save_schedules()
 
-            # 2. Write to System 2 (the bot's .csv file) which the scheduler reads
+            # 2. Write to System 2 (the bot's .csv file) - This is the new, required logic
             bot_file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
             
             if not os.path.exists(bot_file_path):
                 QMessageBox.warning(self, "Error", f"Could not find bot file '{bot_name}.csv' to save schedule.")
                 return
 
+            # Use the existing helper function to write the schedule into the .csv
             if not self._write_schedule_to_csv(bot_file_path, new_schedule_data):
                 QMessageBox.critical(self, "Schedule Save Error", f"Failed to write schedule data to {bot_name}.csv.")
             else:
                 self._log_to_console(f"Schedule for '{bot_name}' saved to .json and .csv")
+                
             # --- FIX ENDS HERE ---
 
             # Refresh the "Saved Bots" tab display
@@ -6760,6 +6734,9 @@ class MainWindow(QMainWindow):
             
         return None
         
+# In main_app.py, inside the MainWindow class
+# REPLACE this entire method:
+
     def update_execution_tree_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int) -> None:
         """Enhanced method with deferred centering for robust workflow visualization."""
         # --- Part 1: Immediate UI Updates (Borders, Logs, etc.) ---
@@ -6772,32 +6749,31 @@ class MainWindow(QMainWindow):
         if parent_group_data and parent_group_data.get("execution_status") != "error":
             self._set_step_execution_status(parent_group_data, "running")
         
-        # Update the execution tree card using index map
-        if original_listbox_row_index is not None:
-            item_widget = self.data_to_item_map.get(original_listbox_row_index)
-            if item_widget:
-                card = self.execution_tree.itemWidget(item_widget, 0)
-                if card:
-                    card.set_status("", is_running=True)
-                    self._log_to_console(f"Executing: {card._get_formatted_title()}")
-                self.execution_tree.setCurrentItem(item_widget)
-                self.execution_tree.scrollToItem(item_widget, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
+        # Update the execution tree card using the reliable index map
+        item_to_update = self.data_to_item_map.get(original_listbox_row_index)
+        if item_to_update:
+            card = self.execution_tree.itemWidget(item_to_update, 0)
+            if card:
+                card.set_status("", is_running=True)
+                self._log_to_console(f"Executing: {card._get_formatted_title()}")
+            self.execution_tree.setCurrentItem(item_to_update)
+            self.execution_tree.scrollToItem(item_to_update, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
 
         # Tell the canvas it needs a repaint (this will happen after layouts are stable)
         if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
             self.workflow_canvas.update()
 
-        # --- Part 2: Deferred Centering Logic (FIXED) ---
+        # --- Part 2: Deferred Centering Logic (The Core Improvement) ---
         
         def center_the_view():
-            """This function will run AFTER Qt has stabilized the layout."""
+            """This function runs AFTER Qt has stabilized the layout, ensuring correct geometry."""
+            # Check if the workflow canvas is visible and valid
             if not (hasattr(self, 'workflow_canvas') and self.workflow_canvas and self.workflow_scroll_area.isVisible()):
                 return
 
-            # Find the corresponding node by matching the original_listbox_row_index
+            # Find the corresponding node in the canvas by matching its unique index
             target_node_rect: Optional[QRect] = None
             for rect, _, _, node_step_data in self.workflow_canvas.nodes:
-                # FIX: Match by index instead of object identity
                 node_index = node_step_data.get("original_listbox_row_index")
                 if node_index == original_listbox_row_index:
                     target_node_rect = rect
@@ -6805,25 +6781,26 @@ class MainWindow(QMainWindow):
             
             if target_node_rect:
                 try:
-                    # Get the center of the node
+                    # Get the center point of the node's rectangle
                     node_center = target_node_rect.center()
                     
-                    # Get the STABLE and CORRECT visible size of the scroll area
+                    # Get the STABLE and CORRECT visible size of the scroll area's viewport
                     viewport_size = self.workflow_scroll_area.viewport().size()
                     
-                    # Calculate the new top-left scroll value to center the node
+                    # Calculate the new top-left scroll value required to center the node
                     target_x = node_center.x() - (viewport_size.width() // 2)
                     target_y = node_center.y() - (viewport_size.height() // 2)
                     
-                    # Set the scroll bars
+                    # Set the horizontal and vertical scroll bars to the calculated positions
                     self.workflow_scroll_area.horizontalScrollBar().setValue(target_x)
                     self.workflow_scroll_area.verticalScrollBar().setValue(target_y)
 
                 except Exception as e:
                     self._log_to_console(f"Workflow scroll error: {e}")
 
-        # THE FIX: Schedule the centering function to run as soon as Qt is idle.
+        # THE KEY: Schedule the centering function to run as soon as Qt is idle (0 ms delay).
         QTimer.singleShot(0, center_the_view)
+
 
 
     def update_execution_tree_item_status_finished(self, step_data_dict: Dict[str, Any], message: str, original_listbox_row_index: int) -> None:
@@ -7463,12 +7440,13 @@ class MainWindow(QMainWindow):
 # In main_app.py
 # In the MainWindow class, REPLACE the check_schedules method with this one:
 
-# In MainWindow class, replace the check_schedules method
     def check_schedules(self):
         """Timer-triggered function to check for and run scheduled bots."""
+        # --- ADD THIS CHECK AT THE BEGINNING ---
         if self.is_bot_running:
             self._log_to_console("Scheduler check skipped: A bot is currently running.")
             return
+        # --- END ---
 
         self._log_to_console("Scheduler checking for due bots...")
         now = QDateTime.currentDateTime()
@@ -7476,9 +7454,11 @@ class MainWindow(QMainWindow):
         bot_files = [f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
 
         for bot_file in bot_files:
+            # --- ADD ANOTHER CHECK INSIDE THE LOOP ---
             if self.is_bot_running:
                 self._log_to_console("Scheduler check halted: A bot started execution during the check.")
-                break 
+                break # Exit the loop if a bot has started
+            # --- END ---
 
             bot_name = os.path.splitext(bot_file)[0]
             file_path = os.path.join(self.bot_steps_directory, bot_file)
@@ -7491,15 +7471,16 @@ class MainWindow(QMainWindow):
                     
                     # --- NEW CONSTRAINT LOGIC START ---
                     repeat_mode = schedule_data.get("repeat")
-                    current_day_str = now.toString("ddd")
+                    current_day_str = now.toString("ddd") # e.g., "Mon"
                     current_time = now.time()
 
                     # 1. Check Day of Week constraint
                     if repeat_mode in ["Daily", "Hourly"]:
                         selected_days = schedule_data.get("selected_days", [])
+                        # Only check if the user actually selected specific days
                         if selected_days and current_day_str not in selected_days:
                             self._log_to_console(f"Skipping '{bot_name}': Not scheduled for {current_day_str}.")
-                            continue
+                            continue # Skip to the next bot file
 
                     # 2. Check Time Boundary constraint
                     if schedule_data.get("time_boundary_enabled", False):
@@ -7512,14 +7493,16 @@ class MainWindow(QMainWindow):
                             
                             if not (start_time <= current_time <= end_time):
                                 self._log_to_console(f"Skipping '{bot_name}': Current time {current_time.toString()} is outside boundary {start_time.toString()} - {end_time.toString()}.")
-                                continue
+                                continue # Skip to the next bot file
                     # --- NEW CONSTRAINT LOGIC END ---
 
                     self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
                     
                     self.load_steps_from_file(file_path)
-                    self._handle_execute_pause_resume()
+                    self._handle_execute_pause_resume() # This will now set the is_bot_running flag
 
+                    # The rest of the logic for rescheduling remains the same...
+                    repeat_mode = schedule_data.get("repeat") # Get it again in case it was modified
                     if repeat_mode != "Do not repeat":
                         new_start_time = start_datetime
                         if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
@@ -7590,49 +7573,25 @@ class MainWindow(QMainWindow):
 
     def update_application(self):
 
-        #github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
-        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
+        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         
         zip_path = os.path.join(self.update_dir, "update.zip")
 
         os.makedirs(self.update_dir, exist_ok=True)
 
-        # --- ADDED PROXY CONFIGURATION ---
-        proxies = {}
-
-
         try:
-            # This 'urlopen' will now use the installed opener (with proxies)
-            
             with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-            # --- ADDED VALIDATION ---
-            if not zipfile.is_zipfile(zip_path):
-                # Try to read file content for logging
-                file_content = ""
-                try:
-                    with open(zip_path, 'r', encoding='utf-8') as f:
-                        file_content = f.read(500) # Read first 500 chars
-                except Exception:
-                    file_content = "(Could not read file content, may be binary)"
-
-                self._log_to_console(f"Error: Downloaded file '{zip_path}' is not a valid zip file. It might be an HTML error page from the proxy. Content preview: {file_content}")
-                # Raise an error to be caught by the except block and trigger manual download
-                raise urllib.error.URLError("Downloaded file is not a zip file. Check proxy/network response.")
-            # --- END VALIDATION ---
-
             self._process_zip_file(zip_path)
 
-        except urllib.error.URLError as e: # More specific catch
-            self._log_to_console(f"Update download failed: {e}. Check proxy/network.") # Log the new error
+        except urllib.error.URLError:
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Icon.Critical)
             msg_box.setWindowTitle("Download Failed")
             msg_box.setTextFormat(Qt.TextFormat.RichText)
             msg_box.setText(
-                f"Could not download the update automatically.<br><b>Error: {e}</b><br><br>"
-                "This may be a network or proxy issue.<br><br>"
+                "Could not download the update automatically.<br><br>"
                 "<b>Step 1:</b> Please download the file manually from this link:<br>"
                 f"<a href='{github_zip_url}'>{github_zip_url}</a><br><br>"
                 "<b>Step 2:</b> After the download is complete, click the <b>'Downloaded'</b> button below and select the file you just saved."
@@ -7644,17 +7603,10 @@ class MainWindow(QMainWindow):
             if msg_box.clickedButton() == downloaded_button:
                 file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded File", "", "Zip Files (*.zip)")
                 if file_path:
-                    # --- ADDED VALIDATION for manual file ---
-                    if not zipfile.is_zipfile(file_path):
-                        QMessageBox.critical(self, "Invalid File", "The file you selected is not a valid .zip file. Please download the correct file and try again.")
-                        return # Stop here
-                    # --- END VALIDATION ---
                     self._process_zip_file(file_path)
 
         except Exception as e:
-            self._log_to_console(f"General update error: {e}")
             QMessageBox.critical(self, "Update Error", f"An error occurred: {e}")
-            
 
     def _process_zip_file(self, zip_path):
         try:
@@ -7663,7 +7615,7 @@ class MainWindow(QMainWindow):
 
             extracted_folder_name = ""
             for item in os.listdir(self.update_dir):
-                if os.path.isdir(os.path.join(self.update_dir, item)) and "automateclick" in item:
+                if os.path.isdir(os.path.join(self.update_dir, item)) and "AutomateTask" in item:
                     extracted_folder_name = item
                     break
 
@@ -7983,7 +7935,37 @@ class MainWindow(QMainWindow):
         self._rebuild_execution_tree(item_to_focus_data=steps_to_move[0])
         
         self._log_to_console(f"Moved step block from index {source_index} to {actual_target}")
-   
+    '''
+    def _calculate_smart_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
+        """Enhanced insertion calculation that properly handles block structures."""
+        if selected_tree_item is None:
+            # If no item is selected, insert at the end of the entire list.
+            return len(self.added_steps_data)
+
+        selected_item_data = self._get_item_data(selected_tree_item)
+        if not selected_item_data:
+            # If the item has no associated data, treat as inserting at the end.
+            return len(self.added_steps_data)
+
+        try:
+            selected_flat_index = self.added_steps_data.index(selected_item_data)
+        except ValueError as e:
+            error_content = str(e)
+            self._log_to_console(f"ValueError in insertion index calculation: {error_content}")
+            print ("error:", str(ValueError))
+            # If the selected item's data is not found in the flat list, insert at the end.
+            return len(self.added_steps_data)
+        
+        selected_step_type = selected_item_data.get("type")
+
+        if insert_mode == "before":
+            return selected_flat_index
+        elif insert_mode == "after":
+            return selected_flat_index + 1
+        
+        # Fallback, should not be reached with "before" or "after" modes.
+        return len(self.added_steps_data)
+        '''
     def _calculate_smart_insertion_index(self, selected_tree_item: Optional[QTreeWidgetItem], insert_mode: str) -> int:
         """Enhanced insertion calculation that properly handles block structures."""
         if selected_tree_item is None:
