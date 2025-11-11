@@ -4621,7 +4621,7 @@ class MainWindow(QMainWindow):
         os.makedirs(self.click_image_dir, exist_ok=True)
         self.schedules_directory = os.path.join(self.base_directory, "Schedules")
         self.schedules = {}
-        
+        self._last_focused_step_index: Optional[int] = None
         icon_path = os.path.join(self.base_directory, "app_icon.ico")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
@@ -5290,7 +5290,16 @@ class MainWindow(QMainWindow):
         traverse(self.execution_tree.invisibleRootItem())
     
     def _rebuild_execution_tree(self, item_to_focus_data: Optional[Dict[str, Any]] = None) -> None:
+        """Enhanced method that ensures proper centering in both tree and workflow canvas."""
         expanded_state = self._get_expansion_state()
+
+        # Store the current selection before clearing
+        previously_selected_index = None
+        current_selected = self.execution_tree.selectedItems()
+        if current_selected:
+            previous_item_data = self._get_item_data(current_selected[0])
+            if previous_item_data:
+                previously_selected_index = previous_item_data.get("original_listbox_row_index")
 
         self.execution_tree.clear()
         self.data_to_item_map.clear()
@@ -5347,7 +5356,6 @@ class MainWindow(QMainWindow):
             card.move_down_requested.connect(self._handle_move_down_request)
             card.save_as_template_requested.connect(self._handle_save_as_template_request)
             card.execute_this_requested.connect(self._handle_execute_this_request)
-            # NEW DRAG AND DROP CONNECTIONS
             card.step_drag_started.connect(self._handle_step_drag_started)
             card.step_reorder_requested.connect(self._handle_step_reorder)
             
@@ -5360,6 +5368,24 @@ class MainWindow(QMainWindow):
             if step_type in ["loop_start", "IF_START", "ELSE", "group_start"]:
                 current_parent_stack.append(tree_item)
 
+        # --- ENHANCED FOCUS AND CENTERING LOGIC ---
+        target_index_for_focus = None
+        
+        # Determine what index should be focused
+        if item_to_focus_data:
+            # Use explicitly requested item
+            target_index_for_focus = item_to_focus_data.get("original_listbox_row_index")
+            item_to_focus = self.data_to_item_map.get(target_index_for_focus)
+        elif previously_selected_index is not None and previously_selected_index in self.data_to_item_map:
+            # Use previously selected item
+            target_index_for_focus = previously_selected_index
+            item_to_focus = self.data_to_item_map[target_index_for_focus]
+        elif self.added_steps_data:
+            # Fallback to first step
+            target_index_for_focus = 0
+            item_to_focus = self.data_to_item_map.get(0)
+
+        # Apply focus to execution tree
         if item_to_focus:
             self.execution_tree.setCurrentItem(item_to_focus)
             self.execution_tree.scrollToItem(item_to_focus, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
@@ -5367,7 +5393,16 @@ class MainWindow(QMainWindow):
         self.update_status_column_for_all_items()
         self._restore_expansion_state(expanded_state)
         self._update_workflow_tab(switch_to_tab=False)
-        self._save_workflow_to_temp_file() # <--- ADD THIS LINE at the end of the method
+        
+        # --- FORCE WORKFLOW CANVAS CENTERING ---
+        if target_index_for_focus is not None:
+            # Schedule centering after the workflow tab update is complete
+            def center_workflow_on_target():
+                self._center_workflow_canvas_on_step(target_index_for_focus)
+            
+            QTimer.singleShot(200, center_workflow_on_target)
+        
+        self._save_workflow_to_temp_file()
 
     def _handle_edit_request(self, step_data_to_edit: Dict[str, Any]):
         item_to_edit = self._find_qtreewidget_item(step_data_to_edit)
@@ -8129,7 +8164,7 @@ class MainWindow(QMainWindow):
 
     def update_application(self):
 
-        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
+        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         
         zip_path = os.path.join(self.update_dir, "update.zip")
@@ -8187,9 +8222,9 @@ class MainWindow(QMainWindow):
 
     def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
         """
-        Enhanced workflow tab update that works reliably for both execution and loading.
+        Enhanced workflow tab update with better canvas initialization.
         """
-        # Always clean up the old canvas first
+        # Clean up the old canvas
         old_canvas = self.workflow_scroll_area.takeWidget()
         if old_canvas:
             try:
@@ -8198,27 +8233,24 @@ class MainWindow(QMainWindow):
                 pass
             old_canvas.deleteLater()
 
-        # Create new canvas regardless of whether we have steps
+        # Create new canvas
         try:
             if self.added_steps_data:
                 workflow_tree = self._build_workflow_tree_data()
                 if workflow_tree:
                     self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
-                    # ENSURE THIS CONNECTION IS MADE
                     self.workflow_canvas.execute_step_requested.connect(self._handle_execute_this_request)
                 else:
-                    # Create empty canvas if tree building fails
                     self.workflow_canvas = WorkflowCanvas([], self)
             else:
-                # Create empty canvas for empty workflow
                 self.workflow_canvas = WorkflowCanvas([], self)
             
-            # Set up the canvas
+            # Set up the canvas in scroll area
             self.workflow_scroll_area.setWidget(self.workflow_canvas)
             self.workflow_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self.workflow_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             
-            # Force proper sizing if we have content
+            # Force proper sizing calculation
             if self.added_steps_data:
                 self.workflow_canvas._adjust_canvas_size()
             
@@ -8229,12 +8261,12 @@ class MainWindow(QMainWindow):
                 self._log_to_console("Workflow tab updated in background")
             
         except Exception as e:
-            # Create a basic empty canvas as fallback
+            # Fallback: create empty canvas
             self.workflow_canvas = WorkflowCanvas([], self)
             self.workflow_scroll_area.setWidget(self.workflow_canvas)
             
             if switch_to_tab:
-                QMessageBox.critical(self, "Workflow Error", f"An error occurred while building the workflow: {e}")
+                QMessageBox.critical(self, "Workflow Error", f"Error building workflow: {e}")
             self._log_to_console(f"Workflow build error: {e}")
 
     def _build_workflow_tree_data(self) -> List[Dict[str, Any]]:
@@ -8579,36 +8611,59 @@ class MainWindow(QMainWindow):
     # In the MainWindow class, add this new method
 # In the MainWindow class, REPLACE the existing edit_step_from_data method with this one.
 
+# In the MainWindow class, REPLACE the existing edit_step_from_data method with this enhanced version:
+
     def edit_step_from_data(self, step_data: Dict[str, Any]):
         """
-        Finds a step by its unique index and triggers the edit dialog.
-        This is called from the WorkflowCanvas context menu.
-        This is the robust version that prevents the 'out of sync' error.
+        Enhanced version that maintains workflow centering after parameter configuration.
         """
-        # 1. Get the unique identifier for the step from the workflow node's data.
+        # 1. Get the unique identifier for the step
         step_index = step_data.get("original_listbox_row_index")
 
-        # 2. Basic validation.
+        # 2. Basic validation
         if step_index is None:
             QMessageBox.warning(self, "Edit Error", "The selected workflow shape has no valid identifier.")
             return
 
-        # 3. Check if the index is valid within our main data list.
+        # 3. Check if the index is valid
         if not (0 <= step_index < len(self.added_steps_data)):
-            QMessageBox.warning(self, "Edit Error", f"The step index '{step_index}' is out of bounds. The workflow may be out of sync. Please try rebuilding the flow.")
+            QMessageBox.warning(self, "Edit Error", f"The step index '{step_index}' is out of bounds.")
             return
 
-        # 4. Find the corresponding item in the Execution Flow tree using the data_to_item_map.
-        #    This map was created specifically for this purpose.
+        # 4. Find the corresponding tree item
         item_to_edit = self.data_to_item_map.get(step_index)
 
-        # 5. If the item is found, call the same edit function as the card's "Edit" button.
+        # 5. Edit the step and ensure proper centering afterward
         if item_to_edit:
-            # This now behaves exactly like clicking the "Edit" button on the card.
+            # Store the step data that we want to keep centered
+            step_data_to_center = self.added_steps_data[step_index].copy()
+            
+            # Perform the edit operation
             self.edit_step_in_execution_tree(item_to_edit, 0)
+            
+            # After editing, the tree will rebuild automatically via the edit operation.
+            # The _rebuild_execution_tree method will handle the centering using the
+            # item_to_focus_data parameter that gets passed through the rebuild chain.
+            
+            # Additional safety: Schedule a backup centering operation
+            def backup_center_operation():
+                """Backup centering in case the main centering didn't work."""
+                # Check if the workflow tab is visible
+                workflow_tab_index = -1
+                for i in range(self.main_tab_widget.count()):
+                    if "Workflow" in self.main_tab_widget.tabText(i):
+                        workflow_tab_index = i
+                        break
+                
+                if (workflow_tab_index != -1 and 
+                    self.main_tab_widget.currentIndex() == workflow_tab_index):
+                    self._center_workflow_canvas_on_step(step_index)
+            
+            # Run backup centering after a longer delay to ensure everything is settled
+            QTimer.singleShot(500, backup_center_operation)
+            
         else:
-            # This is a fallback and should rarely happen if the map is up-to-date.
-            QMessageBox.warning(self, "Edit Error", "Could not find the corresponding UI element in the Execution Flow. Please try rebuilding the flow.")
+            QMessageBox.warning(self, "Edit Error", "Could not find the corresponding UI element.")
 
 # In MainWindow class, add this new method:
 
@@ -8973,6 +9028,76 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'main_window'):
                 self.main_window._log_to_console(f"Error centering on step {step_index}: {e}")
             return False
+            
+# Add this new method to the MainWindow class:
+
+    def _center_workflow_canvas_on_step(self, step_index: int) -> None:
+        """
+        Robustly centers the workflow canvas on a specific step by index.
+        This method handles all the edge cases and ensures proper centering.
+        """
+        if not (hasattr(self, 'workflow_canvas') and self.workflow_canvas and 
+                hasattr(self, 'workflow_scroll_area') and self.workflow_scroll_area.isVisible()):
+            return
+
+        try:
+            # Find the target node in the workflow canvas
+            target_rect = None
+            target_step_data = None
+            
+            for rect, text, shape, node_step_data in self.workflow_canvas.nodes:
+                node_index = node_step_data.get("original_listbox_row_index")
+                if node_index == step_index:
+                    target_rect = rect
+                    target_step_data = node_step_data
+                    break
+            
+            if not target_rect:
+                self._log_to_console(f"Could not find workflow node for step {step_index}")
+                return
+
+            # Get scroll area components
+            scroll_area = self.workflow_scroll_area
+            viewport = scroll_area.viewport()
+            canvas = self.workflow_canvas
+            
+            # Calculate the absolute position of the target node center
+            canvas_offset = canvas.canvas_offset
+            absolute_center_x = target_rect.center().x() + canvas_offset.x()
+            absolute_center_y = target_rect.center().y() + canvas_offset.y()
+            
+            # Calculate the scroll positions needed to center the node
+            viewport_center_x = viewport.width() // 2
+            viewport_center_y = viewport.height() // 2
+            
+            target_scroll_x = absolute_center_x - viewport_center_x
+            target_scroll_y = absolute_center_y - viewport_center_y
+            
+            # Get scroll bars and their ranges
+            h_scrollbar = scroll_area.horizontalScrollBar()
+            v_scrollbar = scroll_area.verticalScrollBar()
+            
+            # Clamp the scroll values to valid ranges
+            final_scroll_x = max(h_scrollbar.minimum(), 
+                               min(target_scroll_x, h_scrollbar.maximum()))
+            final_scroll_y = max(v_scrollbar.minimum(), 
+                               min(target_scroll_y, v_scrollbar.maximum()))
+            
+            # Apply the scrolling
+            h_scrollbar.setValue(int(final_scroll_x))
+            v_scrollbar.setValue(int(final_scroll_y))
+            
+            # Force a repaint to ensure the change is visible
+            canvas.update()
+            scroll_area.update()
+            
+            # Log success
+            step_name = target_step_data.get("method_name", f"Step {step_index + 1}")
+            self._log_to_console(f"Workflow canvas centered on: {step_name}")
+            
+        except Exception as e:
+            self._log_to_console(f"Error centering workflow canvas on step {step_index}: {e}")            
+            
         
 if __name__ == "__main__":
     app = QApplication(sys.argv)
