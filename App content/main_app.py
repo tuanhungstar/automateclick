@@ -1321,7 +1321,9 @@ class ExecutionWorker(QThread):
                  global_variables_ref: Dict[str, Any], 
                  wait_config: Dict[str, Any],
                  parent: Optional[QWidget] = None,
-                 single_step_mode: bool = False, selected_start_index: int = 0):
+                 single_step_mode: bool = False, 
+                 selected_start_index: int = 0,
+                 selected_end_index: Optional[int] = None):  # ADD THIS NEW PARAMETER
         super().__init__(parent)
         self.steps_to_execute = steps_to_execute
         self.module_directory = module_directory
@@ -1336,6 +1338,7 @@ class ExecutionWorker(QThread):
         self.group_stack: List[Dict[str, Any]] = [] 
         self.single_step_mode = single_step_mode
         self.selected_start_index = selected_start_index
+        self.selected_end_index = selected_end_index  # ADD THIS
         self.next_step_index_to_select: int = -1
         self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
         self._is_paused = False
@@ -1381,23 +1384,31 @@ class ExecutionWorker(QThread):
             self.execution_finished_all.emit(self.context, False, -1)
             return
             
-        total_steps_for_progress = len(self.steps_to_execute) * 2 if not self.single_step_mode else 1
-        if total_steps_for_progress == 0: total_steps_for_progress = 1
+        # Calculate the actual end index
+        if self.selected_end_index is not None:
+            actual_end_index = min(self.selected_end_index + 1, len(self.steps_to_execute))
+        else:
+            actual_end_index = len(self.steps_to_execute)
+        
+        total_steps_for_progress = (actual_end_index - self.selected_start_index) if not self.single_step_mode else 1
+        if total_steps_for_progress == 0: 
+            total_steps_for_progress = 1
             
         current_execution_item_count = 0
         original_sys_path = sys.path[:]
         
-        if self.module_directory not in sys.path: sys.path.insert(0, self.module_directory)
+        if self.module_directory not in sys.path: 
+            sys.path.insert(0, self.module_directory)
             
         self.context.set_click_image_base_dir(self.click_image_dir)    
         self.loop_stack = []
         self.conditional_stack = []
         self.group_stack = []
-        step_index = self.selected_start_index if self.single_step_mode else 0
+        step_index = self.selected_start_index
         original_listbox_row_index = 0
         
         try:
-            while step_index < len(self.steps_to_execute):
+            while step_index < actual_end_index:  # CHANGED: Use actual_end_index instead of len(self.steps_to_execute)
                 while self._is_paused:
                     if self._is_stopped: break
                     QThread.msleep(100)
@@ -3411,7 +3422,7 @@ class WorkflowCanvas(QWidget):
         return has_steps_before or has_steps_after       
         
     def _smart_redraw_layout(self):
-        """Intelligently redraws the entire workflow with optimal spacing and positioning."""
+        """Enhanced smart redraw that ensures proper sizing after layout."""
         # Clear existing user positions to force smart layout
         self._clear_all_user_positions()
         
@@ -3430,6 +3441,9 @@ class WorkflowCanvas(QWidget):
         
         # Center the workflow vertically if it fits in view
         self._center_workflow_if_possible()
+        
+        # IMPORTANT: Force size recalculation after layout is complete
+        self._adjust_canvas_size()
         
         self.update()
         
@@ -3480,7 +3494,7 @@ class WorkflowCanvas(QWidget):
 
     def _recursive_smart_layout(self, nodes: List[Dict], x: int, y: int, 
                                last_node_idx: int) -> Tuple[int, int, int]:
-        """Smart recursive layout with optimal spacing."""
+        """Enhanced smart recursive layout with proper integer handling."""
         current_y = y
         last_node_idx_in_level = last_node_idx
         max_x = x
@@ -3494,18 +3508,19 @@ class WorkflowCanvas(QWidget):
             
             # Determine node shape and color
             node_shape = self._get_node_shape(step_type)
-            # ADD THIS NEW LOGIC FOR GROUPS
+            
             if step_type == "group_start":
                 group_start_index = step_data.get("original_listbox_row_index", -1)
                 
                 if self._should_show_group_collapsed(group_start_index):
-                    # Show as single collapsed box (EXISTING behavior)
+                    # Show as single collapsed box
                     node_y = current_y
                     node_idx = len(self.nodes)
                     
-                    # Add the group node as a single box
-                    self.nodes.append((QRect(x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT), text, node_shape, step_data))
-                    step_data["workflow_pos"] = (x, node_y)
+                    # Ensure all QRect parameters are integers
+                    rect = QRect(int(x), int(node_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
+                    self.nodes.append((rect, text, node_shape, step_data))
+                    step_data["workflow_pos"] = (int(x), int(node_y))
                     
                     if last_node_idx_in_level != -1:
                         self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
@@ -3514,8 +3529,7 @@ class WorkflowCanvas(QWidget):
                     current_y += self.NODE_HEIGHT + self.V_SPACING
                     max_x = max(max_x, x + self.NODE_WIDTH)
                 else:
-                    # Show individual steps within the group (NEW behavior)
-                    # Skip the group_start node itself and process children directly
+                    # Show individual steps within the group
                     children = node.get('children', [])
                     if children:
                         child_y, child_last_idx, child_max_x = self._recursive_smart_layout(
@@ -3524,36 +3538,36 @@ class WorkflowCanvas(QWidget):
                         current_y = child_y
                         last_node_idx_in_level = child_last_idx
                         max_x = max(max_x, child_max_x)
-                    # Skip group_end as well since we're showing individual steps
-                
-                # Continue to next node
                 continue
-            if step_type in ["IF_START", "loop_start"]:
+                
+            elif step_type in ["IF_START", "loop_start"]:
                 node_y = current_y
                 node_idx = len(self.nodes)
                 
-                # Add the control node
-                self.nodes.append((QRect(x, node_y, self.NODE_WIDTH, self.NODE_HEIGHT), text, node_shape, step_data))
-                step_data["workflow_pos"] = (x, node_y)
+                # Add the control node - ensure integer values
+                rect = QRect(int(x), int(node_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
+                self.nodes.append((rect, text, node_shape, step_data))
+                step_data["workflow_pos"] = (int(x), int(node_y))
                 
                 if last_node_idx_in_level != -1:
                     self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
 
-                # Layout branches with smart spacing
+                # Layout branches with enhanced spacing for IF-ELSE
                 true_children = node.get('children', [])
                 false_children = node.get('false_children', [])
                 end_node_data = node.get('end_node')
                 
                 branch_start_y = node_y + self.NODE_HEIGHT + self.V_SPACING
                 
-                # Calculate branch positions with better spacing
+                # Enhanced branch positioning with more generous left spacing
+                # Ensure all calculations result in integers
                 if true_children and false_children:
-                    # Both branches exist - spread them out
-                    true_x = x - self.H_SPACING
-                    false_x = x + self.H_SPACING
+                    # Both branches exist - give more space for left branch
+                    true_x = int(x - (self.H_SPACING * 1.5))
+                    false_x = int(x + (self.H_SPACING * 1.2))
                 elif true_children:
-                    # Only true branch - keep it centered under the control node
-                    true_x = x
+                    # Only true branch - keep it centered but account for potential false branch space
+                    true_x = int(x - (self.H_SPACING * 0.3))
                     false_x = x
                 else:
                     # No branches - continue straight down
@@ -3588,12 +3602,12 @@ class WorkflowCanvas(QWidget):
                     end_step_num = end_node_data['step_data'].get("original_listbox_row_index", -1) + 1
                     end_text = self._get_node_text(end_node_data['step_data'], end_step_num)
                     
-                    # Smart positioning of end node
+                    # Smart positioning of end node - ensure integers
                     end_y = max(true_y_end, false_y_end) + self.V_SPACING
                     end_x = x  # Center under the control node
                     
-                    end_node_rect = QRect(end_x, end_y, self.NODE_WIDTH, self.NODE_HEIGHT)
-                    end_node_data['step_data']["workflow_pos"] = (end_x, end_y)
+                    end_node_rect = QRect(int(end_x), int(end_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
+                    end_node_data['step_data']["workflow_pos"] = (int(end_x), int(end_y))
                     
                     end_node_idx = len(self.nodes)
                     end_node_shape = self._get_node_shape("IF_END" if step_type == "IF_START" else "loop_end")
@@ -3621,8 +3635,8 @@ class WorkflowCanvas(QWidget):
             else:
                 # Regular step - simple vertical layout
                 current_node_idx = len(self.nodes)
-                rect = QRect(x, current_y, self.NODE_WIDTH, self.NODE_HEIGHT)
-                step_data["workflow_pos"] = (x, current_y)
+                rect = QRect(int(x), int(current_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
+                step_data["workflow_pos"] = (int(x), int(current_y))
                 
                 self.nodes.append((rect, text, node_shape, step_data))
                 
@@ -3802,25 +3816,51 @@ class WorkflowCanvas(QWidget):
         """Shows a context menu with workflow options."""
         context_menu = QMenu(self)
         
-        # --- NEW LOGIC: Store actions to check which was clicked ---
+        # --- UPDATED LOGIC: Better action text based on step type ---
         configure_action = None
         execute_action = None
         
         if clicked_node_data:
             step_type = clicked_node_data.get("type")
             
-            # Action 1: Execute This Step (only for executable steps)
+            # Action 1: Execute This Step (with better descriptions)
             if step_type not in ["group_end", "loop_end", "IF_END", "ELSE"]:
-                execute_action = context_menu.addAction("▶️ Execute This Step")
+                if step_type == "group_start":
+                    group_name = clicked_node_data.get('group_name', 'Group')
+                    execute_action = context_menu.addAction(f"▶️ Execute Entire Group: {group_name}")
+                elif step_type == "loop_start":
+                    loop_config = clicked_node_data.get('loop_config', {})
+                    loop_name = loop_config.get('loop_name', 'Loop')
+                    execute_action = context_menu.addAction(f"▶️ Execute Entire Loop: {loop_name}")
+                elif step_type == "IF_START":
+                    condition_config = clicked_node_data.get('condition_config', {})
+                    if_name = condition_config.get('block_name', 'IF Block')
+                    execute_action = context_menu.addAction(f"▶️ Execute Entire IF: {if_name}")
+                else:
+                    method_name = clicked_node_data.get('method_name', 'Step')
+                    execute_action = context_menu.addAction(f"▶️ Execute This Step: {method_name}")
+            else:
+                # For end markers, allow executing the entire block
+                if step_type == "group_end":
+                    group_name = clicked_node_data.get('group_name', 'Group')
+                    execute_action = context_menu.addAction(f"▶️ Execute Entire Group: {group_name}")
+                elif step_type == "loop_end":
+                    loop_config = clicked_node_data.get('loop_config', {})
+                    loop_name = loop_config.get('loop_name', 'Loop')
+                    execute_action = context_menu.addAction(f"▶️ Execute Entire Loop: {loop_name}")
+                elif step_type in ["IF_END", "ELSE"]:
+                    condition_config = clicked_node_data.get('condition_config', {})
+                    if_name = condition_config.get('block_name', 'IF Block')
+                    execute_action = context_menu.addAction(f"▶️ Execute Entire IF: {if_name}")
 
-            # Action 2: Configure Parameters
+            # Action 2: Configure Parameters (unchanged)
             if step_type in ["step", "loop_start", "IF_START", "group_start"]:
                 configure_action = context_menu.addAction("⚙️ Configure Parameters")
 
             if execute_action or configure_action:
                  context_menu.addSeparator()
         
-        # General Canvas Actions
+        # General Canvas Actions (unchanged)
         redraw_action = context_menu.addAction("🔄 Smart Redraw Layout")
         reset_zoom_action = context_menu.addAction("🔍 Reset Zoom")
         center_action = context_menu.addAction("🎯 Center Workflow")
@@ -3828,9 +3868,9 @@ class WorkflowCanvas(QWidget):
         # Show the menu and get the selected action
         action = context_menu.exec(self.mapToGlobal(pos))
         
-        # --- Handle the clicked action ---
+        # --- Handle the clicked action (unchanged) ---
         if action == execute_action and clicked_node_data:
-            # Emit our new signal with the step's data
+            # Emit our signal with the step's data
             self.execute_step_requested.emit(clicked_node_data)
 
         elif action == configure_action and clicked_node_data:
@@ -4332,31 +4372,62 @@ class WorkflowCanvas(QWidget):
         return f"{title_prefix}{step_type.replace('_', ' ').title()}"
 
 # In main_app.py, inside the WorkflowCanvas class
-# REPLACE this entire method:
-
     def _adjust_canvas_size(self):
-        """Recalculates and sets the minimum size of the canvas to fit all nodes."""
-        if not self.nodes:
-            # If there are no nodes, a small default is fine.
-            self.setMinimumSize(100, 100)
+        """
+        Enhanced canvas sizing with proper integer handling and extra generous left margin.
+        """
+        if not hasattr(self.main_window, 'added_steps_data') or not self.main_window.added_steps_data:
+            self.setMinimumSize(400, 300)
             return
 
-        # Calculate the actual bounds of all drawn nodes
-        max_x = 0
-        max_y = 0
-        for rect, _, _, _ in self.nodes:
-            max_x = max(max_x, rect.right())
-            max_y = max(max_y, rect.bottom())
-        
-        # Add a comfortable padding around the content
-        required_width = max_x + 200
-        required_height = max_y + 200
-        
-        # THIS IS THE CRITICAL FIX: Set the minimum size to the *actual required size*.
-        # This tells the parent QScrollArea exactly how big the canvas needs to be,
-        # which in turn enables the horizontal scrollbar correctly.
-        self.setMinimumSize(required_width, required_height)
-        
+        try:
+            # Force a complete layout calculation to ensure all steps are positioned
+            self._force_complete_layout_calculation()
+            
+            if not self.nodes:
+                self._use_fallback_sizing()
+                return
+            
+            # Calculate bounds from the complete layout
+            min_x = min(rect.x() for rect, _, _, _ in self.nodes)
+            max_x = max(rect.right() for rect, _, _, _ in self.nodes)
+            min_y = min(rect.y() for rect, _, _, _ in self.nodes)
+            max_y = max(rect.bottom() for rect, _, _, _ in self.nodes)
+            
+            content_width = max_x - min_x
+            content_height = max_y - min_y
+            
+            # Add extra generous left margin for IF-ELSE branches
+            # Ensure all calculations are integers
+            left_margin = int(max(200, abs(min_x) + 100))
+            right_margin = int(150)
+            top_margin = int(100)
+            bottom_margin = int(150)
+            
+            # Add 20% padding as requested
+            padding_factor = 1.2
+            
+            required_width = int((content_width + left_margin + right_margin) * padding_factor)
+            required_height = int((content_height + top_margin + bottom_margin) * padding_factor)
+            
+            # Ensure reasonable minimums
+            required_width = max(required_width, 1200)
+            required_height = max(required_height, 600)
+            
+            # Set the size
+            self.setMinimumSize(required_width, required_height)
+            
+            self.main_window._log_to_console(
+                f"Canvas sized with enhanced left margin: {required_width}x{required_height} "
+                f"(content: {content_width}x{content_height}, min_x: {min_x}, "
+                f"left_margin: {left_margin}, {len(self.nodes)} nodes positioned)"
+            )
+            
+        except Exception as e:
+            self.main_window._log_to_console(f"Error in complete layout calculation: {e}")
+            self._use_fallback_sizing()
+            
+            
     def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
         """Updates all edge indices when a node is moved in the list."""
         new_edges = []
@@ -4393,7 +4464,136 @@ class WorkflowCanvas(QWidget):
                 new_to_idx -= 1
             
             new_merges.append((new_from_idx, new_to_idx))
-        self.merge_lines = new_merges
+        self.merge_lines = new_merges    
+
+    def _use_fallback_sizing(self):
+        """
+        Fallback sizing method when layout calculation fails.
+        """
+        step_count = len(self.main_window.added_steps_data) if hasattr(self.main_window, 'added_steps_data') else 0
+        
+        # Conservative estimates based on step count - ensure integers
+        estimated_width = int(max(1200, step_count * 50))
+        estimated_height = int(max(800, step_count * 80))
+        
+        # Add 20% padding
+        required_width = int(estimated_width * 1.2) + 200
+        required_height = int(estimated_height * 1.2) + 200
+        
+        self.setMinimumSize(required_width, required_height)
+        
+        self.main_window._log_to_console(
+            f"Canvas sized with fallback method: {required_width}x{required_height} "
+            f"(estimated for {step_count} steps)"
+        )
+            
+    def _force_complete_layout_calculation(self):
+        """
+        Forces a complete recalculation of the entire workflow layout with proper left-side spacing.
+        """
+        # Clear current layout
+        self.nodes.clear()
+        self.edges.clear()
+        self.merge_lines.clear()
+        
+        # Ensure we have workflow tree data
+        if not hasattr(self, 'workflow_tree') or not self.workflow_tree:
+            self.workflow_tree = self.main_window._build_workflow_tree_data()
+        
+        if not self.workflow_tree:
+            return
+        
+        # Calculate maximum potential left expansion needed
+        max_left_expansion = self._calculate_max_left_expansion()
+        
+        # Calculate starting position with generous left margin
+        # Ensure all values are integers
+        start_x = int(max(600, max_left_expansion + 200))
+        start_y = int(50)
+        
+        self.main_window._log_to_console(f"Starting layout at x={start_x} (left expansion: {max_left_expansion})")
+        
+        # Force the complete layout build
+        self._recursive_smart_layout(self.workflow_tree, start_x, start_y, -1)
+        
+        # After layout, check if we need even more left space
+        if self.nodes:
+            min_x = min(rect.x() for rect, _, _, _ in self.nodes)
+            if min_x < 50:  # If any node is too close to the left edge
+                offset_needed = int(100 - min_x)  # Calculate how much to shift right
+                self._shift_all_nodes_right(offset_needed)
+                self.main_window._log_to_console(f"Shifted all nodes right by {offset_needed} pixels")
+
+    def _calculate_max_left_expansion(self) -> int:
+        """
+        Calculates the maximum potential leftward expansion based on workflow structure.
+        """
+        if not hasattr(self.main_window, 'added_steps_data'):
+            return 400  # Default safe margin
+        
+        max_nesting_depth = 0
+        current_depth = 0
+        if_else_count = 0
+        
+        for step_data in self.main_window.added_steps_data:
+            step_type = step_data.get("type")
+            
+            if step_type == "IF_START":
+                current_depth += 1
+                if_else_count += 1
+                max_nesting_depth = max(max_nesting_depth, current_depth)
+            elif step_type in ["loop_start", "group_start"]:
+                current_depth += 1
+                max_nesting_depth = max(max_nesting_depth, current_depth)
+            elif step_type in ["IF_END", "loop_end", "group_end"]:
+                current_depth = max(0, current_depth - 1)
+        
+        # Each IF-ELSE can expand left by H_SPACING, plus node width
+        # Each nesting level needs additional horizontal space
+        potential_left_expansion = int((if_else_count * self.H_SPACING) + (max_nesting_depth * self.H_SPACING // 2))
+        
+        self.main_window._log_to_console(f"Calculated potential left expansion: {potential_left_expansion} (IF count: {if_else_count}, max depth: {max_nesting_depth})")
+        
+        return max(potential_left_expansion, 400)  # Minimum 400 pixels
+
+    def _shift_all_nodes_right(self, offset: int):
+        """
+        Shifts all nodes to the right by the specified offset.
+        """
+        new_nodes = []
+        for rect, text, shape, step_data in self.nodes:
+            # Ensure all values are integers
+            new_x = int(rect.x() + offset)
+            new_y = int(rect.y())
+            new_width = int(rect.width())
+            new_height = int(rect.height())
+            
+            new_rect = QRect(new_x, new_y, new_width, new_height)
+            # Update the stored position in step_data
+            step_data["workflow_pos"] = (new_x, new_y)
+            new_nodes.append((new_rect, text, shape, step_data))
+        self.nodes = new_nodes
+
+    def _use_fallback_sizing(self):
+        """
+        Fallback sizing method when layout calculation fails.
+        """
+        step_count = len(self.main_window.added_steps_data) if hasattr(self.main_window, 'added_steps_data') else 0
+        
+        # Conservative estimates based on step count
+        estimated_width = max(1200, step_count * 50)  # Width grows with complexity
+        estimated_height = max(800, step_count * 80)   # Height grows with step count
+        
+        # Add 20% padding
+        required_width = int(estimated_width * 1.2) + 200
+        required_height = int(estimated_height * 1.2) + 200
+        
+        self.setMinimumSize(required_width, required_height)
+        
+        self.main_window._log_to_console(
+            f"Canvas sized with fallback method: {required_width}x{required_height} "
+            f"(estimated for {step_count} steps)"
+        )
         
 # --- MAIN APPLICATION WINDOW ---
 class MainWindow(QMainWindow):
@@ -5338,34 +5538,127 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Save Error", f"Failed to save the template:\n{e}")
 
     def _handle_execute_this_request(self, step_data: Dict[str, Any]):
-        """Executes a single step requested from an ExecutionStepCard button."""
+        """
+        Enhanced method to handle execution requests from workflow canvas.
+        Now supports executing entire groups, loops, and if-blocks.
+        """
         if not (step_data and isinstance(step_data, dict)):
             return
 
         current_row = step_data.get("original_listbox_row_index")
-        if current_row is None or not (0 <= current_row < len(self.added_steps_data)) or self.added_steps_data[current_row].get("original_listbox_row_index") != current_row:
-            try:
-                current_row = self.added_steps_data.index(step_data)
-            except ValueError:
-                 QMessageBox.critical(self, "Error", "Could not find the selected step in the internal data model. Data may be out of sync.")
-                 return
+        if current_row is None or not (0 <= current_row < len(self.added_steps_data)):
+            QMessageBox.critical(self, "Error", "Could not find the selected step in the internal data model. Data may be out of sync.")
+            return
 
-        self.set_ui_enabled_state(False)
-        self.progress_bar.setValue(0)
-        self.progress_bar.show()
-        self.update_status_column_for_all_items()
+        # Clear all execution status before starting
+        self._clear_all_execution_status()
         
-        self.worker = ExecutionWorker(
-            self.added_steps_data, 
-            self.module_directory, 
-            self.gui_communicator, 
-            self.global_variables, 
-            {'type': 'hardcoded', 'value': 0}, # Pass a "no wait" config for single steps
-            single_step_mode=True, 
-            selected_start_index=current_row
-        )
-        self._connect_worker_signals()
-        self.worker.start()
+        # Check the step type to determine execution strategy
+        step_type = step_data.get("type")
+        
+        if step_type in ["group_start", "loop_start", "IF_START"]:
+            # Execute the entire block
+            self._execute_selected_block(current_row, step_type)
+            
+            # Log what we're executing
+            if step_type == "group_start":
+                block_name = f"Group '{step_data.get('group_name', 'Unknown')}'"
+            elif step_type == "loop_start":
+                loop_config = step_data.get('loop_config', {})
+                block_name = f"Loop '{loop_config.get('loop_name', step_data.get('loop_id', 'Unknown'))}'"
+            elif step_type == "IF_START":
+                condition_config = step_data.get('condition_config', {})
+                block_name = f"IF '{condition_config.get('block_name', step_data.get('if_id', 'Unknown'))}'"
+            
+            self._log_to_console(f"Workflow canvas: Executing {block_name} from right-click menu")
+            
+        elif step_type in ["group_end", "loop_end", "IF_END", "ELSE"]:
+            # For end markers, find and execute the corresponding start block
+            self._execute_end_marker_block(current_row, step_type)
+            
+        else:
+            # Execute single step for regular steps
+            self._execute_single_step_simple(current_row)
+            step_name = step_data.get("method_name", f"Step {current_row + 1}")
+            self._log_to_console(f"Workflow canvas: Executing single step '{step_name}' from right-click menu")
+
+    def _execute_end_marker_block(self, end_marker_index: int, end_marker_type: str):
+        """
+        When user clicks on an end marker (group_end, loop_end, IF_END), 
+        find the corresponding start and execute the entire block.
+        """
+        end_step_data = self.added_steps_data[end_marker_index]
+        
+        # Get the ID of the block
+        if end_marker_type == "group_end":
+            block_id = end_step_data.get("group_id")
+            start_type = "group_start"
+            block_name = f"Group '{end_step_data.get('group_name', block_id)}'"
+        elif end_marker_type == "loop_end":
+            block_id = end_step_data.get("loop_id") 
+            start_type = "loop_start"
+            loop_config = end_step_data.get('loop_config', {})
+            block_name = f"Loop '{loop_config.get('loop_name', block_id)}'"
+        elif end_marker_type == "IF_END":
+            block_id = end_step_data.get("if_id")
+            start_type = "IF_START"
+            condition_config = end_step_data.get('condition_config', {})
+            block_name = f"IF '{condition_config.get('block_name', block_id)}'"
+        elif end_marker_type == "ELSE":
+            block_id = end_step_data.get("if_id")
+            start_type = "IF_START"
+            condition_config = end_step_data.get('condition_config', {})
+            block_name = f"IF '{condition_config.get('block_name', block_id)}'"
+        else:
+            QMessageBox.warning(self, "Execution Error", f"Cannot execute {end_marker_type} marker.")
+            return
+        
+        if not block_id:
+            QMessageBox.warning(self, "Execution Error", f"The {end_marker_type} marker has no valid block ID.")
+            return
+        
+        # Find the corresponding start marker
+        start_index = None
+        nesting_level = 0
+        
+        # Search backwards from the end marker
+        for i in range(end_marker_index - 1, -1, -1):
+            step = self.added_steps_data[i]
+            step_type = step.get("type")
+            
+            # Handle nesting by tracking end markers we encounter while going backwards
+            if step_type in ["group_end", "loop_end", "IF_END"]:
+                nesting_level += 1
+            elif step_type == start_type:
+                # Check if this start marker matches our block ID
+                if step_type == "group_start" and step.get("group_id") == block_id:
+                    if nesting_level == 0:
+                        start_index = i
+                        break
+                    else:
+                        nesting_level -= 1
+                elif step_type == "loop_start" and step.get("loop_id") == block_id:
+                    if nesting_level == 0:
+                        start_index = i
+                        break
+                    else:
+                        nesting_level -= 1
+                elif step_type == "IF_START" and step.get("if_id") == block_id:
+                    if nesting_level == 0:
+                        start_index = i
+                        break
+                    else:
+                        nesting_level -= 1
+            elif step_type in ["group_start", "loop_start", "IF_START"]:
+                nesting_level -= 1
+        
+        if start_index is None:
+            QMessageBox.warning(self, "Execution Error", f"Could not find the corresponding {start_type} for this {end_marker_type}.")
+            return
+        
+        # Execute the entire block
+        self._execute_selected_block(start_index, start_type)
+        self._log_to_console(f"Workflow canvas: Executing {block_name} (clicked on end marker)")
 
     def update_status_column_for_all_items(self):
         """Enhanced method to clear all execution status."""
@@ -5549,21 +5842,23 @@ class MainWindow(QMainWindow):
             filter_recursive(root.child(i))
 
     def saved_step_tree_item_selected(self, item: QTreeWidgetItem, column: int):
-            """Loads a bot's steps when its item is double-clicked in the tree."""
-            bot_name = item.text(0)
-            if bot_name == "No saved bots found.":
-                return
-        
-            file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
-            if os.path.exists(file_path):
-                self.load_steps_from_file(file_path, bot_name)
-                workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
-                if self.added_steps_data and self.main_tab_widget.currentIndex() != workflow_tab_index: # Only switch if loading was successful
-                    self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())                
-                
-            else:
-                QMessageBox.warning(self, "File Not Found", f"The selected bot file was not found:\n{file_path}")
-                self.load_saved_steps_to_tree()
+        """
+        Enhanced version that immediately shows workflow when loading from saved bots list.
+        """
+        bot_name = item.text(0)
+        if bot_name == "No saved bots found.":
+            return
+
+        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+        if os.path.exists(file_path):
+            self.load_steps_from_file(file_path, bot_name)
+            
+            # The workflow will be automatically shown by load_steps_from_file
+            # via the _update_and_show_workflow_after_load method
+            
+        else:
+            QMessageBox.warning(self, "File Not Found", f"The selected bot file was not found:\n{file_path}")
+            self.load_saved_steps_to_tree()
 
     def _extract_variables_from_steps(self, steps: List[Dict[str, Any]]) -> set:
         """Recursively finds all variable names used in a list of steps."""
@@ -6434,11 +6729,10 @@ class MainWindow(QMainWindow):
             self._log_to_console(f"Error comparing .csv and .json: {e}")
             # Err on the side of caution: if comparison fails, assume changes exist.
             return True
-# In MainWindow class
+    # In MainWindow class
     def _apply_loaded_data_to_ui(self, variables: Dict[str, Any], steps: List[Dict[str, Any]], bot_name: str = ""):
         """
-        Clears the current state and applies loaded data to the UI.
-        This also saves the loaded data to the *current* temp file.
+        Enhanced version that ensures workflow is immediately available and centered after loading.
         """
         # 1. Clear the current UI and data
         self._internal_clear_all_steps()
@@ -6456,11 +6750,54 @@ class MainWindow(QMainWindow):
             self.execution_flow_label.setText(f"Execution Flow: {bot_name}")
             self.bot_workflow_label.setText(f"Bot Workflow: {bot_name}")
 
-        # 4. Save this newly loaded data to the *current* temp file
-        #    (which was set by the calling function, e.g., load_steps_from_file)
+        # 4. Immediately prepare the workflow with centering
+        def prepare_workflow_immediately():
+            """Prepares and centers the workflow canvas immediately after data loading."""
+            try:
+                # Build the workflow tree data structure
+                workflow_tree = self._build_workflow_tree_data() if self.added_steps_data else []
+                
+                # Force creation and sizing of the workflow canvas
+                if workflow_tree:
+                    # Clear any existing canvas
+                    old_canvas = self.workflow_scroll_area.takeWidget()
+                    if old_canvas:
+                        try:
+                            old_canvas.execute_step_requested.disconnect()
+                        except (TypeError, AttributeError):
+                            pass
+                        old_canvas.deleteLater()
+                    
+                    # Create the new canvas with proper sizing
+                    self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
+                    self.workflow_canvas.execute_step_requested.connect(self._handle_execute_this_request)
+                    
+                    # Set up the canvas in the scroll area
+                    self.workflow_scroll_area.setWidget(self.workflow_canvas)
+                    self.workflow_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                    self.workflow_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+                    
+                    # Force proper sizing calculation
+                    self.workflow_canvas._adjust_canvas_size()
+                    
+                    self._log_to_console(f"Workflow canvas prepared for '{bot_name}' with {len(workflow_tree)} root nodes")
+                    
+                    # CENTER ON FIRST STEP after everything is set up
+                    def center_on_first_after_setup():
+                        self._center_workflow_on_first_step()
+                    
+                    QTimer.singleShot(150, center_on_first_after_setup)
+                
+            except Exception as e:
+                self._log_to_console(f"Error preparing workflow canvas: {e}")
+        
+        # Schedule immediate workflow preparation
+        QTimer.singleShot(50, prepare_workflow_immediately)
+
+        # 5. Save this newly loaded data to the current temp file
         self._save_workflow_to_temp_file()
         
-        self._log_to_console(f"Applied loaded data for '{bot_name or 'untitled'}' to UI.")
+        self._log_to_console(f"Applied loaded data for '{bot_name or 'untitled'}' to UI with immediate workflow preparation and centering.")
         
         
             
@@ -6613,10 +6950,10 @@ class MainWindow(QMainWindow):
         return True
 
     def execute_one_step(self) -> None:
-        """Executes a single step selected from the main execution tree."""
+        """Executes a single step or all steps within a selected group from the main execution tree."""
         selected_items = self.execution_tree.selectedItems()
         if len(selected_items) != 1:
-            QMessageBox.information(self, "Selection Error", "Please select exactly ONE step to execute.")
+            QMessageBox.information(self, "Selection Error", "Please select exactly ONE step or group to execute.")
             return
 
         # Get the data from the selected tree item
@@ -6625,33 +6962,118 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Selected item has no valid data associated with it.")
             return
 
-        # --- THE FIX ---
-        # Instead of searching the list for a copied object, get the reliable index.
+        # Get the reliable index
         current_row = selected_step_data.get("original_listbox_row_index")
 
         # Validate the index
         if current_row is None or not (0 <= current_row < len(self.added_steps_data)):
-            QMessageBox.critical(self, "Error", "Could not find selected step in internal data model. The data may be out of sync. Please try rebuilding the steps.")
+            QMessageBox.critical(self, "Error", "Could not find selected step in internal data model.")
             return
-        # --- END FIX ---
 
-        # The rest of the logic is the same
+        # Clear all execution status before starting
+        self._clear_all_execution_status()
+        
+        # Check if the selected item is a block start (group, loop, or if)
+        selected_step_type = selected_step_data.get("type")
+        
+        if selected_step_type in ["group_start", "loop_start", "IF_START"]:
+            # Execute the entire block
+            self._execute_selected_block(current_row, selected_step_type)
+        else:
+            # Execute single step
+            self._execute_single_step_simple(current_row)
+
+    def _execute_selected_block(self, start_index: int, block_type: str) -> None:
+        """Executes an entire block (group, loop, or if-else) using the range execution approach."""
+        
+        # Find the end index of the block
+        start_idx, end_idx = self._find_block_indices(start_index)
+        
+        if start_idx == end_idx and block_type in ["group_start", "loop_start", "IF_START"]:
+            QMessageBox.warning(self, "Incomplete Block", "The selected block appears to be incomplete. Cannot execute.")
+            return
+        
+        block_data = self.added_steps_data[start_index]
+        if block_type == "group_start":
+            block_name = f"Group '{block_data.get('group_name', 'Unknown')}'"
+        elif block_type == "loop_start":
+            loop_config = block_data.get('loop_config', {})
+            block_name = f"Loop '{loop_config.get('loop_name', block_data.get('loop_id', 'Unknown'))}'"
+        elif block_type == "IF_START":
+            condition_config = block_data.get('condition_config', {})
+            block_name = f"IF '{condition_config.get('block_name', block_data.get('if_id', 'Unknown'))}'"
+        else:
+            block_name = f"{block_type} block"
+        
+        step_count = end_idx - start_idx + 1
+        self._log_to_console(f"Executing {block_name} ({step_count} steps)")
+        
+        # Start execution with range
+        self._start_range_execution(start_idx, end_idx, execute_all=True)
+
+    def _execute_single_step_simple(self, step_index: int) -> None:
+        """Executes a single step using the existing single step mode."""
+        step_data = self.added_steps_data[step_index]
+        step_name = step_data.get("method_name", f"Step {step_index + 1}")
+        self._log_to_console(f"Executing single step: {step_name}")
+        
+        # Use single step mode (existing working logic)
+        self._start_range_execution(step_index, step_index, execute_all=False)
+
+    def _start_range_execution(self, start_index: int, end_index: int, execute_all: bool) -> None:
+        """Starts execution for a specific range of steps in the main data list."""
+        
+        # Prevent multiple executions
+        if self.is_bot_running:
+            QMessageBox.warning(self, "Already Running", "Another execution is already in progress.")
+            return
+        
+        # Set up UI for execution
         self.set_ui_enabled_state(False)
         self.progress_bar.setValue(0)
         self.progress_bar.show()
         self.update_status_column_for_all_items()
         
+        # Create the worker with the full data list but specify the range to execute
         self.worker = ExecutionWorker(
-            self.added_steps_data, 
+            self.added_steps_data,  # Pass the full list (important!)
             self.module_directory, 
             self.gui_communicator, 
             self.global_variables, 
-            {'type': 'hardcoded', 'value': 0}, # <-- Pass a "no wait" config dict
-            single_step_mode=True, 
-            selected_start_index=current_row  # Use the reliable index
+            self.wait_time_between_steps if execute_all else {'type': 'hardcoded', 'value': 0},
+            single_step_mode=not execute_all, 
+            selected_start_index=start_index,
+            selected_end_index=end_index  # NEW: Specify where to stop
         )
+        
         self._connect_worker_signals()
         self.worker.start()
+
+    def _clear_all_execution_status(self) -> None:
+        """Enhanced status clearing that's more thorough."""
+        # Clear from data model
+        for step_data in self.added_steps_data:
+            # Remove execution status keys
+            step_data.pop("execution_status", None)
+            step_data.pop("execution_result", None)
+            
+            # Also clear from parameters_config if it exists
+            if step_data.get("type") == "step" and "parameters_config" in step_data:
+                params = step_data.get("parameters_config", {})
+                if isinstance(params, dict):
+                    params.pop("execution_status", None)
+                    params.pop("execution_result", None)
+        
+        # Clear visual status from all tree items
+        self._clear_status_recursive(self.execution_tree.invisibleRootItem())
+        
+        # Update workflow canvas
+        if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+            self.workflow_canvas.update()
+        
+        # Reset any running flags
+        self.is_bot_running = False
+        self.is_paused = False
 
     def _connect_worker_signals(self) -> None:
         try:
@@ -6738,7 +7160,10 @@ class MainWindow(QMainWindow):
 # REPLACE this entire method:
 
     def update_execution_tree_item_status_started(self, step_data_dict: Dict[str, Any], original_listbox_row_index: int) -> None:
-        """Enhanced method with deferred centering for robust workflow visualization."""
+        """
+        Enhanced method with robust auto-centering for workflow visualization.
+        Now properly handles both horizontal and vertical scrolling with smooth centering.
+        """
         # --- Part 1: Immediate UI Updates (Borders, Logs, etc.) ---
         
         # Set execution status in the data model
@@ -6759,47 +7184,79 @@ class MainWindow(QMainWindow):
             self.execution_tree.setCurrentItem(item_to_update)
             self.execution_tree.scrollToItem(item_to_update, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
 
-        # Tell the canvas it needs a repaint (this will happen after layouts are stable)
+        # Tell the canvas it needs a repaint
         if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
             self.workflow_canvas.update()
 
-        # --- Part 2: Deferred Centering Logic (The Core Improvement) ---
+        # --- Part 2: Enhanced Auto-Centering Logic ---
         
-        def center_the_view():
-            """This function runs AFTER Qt has stabilized the layout, ensuring correct geometry."""
-            # Check if the workflow canvas is visible and valid
-            if not (hasattr(self, 'workflow_canvas') and self.workflow_canvas and self.workflow_scroll_area.isVisible()):
+        def center_workflow_on_executing_step():
+            """
+            Automatically centers the workflow view on the currently executing step.
+            This runs after Qt layout stabilization for accurate geometry calculations.
+            """
+            # Verify workflow components are available and visible
+            if not (hasattr(self, 'workflow_canvas') and 
+                    self.workflow_canvas and 
+                    self.workflow_scroll_area.isVisible()):
                 return
 
-            # Find the corresponding node in the canvas by matching its unique index
+            # Find the target node in the workflow canvas
             target_node_rect: Optional[QRect] = None
+            target_node_data = None
+            
             for rect, _, _, node_step_data in self.workflow_canvas.nodes:
                 node_index = node_step_data.get("original_listbox_row_index")
                 if node_index == original_listbox_row_index:
                     target_node_rect = rect
+                    target_node_data = node_step_data
                     break
             
-            if target_node_rect:
-                try:
-                    # Get the center point of the node's rectangle
-                    node_center = target_node_rect.center()
-                    
-                    # Get the STABLE and CORRECT visible size of the scroll area's viewport
-                    viewport_size = self.workflow_scroll_area.viewport().size()
-                    
-                    # Calculate the new top-left scroll value required to center the node
-                    target_x = node_center.x() - (viewport_size.width() // 2)
-                    target_y = node_center.y() - (viewport_size.height() // 2)
-                    
-                    # Set the horizontal and vertical scroll bars to the calculated positions
-                    self.workflow_scroll_area.horizontalScrollBar().setValue(target_x)
-                    self.workflow_scroll_area.verticalScrollBar().setValue(target_y)
+            if not target_node_rect:
+                self._log_to_console(f"Could not find workflow node for step {original_listbox_row_index}")
+                return
 
-                except Exception as e:
-                    self._log_to_console(f"Workflow scroll error: {e}")
+            try:
+                # Get current scroll area viewport dimensions
+                viewport = self.workflow_scroll_area.viewport()
+                viewport_width = viewport.width()
+                viewport_height = viewport.height()
+                
+                # Account for canvas offset in calculations
+                canvas_offset = self.workflow_canvas.canvas_offset
+                
+                # Calculate the absolute position of the node center
+                node_center_x = target_node_rect.center().x() + canvas_offset.x()
+                node_center_y = target_node_rect.center().y() + canvas_offset.y()
+                
+                # Calculate target scroll positions to center the node
+                target_scroll_x = node_center_x - (viewport_width // 2)
+                target_scroll_y = node_center_y - (viewport_height // 2)
+                
+                # Get scroll bar ranges to clamp values
+                h_scrollbar = self.workflow_scroll_area.horizontalScrollBar()
+                v_scrollbar = self.workflow_scroll_area.verticalScrollBar()
+                
+                # Clamp scroll positions to valid ranges
+                target_scroll_x = max(h_scrollbar.minimum(), 
+                                    min(target_scroll_x, h_scrollbar.maximum()))
+                target_scroll_y = max(v_scrollbar.minimum(), 
+                                    min(target_scroll_y, v_scrollbar.maximum()))
+                
+                # Apply the scroll positions
+                h_scrollbar.setValue(int(target_scroll_x))
+                v_scrollbar.setValue(int(target_scroll_y))
+                
+                # Log successful centering
+                step_name = target_node_data.get("method_name", "Unknown")
+                self._log_to_console(f"Workflow centered on: {step_name}")
+                
+            except Exception as e:
+                self._log_to_console(f"Error during workflow auto-centering: {e}")
 
-        # THE KEY: Schedule the centering function to run as soon as Qt is idle (0 ms delay).
-        QTimer.singleShot(0, center_the_view)
+        # Schedule the centering to run after Qt layout stabilization
+        # Using a slightly longer delay for more reliable geometry calculations
+        QTimer.singleShot(50, center_workflow_on_executing_step)
 
 
 
@@ -7257,11 +7714,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Error", f"Failed to save bot steps:\n{e}")
     
 
-# In MainWindow class
+    # In MainWindow class
     def load_steps_from_file(self, file_path: str, bot_name: str = "") -> None:
         """
-        Loads a bot from a .csv file, checking for unsaved changes in its
-        corresponding .json temp file and prompting for recovery if needed.
+        Enhanced version that immediately shows the workflow when loading a bot.
         """
         if not bot_name:
             bot_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -7302,7 +7758,7 @@ class MainWindow(QMainWindow):
             if loaded_data:
                 data_source_msg = f"Loaded '{bot_name}' from .csv file."
         
-        # 4. Check if loading was successful from
+        # 4. Check if loading was successful
         if loaded_data:
             loaded_vars, loaded_steps = loaded_data
 
@@ -7314,13 +7770,113 @@ class MainWindow(QMainWindow):
             
             # 7. Apply the loaded data to the UI
             self._apply_loaded_data_to_ui(loaded_vars, loaded_steps, bot_name)
+            
+            # 8. IMMEDIATELY update and show the workflow
+            self._update_and_show_workflow_after_load()
+            
             self._log_to_console(data_source_msg)
 
         else:
-            # 8. Handle load failure
+            # Handle load failure
             QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading '{bot_name}'.")
             self._log_to_console(f"Failed to load bot from {os.path.basename(csv_path)}.")
                 
+                
+    def _update_and_show_workflow_after_load(self):
+        """
+        Immediately updates, displays, and centers the workflow after loading a bot.
+        """
+        def show_workflow_after_ui_stabilization():
+            try:
+                # Force update the workflow tab with the loaded data
+                self._update_workflow_tab(switch_to_tab=False)
+                
+                # Switch to the workflow tab to show the visual representation
+                workflow_tab_index = -1
+                for i in range(self.main_tab_widget.count()):
+                    if "Workflow" in self.main_tab_widget.tabText(i):
+                        workflow_tab_index = i
+                        break
+                
+                if workflow_tab_index != -1:
+                    self.main_tab_widget.setCurrentIndex(workflow_tab_index)
+                    self._log_to_console("Switched to Workflow tab to display the loaded bot structure.")
+                
+                # Ensure the canvas is properly sized after loading
+                if hasattr(self, 'workflow_canvas') and self.workflow_canvas:
+                    self.workflow_canvas._adjust_canvas_size()
+                    self._log_to_console("Workflow canvas resized for optimal viewing.")
+                    
+                    # CENTER ON THE FIRST STEP - This is the new addition
+                    def center_after_sizing():
+                        self._center_workflow_on_first_step()
+                    
+                    # Give a small delay to ensure canvas sizing is complete
+                    QTimer.singleShot(100, center_after_sizing)
+                    
+            except Exception as e:
+                self._log_to_console(f"Error displaying workflow after load: {e}")
+        
+        # Schedule the workflow update after the UI has had time to stabilize
+        QTimer.singleShot(200, show_workflow_after_ui_stabilization)
+    def _center_workflow_on_first_step(self):
+        """
+        Centers the workflow canvas view on the first step after loading.
+        """
+        if not (hasattr(self, 'workflow_canvas') and self.workflow_canvas and self.workflow_canvas.nodes):
+            return
+        
+        try:
+            # Find the first step (step with the lowest original_listbox_row_index)
+            first_step_node = None
+            min_index = float('inf')
+            
+            for rect, text, shape, step_data in self.workflow_canvas.nodes:
+                step_index = step_data.get("original_listbox_row_index", float('inf'))
+                if step_index < min_index:
+                    min_index = step_index
+                    first_step_node = (rect, text, shape, step_data)
+            
+            if not first_step_node:
+                return
+            
+            # Get the rectangle of the first step
+            first_rect = first_step_node[0]
+            
+            # Get scroll area viewport dimensions
+            viewport = self.workflow_scroll_area.viewport()
+            viewport_width = viewport.width()
+            viewport_height = viewport.height()
+            
+            # Account for canvas offset
+            canvas_offset = self.workflow_canvas.canvas_offset
+            
+            # Calculate the center position of the first step
+            step_center_x = first_rect.center().x() + canvas_offset.x()
+            step_center_y = first_rect.center().y() + canvas_offset.y()
+            
+            # Calculate scroll positions to center the first step
+            target_scroll_x = step_center_x - (viewport_width // 2)
+            target_scroll_y = step_center_y - (viewport_height // 2)
+            
+            # Get scroll bars and clamp values to valid ranges
+            h_scrollbar = self.workflow_scroll_area.horizontalScrollBar()
+            v_scrollbar = self.workflow_scroll_area.verticalScrollBar()
+            
+            # Clamp to valid ranges
+            target_scroll_x = max(h_scrollbar.minimum(), min(target_scroll_x, h_scrollbar.maximum()))
+            target_scroll_y = max(v_scrollbar.minimum(), min(target_scroll_y, v_scrollbar.maximum()))
+            
+            # Apply the centering
+            h_scrollbar.setValue(int(target_scroll_x))
+            v_scrollbar.setValue(int(target_scroll_y))
+            
+            # Log the centering action
+            step_name = first_step_node[3].get("method_name", "First Step")
+            self._log_to_console(f"Workflow centered on first step: {step_name}")
+            
+        except Exception as e:
+            self._log_to_console(f"Error centering workflow on first step: {e}")
     def show_context_menu(self, position: QPoint):
         item = self.module_tree.itemAt(position)
         if not item:
@@ -7573,7 +8129,7 @@ class MainWindow(QMainWindow):
 
     def update_application(self):
 
-        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
+        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         
         zip_path = os.path.join(self.update_dir, "update.zip")
@@ -7630,43 +8186,53 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
 
     def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
-        """Builds/Refreshes the workflow canvas. Optionally switches to its tab."""
-        
+        """
+        Enhanced workflow tab update that works reliably for both execution and loading.
+        """
+        # Always clean up the old canvas first
         old_canvas = self.workflow_scroll_area.takeWidget()
         if old_canvas:
-            # Disconnect old signals before deleting to prevent memory leaks
             try:
                 old_canvas.execute_step_requested.disconnect()
             except (TypeError, AttributeError):
-                pass # Ignore if it was not connected or doesn't exist
+                pass
             old_canvas.deleteLater()
 
-        if not self.added_steps_data:
-            self.workflow_canvas = WorkflowCanvas([], self)
-            self.workflow_scroll_area.setWidget(self.workflow_canvas)
-            if switch_to_tab:
-                self.main_tab_widget.setCurrentWidget(self.workflow_scroll_area.parentWidget())
-            return
-
+        # Create new canvas regardless of whether we have steps
         try:
-            workflow_tree = self._build_workflow_tree_data()
-            if not workflow_tree:
-                if switch_to_tab:
-                    QMessageBox.warning(self, "Error", "Could not parse the workflow structure.")
-                return
+            if self.added_steps_data:
+                workflow_tree = self._build_workflow_tree_data()
+                if workflow_tree:
+                    self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
+                    # ENSURE THIS CONNECTION IS MADE
+                    self.workflow_canvas.execute_step_requested.connect(self._handle_execute_this_request)
+                else:
+                    # Create empty canvas if tree building fails
+                    self.workflow_canvas = WorkflowCanvas([], self)
+            else:
+                # Create empty canvas for empty workflow
+                self.workflow_canvas = WorkflowCanvas([], self)
             
-            self.workflow_canvas = WorkflowCanvas(workflow_tree, self)
-            
-            # --- CONNECT THE NEW SIGNAL HERE ---
-            self.workflow_canvas.execute_step_requested.connect(self._handle_execute_this_request)
-            # -----------------------------------
-            
+            # Set up the canvas
             self.workflow_scroll_area.setWidget(self.workflow_canvas)
+            self.workflow_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self.workflow_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            
+            # Force proper sizing if we have content
+            if self.added_steps_data:
+                self.workflow_canvas._adjust_canvas_size()
             
             if switch_to_tab:
                 self.main_tab_widget.setCurrentWidget(self.workflow_scroll_area.parentWidget())
+                self._log_to_console("Workflow tab updated and displayed")
+            else:
+                self._log_to_console("Workflow tab updated in background")
             
         except Exception as e:
+            # Create a basic empty canvas as fallback
+            self.workflow_canvas = WorkflowCanvas([], self)
+            self.workflow_scroll_area.setWidget(self.workflow_canvas)
+            
             if switch_to_tab:
                 QMessageBox.critical(self, "Workflow Error", f"An error occurred while building the workflow: {e}")
             self._log_to_console(f"Workflow build error: {e}")
@@ -8367,6 +8933,47 @@ class MainWindow(QMainWindow):
         self._clear_default_temp_file()
         
         self._log_to_console("All steps cleared. Reset to 'untitled' state.")
+        
+        
+        
+    def center_on_step(self, step_index: int):
+        """
+        Programmatically centers the workflow view on a specific step.
+        Useful for manual navigation and testing.
+        """
+        target_node_rect: Optional[QRect] = None
+        
+        for rect, _, _, node_step_data in self.nodes:
+            node_index = node_step_data.get("original_listbox_row_index")
+            if node_index == step_index:
+                target_node_rect = rect
+                break
+        
+        if not target_node_rect:
+            return False
+        
+        try:
+            # Get the center point of the target node
+            node_center = target_node_rect.center()
+            
+            # Get viewport dimensions
+            viewport_size = self.parent().viewport().size() if hasattr(self.parent(), 'viewport') else self.size()
+            
+            # Calculate required canvas offset to center the node
+            target_offset_x = (viewport_size.width() // 2) - node_center.x()
+            target_offset_y = (viewport_size.height() // 2) - node_center.y()
+            
+            # Apply the offset
+            self.canvas_offset = QPoint(target_offset_x, target_offset_y)
+            self.update()
+            
+            return True
+            
+        except Exception as e:
+            if hasattr(self, 'main_window'):
+                self.main_window._log_to_console(f"Error centering on step {step_index}: {e}")
+            return False
+        
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
