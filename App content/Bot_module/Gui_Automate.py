@@ -114,7 +114,7 @@ class Bot_utility:
                 return True
         return False
         
-    def left_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
+    def left_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92,stop_if_not_found=False):
         """Finds a UI element (as an image) on the screen and performs a left click.
 
         Args:
@@ -156,6 +156,9 @@ class Bot_utility:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
             #print ('left_click_done fail: {}'.format(image_file),str(key))
+
+        if stop_if_not_found:
+            raise Exception ("Image not found")
         return 'left_click_done fail: {}'.format(file_name)
         
     def right_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
