@@ -8164,7 +8164,7 @@ class MainWindow(QMainWindow):
 
     def update_application(self):
 
-        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
+        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         
         zip_path = os.path.join(self.update_dir, "update.zip")
