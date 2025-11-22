@@ -6,6 +6,11 @@ import clipboard
 import io
 import base64
 import PIL.Image
+
+from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor, QAction
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF, QTime
+from PyQt6 import QtWidgets, QtGui, QtCore
+
 from PyQt6 import QtCore, QtGui, QtWidgets # Import everything needed from PyQt6
 from PyQt6.QtGui import QIcon # <-- ADD THIS LINE
 from PyQt6.QtWidgets import QMessageBox # Explicitly import QMessageBox for clarity
@@ -58,7 +63,8 @@ class Old_utility:
             except:
                 pass
         if location is None:
-            print ('left_click_done fail: {}'.format(current_file),str(key))
+            #print ('left_click_done fail: {}'.format(current_file),str(key))
+            pass
         return 'left_click_done fail: {}'.format(current_file)
     def activate_window(self,title):
         loop=0
@@ -436,7 +442,7 @@ class QThread_Start_BOT(QtCore.QThread):
 
     def run(self):
         received_command = self.get_arrg
-        print(received_command)
+        #print(received_command)
         all_step = received_command.splitlines()
         for steps in all_step:
             if not steps.strip():
@@ -449,7 +455,7 @@ class QThread_Start_BOT(QtCore.QThread):
 
                 action_parts = parts[1].split('>>')
                 if len(action_parts) < 2:
-                    print(f"Warning: Skipping malformed action in step: {steps}")
+                    #print(f"Warning: Skipping malformed action in step: {steps}")
                     continue
 
                 class_name = action_parts[0].strip()
@@ -457,7 +463,7 @@ class QThread_Start_BOT(QtCore.QThread):
 
                 match = re.match(r'(\w+)\((.*)\)', func_and_arg)
                 if not match:
-                    print(f"Warning: Skipping malformed function call in step: {steps}")
+                    #print(f"Warning: Skipping malformed function call in step: {steps}")
                     continue
 
                 sub_func = match.group(1)
@@ -472,7 +478,8 @@ class QThread_Start_BOT(QtCore.QThread):
                     func = getattr(m, sub_func)
                     func(agr)
                 else:
-                    print(f"Error: Class '{class_name}' or function '{sub_func}' not found for step: {steps}")
+                    #print(f"Error: Class '{class_name}' or function '{sub_func}' not found for step: {steps}")
+                    pass
             except Exception as e:
                 print(f"Error processing RPA step '{steps}': {e}")
 
@@ -638,6 +645,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
     # --- UI Slot Methods (MODIFIED) ---
     @pyqtSlot()
     def Start_BOT(self):
+        #time.sleep(5)
         
 # --- MODIFY THIS BLOCK ---
         current_selection = self.conf_list_cob_img.currentText() # Get selection
@@ -657,6 +665,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
             self.setWindowState(QtCore.Qt.WindowState.WindowMinimized)
             
             # --- NEW PYQT6 SCREENSHOT LOGIC ---
+            time.sleep(3)
             self.snipper = QtScreenshotter()
             self.snipper.screenshotTaken.connect(self.on_screenshot_finished)
             self.snipper.show()
@@ -680,7 +689,8 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         if len(self.current_pic) > 20:
             pic_png = base64_pgn(self.current_pic)
             qimage = ImageQt(pic_png)
-            pixmap = QtGui.QPixmap.fromImage(qimage)
+            #pixmap = QtGui.QPixmap.fromImage(qimage)
+            pixmap = self.resize_qimage_and_create_qpixmap(qimage)
             self.click_img.setPixmap(pixmap)
         
         # Clean up the snipper instance
@@ -852,10 +862,10 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
                         self.screenshotSaved.emit(self.conf_list_cob_img.currentText()) # Emit new selection
                             
                 except OSError as e:
-                    print (f"BOT Take Image Module: Delete Image Error: {e}")
+                    #print (f"BOT Take Image Module: Delete Image Error: {e}")
                     self.show_info_messagebox(f"Error removing file '{file_name_with_path}.txt': {e}")
                 except Exception as e:
-                    print (f"BOT Take Image Module: Delete Image Error: {e}")
+                    #print (f"BOT Take Image Module: Delete Image Error: {e}")
                     self.show_info_messagebox(f"Error saving updated image file: {e}")
             else:
                 self.show_info_messagebox('Selected image not found in data.')
@@ -886,7 +896,8 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
                     if first_key:
                         pic_png = base64_pgn(self.img_data[first_key])
                         qimage = ImageQt(pic_png)
-                        pixmap = QtGui.QPixmap.fromImage(qimage)
+                        #pixmap = QtGui.QPixmap.fromImage(qimage)
+                        pixmap = self.resize_qimage_and_create_qpixmap(qimage)
                         self.click_img.setPixmap(pixmap)
                         self.current_pic = self.img_data[first_key] # Update instance attribute
                         items = self.KPI_botcomment_txt.findItems(first_key, QtCore.Qt.MatchFlag.MatchExactly)
@@ -925,7 +936,8 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
                 self.current_pic = self.img_data[item_key]
                 pic_png = base64_pgn(self.current_pic)
                 qimage = ImageQt(pic_png)
-                pixmap = QtGui.QPixmap.fromImage(qimage)
+                #pixmap = QtGui.QPixmap.fromImage(qimage)
+                pixmap = self.resize_qimage_and_create_qpixmap(qimage)
                 self.click_img.setPixmap(pixmap)
             else:
                 self.show_info_messagebox(f"Image data for key '{item_key}' not found.")
@@ -934,6 +946,14 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         else:
             self.click_img.clear()
             self.current_pic = ''
+            
+    def resize_qimage_and_create_qpixmap(self,qimage_input, percentage=98):
+        if qimage_input.isNull():
+            return QPixmap()
+        new_width = int(qimage_input.width() * (percentage / 100))
+        new_height = int(qimage_input.height() * (percentage / 100))
+        return QPixmap.fromImage(qimage_input.scaled(QSize(new_width, new_height), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        
     @pyqtSlot()
     def _test_image_actual(self): # Renamed the actual test logic
         if len(self.current_pic) > 50:
@@ -951,7 +971,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         try:
             location = pyautogui.locateCenterOnScreen(img_file, confidence=0.9)
         except Exception as e:
-            print(f"Error during image location: {e}")
+            #print(f"Error during image location: {e}")
             pass
         if location is not None:
             pyautogui.moveTo(location.x, location.y)
