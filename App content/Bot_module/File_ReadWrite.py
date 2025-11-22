@@ -92,7 +92,7 @@ class handle_excel():
         """
         
         col=col.replace("'","")
-        print (f'"{col}{int(row)}"')
+        #print (f'"{col}{int(row)}"')
         sheet = workbook[1]
         
         return sheet[f"{col}{int(row)}"].value
@@ -110,7 +110,7 @@ class handle_excel():
         Returns:
             str: A confirmation message: "assigned Value".
         """
-        workbook[1][f"{col}{int(row+1)}"] = value
+        workbook[1][f"{col}{int(row)}"] = value
         return "assigned Value"
         
     def save_excel(self,workbook,file_name):

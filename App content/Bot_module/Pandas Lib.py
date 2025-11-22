@@ -118,7 +118,7 @@ class DataFrame:
         try:
             # .iat is the fastest way to write to a single cell by integer location
             df.iat[row_idx, col_idx] = value
-            print(f"Set cell ({row_idx}, {col_idx}) to '{value}'.")
+            #print(f"Set cell ({row_idx}, {col_idx}) to '{value}'.")
             return df
         except IndexError:
             print(f"Error: Cell at ({row_idx}, {col_idx}) is out of bounds.")
@@ -192,7 +192,7 @@ class DataFrame:
                 if filtered_df.empty:
                     print(f"Warning: No rows found where '{column_name}' == {value_to_match}")
                     
-                return filtered_df
+                return filtered_df.reset_index(drop=True)
             
             except KeyError:
                 print(f"Error: Column '{column_name}' not found in the DataFrame.")
@@ -204,3 +204,128 @@ class DataFrame:
             
     def df_len(self, df) -> int:
         return len(df)
+
+    def create_df_from_clipboard(self, header_str: str = None) -> pd.DataFrame:
+        """
+        Creates a DataFrame from the current system clipboard content.
+
+        Args:
+            header_str (str, optional): A string of column names separated by semicolons 
+                                        (e.g., "Name;Age;Date"). 
+                                        If provided, these will be used as headers and 
+                                        the clipboard is assumed to contain data only.
+                                        If None, the first line of the clipboard is used as the header.
+
+        Returns:
+            pd.DataFrame: The created DataFrame, or an empty DataFrame on failure.
+        """
+        try:
+            # Get the current clipboard string to check if it's empty
+            clip_text = clipboard.paste()
+            if not clip_text or not clip_text.strip():
+                print("Error: Clipboard is empty.")
+                return pd.DataFrame()
+
+            if header_str:
+                # Case 1: User provided custom headers separated by semicolons
+                # We treat the clipboard content as data only (header=None)
+                headers = [h.strip() for h in header_str.split(';')]
+                
+                # We use sep='\t' as default for Excel copies, but allow pandas to infer if needed
+                self.df = pd.read_clipboard(sep=None, names=headers, header=None, engine='python')
+                print(f"DataFrame created from clipboard with custom headers: {headers}")
+            else:
+                # Case 2: No headers provided, infer from first line (default behavior)
+                self.df = pd.read_clipboard(sep=None, engine='python')
+                print("DataFrame created from clipboard (headers inferred from first line).")
+
+            return self.df
+
+        except Exception as e:
+            print(f"An error occurred reading from clipboard: {e}")
+            return pd.DataFrame()
+
+    def remove_duplicates_df(self, df: pd.DataFrame, columns_str: str = None, keep: str = 'first') -> pd.DataFrame:
+        """
+        Removes duplicate rows from the DataFrame.
+
+        Args:
+            df (pd.DataFrame): The DataFrame to process.
+            columns_str (str, optional): A semicolon-separated string of column names to base
+                                         the deduplication on (e.g., "Name;Date").
+                                         If None, all columns are used. Defaults to None.
+            keep (str, optional): Which duplicate to keep. Can be 'first', 'last', or False
+                                  (to drop all duplicates). Defaults to 'first'.
+
+        Returns:
+            pd.DataFrame: A new DataFrame with duplicates removed. Returns an empty DataFrame on error.
+        """
+        if not self._check_df(df):
+            return pd.DataFrame()
+
+        initial_rows = len(df)
+        
+        # Determine the subset of columns to check for duplicates
+        subset_cols = None
+        if columns_str:
+            # Split the string by semicolon and strip whitespace from each column name
+            subset_cols = [col.strip() for col in columns_str.split(';')]
+            
+            # Validate that all specified columns exist in the DataFrame
+            missing_cols = [col for col in subset_cols if col not in df.columns]
+            if missing_cols:
+                #print(f"Error: The following columns were not found in the DataFrame: {missing_cols}")
+                return df # Return original df on error
+
+        try:
+            # Use pandas' drop_duplicates method
+            deduplicated_df = df.drop_duplicates(subset=subset_cols, keep=keep)
+            
+            final_rows = len(deduplicated_df)
+            rows_removed = initial_rows - final_rows
+            
+            if subset_cols:
+                pass
+                #print(f"Removed {rows_removed} duplicate rows based on columns: {subset_cols}.")
+            else:
+                pass
+                #print(f"Removed {rows_removed} duplicate rows based on all columns.")
+            
+            return deduplicated_df
+
+        except Exception as e:
+            print(f"An error occurred while removing duplicates: {e}")
+            return df # Return original df on error
+
+    def add_column_with_constant(self, df: pd.DataFrame, new_column_name: str, constant_value: any) -> pd.DataFrame:
+        """
+        Adds a new column to the DataFrame and fills it with a constant value.
+
+        Args:
+            df (pd.DataFrame): The DataFrame to modify.
+            new_column_name (str): The name of the new column to be added.
+            constant_value (any): The value to populate every row in the new column with.
+
+        Returns:
+            pd.DataFrame: The DataFrame with the new column added.
+        """
+        if not self._check_df(df):
+            return df # Return original df on check failure
+
+        if not new_column_name or not isinstance(new_column_name, str):
+           
+            print("Error: 'new_column_name' must be a non-empty string.")
+            return df
+
+        if new_column_name in df.columns:
+            print(f"Warning: Column '{new_column_name}' already exists. It will be overwritten.")
+
+        try:
+            # Assign the constant value to the new column. Pandas handles broadcasting.
+            df[new_column_name] = constant_value
+            #print(f"Successfully added column '{new_column_name}' with constant value '{constant_value}'.")
+            return df
+        except Exception as e:
+            print(f"An error occurred while adding the column: {e}")
+            return df
+    # --- END NEW METHOD ---

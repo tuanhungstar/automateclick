@@ -69,3 +69,40 @@ class DateTimeUtility:
                 if current_day.weekday() < 5:  # Monday to Friday
                     business_days += 1
             return business_days
+
+
+    def get_first_day_of_current_month(self, format_string="%d-%m-%Y"):
+        """
+        Returns the first day of the current month.
+
+        Args:
+            format_string (str, optional): The desired format for the date.
+                                           Defaults to "%d-%m-%Y".
+
+        Returns:
+            str: The first day of the current month formatted as a string.
+        """
+        today = datetime.date.today()
+        first_day = today.replace(day=1)
+        return first_day.strftime(format_string)
+
+    def get_last_day_of_current_month(self, format_string="%d-%m-%Y"):
+        """
+        Returns the last day of the current month.
+
+        Args:
+            format_string (str, optional): The desired format for the date.
+                                           Defaults to "%d-%m-%Y".
+
+        Returns:
+            str: The last day of the current month formatted as a string.
+        """
+        today = datetime.date.today()
+        # Logic: Go to the first day of this month, add 32 days (landing in next month),
+        # then go to the first day of that next month, and subtract 1 day.
+        first_day_this_month = today.replace(day=1)
+        next_month = first_day_this_month + datetime.timedelta(days=32)
+        first_day_next_month = next_month.replace(day=1)
+        last_day = first_day_next_month - datetime.timedelta(days=1)
+        
+        return last_day.strftime(format_string)

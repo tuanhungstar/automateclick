@@ -49,3 +49,32 @@ class change_variable_value:
     def math_add_variable (self, var1,var2):
 
         return int(var1) + int(var2)
+
+    def add_space_2_var (self,var1):
+
+        return var1 + " "
+
+    def value_btw_range(self,var,up_range=1,down_range=0):
+        if var>=down_range and var<=up_range:
+            return True
+        else:
+            return False
+        return
+        
+    def is_number(self,variable):
+        """
+        Checks if a string can be converted to a float.
+
+        Args:
+            variable: The string to check.
+
+        Returns:
+            True if the string is a number, False otherwise.
+        """
+        if variable is None:
+            return False
+        try:
+            float(variable)
+            return True
+        except ValueError:
+            return False

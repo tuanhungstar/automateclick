@@ -571,6 +571,12 @@ class Bot_utility:
         pyperclipimg.copy(im2)
         return "done"
         
+    def click_if_exit(self,check_image,click_image,timeout=1):
+        if self.check_image_exits(check_image,timeout):
+            self.left_click(click_image)
+            return 'clicked'
+        return 'Not found'        
+        
 class Bot_SAP:
     '''
     A class containing methods specifically designed for automating tasks within

@@ -1,922 +1,592 @@
-import win32com.client
+# File: Bot_module/outlook_module.py
+
+import sys
 import os
-import datetime
+import re
+from datetime import datetime, timedelta
+from typing import Optional, List, Dict, Any
 import pandas as pd
-from typing import List, Dict, Any, Optional, Union
-import time
-from my_lib.shared_context import ExecutionContext as Context
+import fnmatch # For wildcard matching
 
-class OutlookHandler:
-    def __init__(self, context: Context):
-        self.context = context
-        self.outlook = None
-        self.namespace = None
-        self.inbox = None
-        self.sent_items = None
-        self.drafts = None
-    
-    def connect(self):
-        """Connect to Outlook application"""
-        try:
-            self.outlook = win32com.client.Dispatch("Outlook.Application")
-            self.namespace = self.outlook.GetNamespace("MAPI")
-            
-            # Get common folders
-            self.inbox = self.namespace.GetDefaultFolder(6)  # Inbox
-            self.sent_items = self.namespace.GetDefaultFolder(5)  # Sent Items
-            self.drafts = self.namespace.GetDefaultFolder(16)  # Drafts
-            
-            self.context.add_log("Successfully connected to Outlook")
-            return self.outlook
-        except Exception as e:
-            self.context.add_log(f"Error connecting to Outlook: {str(e)}")
-            return None
-    
-    def send_email(self, outlook, to_recipients: Union[str, List[str]], subject: str, body: str,
-                   cc_recipients: Union[str, List[str]] = None, 
-                   bcc_recipients: Union[str, List[str]] = None,
-                   attachments: List[str] = None, 
-                   html_body: bool = False,
-                   send_immediately: bool = True):
-        """
-        Send an email
-        
-        Args:
-            outlook: Outlook application object
-            to_recipients: Email recipient(s)
-            subject: Email subject
-            body: Email body content
-            cc_recipients: CC recipient(s)
-            bcc_recipients: BCC recipient(s)
-            attachments: List of file paths to attach
-            html_body: Whether body is HTML format
-            send_immediately: Send immediately or save to drafts
-        """
-        try:
-            mail = outlook.CreateItem(0)  # 0 = Mail item
-            
-            # Set recipients
-            if isinstance(to_recipients, str):
-                mail.To = to_recipients
-            else:
-                mail.To = "; ".join(to_recipients)
-            
-            if cc_recipients:
-                if isinstance(cc_recipients, str):
-                    mail.CC = cc_recipients
-                else:
-                    mail.CC = "; ".join(cc_recipients)
-            
-            if bcc_recipients:
-                if isinstance(bcc_recipients, str):
-                    mail.BCC = bcc_recipients
-                else:
-                    mail.BCC = "; ".join(bcc_recipients)
-            
-            # Set subject and body
-            mail.Subject = subject
-            if html_body:
-                mail.HTMLBody = body
-            else:
-                mail.Body = body
-            
-            # Add attachments
-            if attachments:
-                for attachment in attachments:
-                    if os.path.exists(attachment):
-                        mail.Attachments.Add(attachment)
-                        self.context.add_log(f"Attached: {attachment}")
-                    else:
-                        self.context.add_log(f"Warning: Attachment not found: {attachment}")
-            
-            # Send or save to drafts
-            if send_immediately:
-                mail.Send()
-                self.context.add_log("Email sent successfully")
-            else:
-                mail.Save()
-                self.context.add_log("Email saved to drafts")
-            
-            return True
-        except Exception as e:
-            self.context.add_log(f"Error sending email: {str(e)}")
-            return False
-    
-    def read_unread_emails(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None) -> pd.DataFrame:
-        """
-        Read unread emails - version that keeps datetime as strings to avoid conversion errors
-        
-        Args:
-            outlook: Outlook application object
-            folder_name: Name of the folder (e.g., "Inbox", "Sent Items", or custom folder name)
-            folder_path: Full path to folder for nested folders (e.g., "Inbox\\Custom Folder")
-                        If provided, folder_name is ignored
-        
-        Returns:
-            DataFrame with email data (datetime fields as strings)
-        """
-        try:
-            if not outlook:
-                self.context.add_log("Outlook object is None. Call connect() first.")
-                return pd.DataFrame()
-            
-            namespace = outlook.GetNamespace("MAPI")
-            target_folder = self._get_folder(namespace, folder_name, folder_path)
-            
-            if not target_folder:
-                return pd.DataFrame()
-            
-            messages = target_folder.Items
-            messages = messages.Restrict("[Unread] = True")
-            
-            # Try to sort, but don't fail if it doesn't work
-            try:
-                messages.Sort("[ReceivedTime]", True)
-            except:
-                pass
-            
-            email_data = []
-            
-            for message in messages:
-                try:
-                    email_info = {
-                        'Subject': str(getattr(message, 'Subject', '') or ''),
-                        'Sender': str(getattr(message, 'SenderName', '') or ''),
-                        'SenderEmail': str(getattr(message, 'SenderEmailAddress', '') or ''),
-                        'ReceivedTime_String': str(getattr(message, 'ReceivedTime', '') or ''),
-                        'Body': str(getattr(message, 'Body', '') or ''),
-                        'HTMLBody': str(getattr(message, 'HTMLBody', '') or ''),
-                        'HasAttachments': self._safe_has_attachments(message),
-                        'AttachmentCount': self._safe_attachment_count(message),
-                        'Importance': str(self._get_importance_text(getattr(message, 'Importance', 1))),
-                        'Size': int(getattr(message, 'Size', 0) or 0),
-                        'Categories': str(getattr(message, 'Categories', '') or ''),
-                        'EntryID': str(getattr(message, 'EntryID', '') or ''),
-                        'To': str(getattr(message, 'To', '') or ''),
-                        'CC': str(getattr(message, 'CC', '') or ''),
-                        'Folder': str(target_folder.Name),
-                        'CreationTime_String': str(getattr(message, 'CreationTime', '') or ''),
-                        'MessageClass': str(getattr(message, 'MessageClass', '') or ''),
-                        'AttachmentNames': self._safe_attachment_names(message)
-                    }
-                    
-                    email_data.append(email_info)
-                    
-                except Exception as e:
-                    self.context.add_log(f"Error processing message: {str(e)}")
-                    continue
-            
-            df = pd.DataFrame(email_data)
-            self.context.add_log(f"Retrieved {len(df)} unread emails from folder: {target_folder.Name}")
-            return df
-            
-        except Exception as e:
-            self.context.add_log(f"Error reading unread emails: {str(e)}")
-            return pd.DataFrame()
-    
-    def _get_folder(self, namespace, folder_name: str, folder_path: Optional[str] = None):
-        """
-        Get folder object by name or path
-        """
-        try:
-            if folder_path:
-                return self._get_folder_by_path(namespace, folder_path)
-            
-            # Check default folders first
-            if folder_name.lower() == "inbox":
-                return namespace.GetDefaultFolder(6)  # Inbox
-            elif folder_name.lower() == "sent items":
-                return namespace.GetDefaultFolder(5)  # Sent Items
-            elif folder_name.lower() == "drafts":
-                return namespace.GetDefaultFolder(16)  # Drafts
-            else:
-                # Search for custom folder
-                return self._find_folder_by_name(namespace, folder_name)
-                
-        except Exception as e:
-            self.context.add_log(f"Error getting folder '{folder_name}': {str(e)}")
-            return None
-    
-    def _get_folder_by_path(self, namespace, folder_path: str):
-        """
-        Get folder by full path (e.g., "Inbox\\Custom Folder\\Subfolder")
-        """
-        try:
-            folder_parts = folder_path.split('\\')
-            
-            # If only one part, it's a root-level folder
-            if len(folder_parts) == 1:
-                folder_name = folder_parts[0]
-                
-                if folder_name.lower() == "inbox":
-                    return namespace.GetDefaultFolder(6)
-                elif folder_name.lower() == "sent items":
-                    return namespace.GetDefaultFolder(5)
-                elif folder_name.lower() == "drafts":
-                    return namespace.GetDefaultFolder(16)
-                else:
-                    return self._find_root_folder_by_name(namespace, folder_name)
-            
-            # Multiple parts - handle nested folders
-            current_folder = None
-            
-            if folder_parts[0].lower() == "inbox":
-                current_folder = namespace.GetDefaultFolder(6)
-            elif folder_parts[0].lower() == "sent items":
-                current_folder = namespace.GetDefaultFolder(5)
-            elif folder_parts[0].lower() == "drafts":
-                current_folder = namespace.GetDefaultFolder(16)
-            else:
-                current_folder = self._find_root_folder_by_name(namespace, folder_parts[0])
-            
-            if not current_folder:
-                self.context.add_log(f"Root folder '{folder_parts[0]}' not found")
-                return None
-            
-            # Navigate through subfolders
-            for folder_part in folder_parts[1:]:
-                found_subfolder = None
-                for subfolder in current_folder.Folders:
-                    if subfolder.Name.lower() == folder_part.lower():
-                        found_subfolder = subfolder
-                        break
-                
-                if found_subfolder:
-                    current_folder = found_subfolder
-                else:
-                    self.context.add_log(f"Subfolder '{folder_part}' not found in '{current_folder.Name}'")
-                    return None
-            
-            return current_folder
-            
-        except Exception as e:
-            self.context.add_log(f"Error navigating folder path '{folder_path}': {str(e)}")
-            return None
-    
-    def _find_folder_by_name(self, namespace, folder_name: str):
-        """
-        Recursively search for folder by name
-        """
-        try:
-            # Search in default folders first
-            folders_to_search = []
-            try:
-                folders_to_search.append(namespace.GetDefaultFolder(6))   # Inbox
-                folders_to_search.append(namespace.GetDefaultFolder(5))   # Sent Items
-                folders_to_search.append(namespace.GetDefaultFolder(16))  # Drafts
-            except:
-                pass
-            
-            # Add root folders
-            try:
-                for folder in namespace.Folders:
-                    folders_to_search.append(folder)
-            except:
-                pass
-            
-            for folder in folders_to_search:
-                try:
-                    found_folder = self._search_folder_recursive(folder, folder_name)
-                    if found_folder:
-                        return found_folder
-                except:
-                    continue
-            
-            self.context.add_log(f"Folder '{folder_name}' not found")
-            return None
-            
-        except Exception as e:
-            self.context.add_log(f"Error searching for folder '{folder_name}': {str(e)}")
-            return None
-    
-    def _find_root_folder_by_name(self, namespace, folder_name: str):
-        """
-        Find folder at root level (same level as Inbox)
-        """
-        try:
-            for folder in namespace.Folders:
-                if folder.Name.lower() == folder_name.lower():
-                    return folder
-            
-            self.context.add_log(f"Root folder '{folder_name}' not found")
-            return None
-            
-        except Exception as e:
-            self.context.add_log(f"Error searching for root folder '{folder_name}': {str(e)}")
-            return None
-    
-    def _search_folder_recursive(self, parent_folder, target_name: str):
-        """
-        Recursively search for folder in subfolders
-        """
-        try:
-            # Check current folder
-            if parent_folder.Name.lower() == target_name.lower():
-                return parent_folder
-            
-            # Search in subfolders
-            for subfolder in parent_folder.Folders:
-                if subfolder.Name.lower() == target_name.lower():
-                    return subfolder
-                
-                # Recursive search
-                found = self._search_folder_recursive(subfolder, target_name)
-                if found:
-                    return found
-            
-            return None
-            
-        except Exception as e:
-            return None
-    
-    def _safe_has_attachments(self, message):
-        """
-        Safely check if message has attachments
-        """
-        try:
-            attachments = getattr(message, 'Attachments', None)
-            if attachments is None:
-                return False
-            return len(attachments) > 0
-        except:
-            return False
-    
-    def _safe_attachment_count(self, message):
-        """
-        Safely get attachment count
-        """
-        try:
-            attachments = getattr(message, 'Attachments', None)
-            if attachments is None:
-                return 0
-            return len(attachments)
-        except:
-            return 0
-    
-    def _safe_attachment_names(self, message):
-        """
-        Safely get attachment names
-        """
-        try:
-            if not self._safe_has_attachments(message):
-                return ''
-            
-            attachment_names = []
-            for attachment in message.Attachments:
-                try:
-                    attachment_names.append(str(attachment.FileName))
-                except:
-                    attachment_names.append('[Unknown filename]')
-            return '; '.join(attachment_names)
-        except:
-            return 'Error reading attachments'
-    
-    def _get_importance_text(self, importance_level):
-        """
-        Convert importance level to text
-        """
-        try:
-            importance_map = {
-                0: "Low",
-                1: "Normal", 
-                2: "High"
-            }
-            return importance_map.get(int(importance_level), "Normal")
-        except:
-            return "Normal"
-                
-    def save_attachments(self, outlook, entry_id: str, save_folder: str, 
-                        attachment_names: Optional[List[str]] = None) -> List[str]:
-        """
-        Save attachments from a specific email by EntryID
-        
-        Args:
-            outlook: Outlook application object
-            entry_id: EntryID of the email (from DataFrame)
-            save_folder: Folder path where to save attachments
-            attachment_names: List of specific attachment names to save (None = save all)
-        
-        Returns:
-            List of saved file paths
-        """
-        try:
-            if not outlook:
-                self.context.add_log("Outlook object is None")
-                return []
-            
-            # Create save folder if it doesn't exist
-            if not os.path.exists(save_folder):
-                os.makedirs(save_folder)
-                self.context.add_log(f"Created folder: {save_folder}")
-            
-            namespace = outlook.GetNamespace("MAPI")
-            
-            # Get the email by EntryID
-            try:
-                message = namespace.GetItemFromID(entry_id)
-            except Exception as e:
-                self.context.add_log(f"Could not find email with EntryID: {entry_id}")
-                return []
-            
-            if not message.Attachments or len(message.Attachments) == 0:
-                self.context.add_log("No attachments found in this email")
-                return []
-            
-            saved_files = []
-            
-            for attachment in message.Attachments:
-                try:
-                    filename = attachment.FileName
-                    
-                    # Skip if specific attachment names are specified and this isn't one of them
-                    if attachment_names and filename not in attachment_names:
-                        continue
-                    
-                    # Create safe filename
-                    safe_filename = self._make_safe_filename(filename)
-                    file_path = os.path.join(save_folder, safe_filename)
-                    
-                    # Handle duplicate filenames
-                    file_path = self._get_unique_filepath(file_path)
-                    
-                    # Save the attachment
-                    attachment.SaveAsFile(file_path)
-                    saved_files.append(file_path)
-                    
-                    self.context.add_log(f"Saved attachment: {filename} -> {file_path}")
-                    
-                except Exception as e:
-                    self.context.add_log(f"Error saving attachment {filename}: {str(e)}")
-                    continue
-            
-            self.context.add_log(f"Successfully saved {len(saved_files)} attachments")
-            return saved_files
-            
-        except Exception as e:
-            self.context.add_log(f"Error saving attachments: {str(e)}")
-            return []
+# --- PyQt6 Imports ---
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QDialogButtonBox,
+    QComboBox, QWidget, QGroupBox, QMessageBox, QLabel,
+    QCheckBox, QApplication, QTreeWidget, QTreeWidgetItem,
+    QFileDialog, QDateTimeEdit, QHBoxLayout, QTreeWidgetItemIterator, QRadioButton,
+    QPlainTextEdit
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDateTime
 
-    def save_attachments_from_dataframe(self, outlook, df: pd.DataFrame, save_folder: str,
-                                       filter_extensions: Optional[List[str]] = None,
-                                       max_size_mb: Optional[float] = None) -> Dict[str, List[str]]:
-        """
-        Save attachments from multiple emails in DataFrame
-        
-        Args:
-            outlook: Outlook application object
-            df: DataFrame from read_unread_emails
-            save_folder: Base folder where to save attachments
-            filter_extensions: List of file extensions to save (e.g., ['.pdf', '.docx'])
-            max_size_mb: Maximum file size in MB to save
-        
-        Returns:
-            Dictionary with EntryID as key and list of saved files as value
-        """
+# --- COM Imports for Outlook ---
+try:
+    import win32com.client
+except ImportError:
+    print("Warning: 'pywin32' library not found. Please install it using: pip install pywin32")
+    win32com = None
+
+# --- Main App Imports (Fallback for standalone testing) ---
+try:
+    from my_lib.shared_context import ExecutionContext
+except ImportError:
+    print("Warning: Could not import main app libraries. Using fallbacks.")
+    class ExecutionContext:
+        def add_log(self, message: str): print(message)
+        def get_variable(self, name: str): return None
+
+#
+# --- HELPER: Worker thread for fetching Outlook folders ---
+#
+class _OutlookFolderLoaderThread(QThread):
+    """Worker thread to fetch Outlook folders without freezing the GUI."""
+    folders_ready = pyqtSignal(list)
+    error_occurred = pyqtSignal(str)
+
+    def run(self):
         try:
-            if df.empty:
-                self.context.add_log("DataFrame is empty")
-                return {}
+            if not win32com:
+                raise ImportError("'pywin32' library is not installed.")
             
-            # Create save folder if it doesn't exist
-            if not os.path.exists(save_folder):
-                os.makedirs(save_folder)
+            outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+            # This will access the default mailbox. For multiple accounts, more complex logic is needed.
+            root_folder = outlook.Folders.GetFirst() 
             
-            results = {}
-            emails_with_attachments = df[df['HasAttachments'] == True]
+            folder_list = []
+            # Recursive function to traverse all folders
+            def recurse_folders(folder):
+                # Use FullFolderPath for a unique, reliable path that win32com can parse
+                path = folder.FullFolderPath
+                folder_list.append(path)
+                for subfolder in folder.Folders:
+                    recurse_folders(subfolder)
             
-            self.context.add_log(f"Processing {len(emails_with_attachments)} emails with attachments")
-            
-            for index, row in emails_with_attachments.iterrows():
-                try:
-                    entry_id = row['EntryID']
-                    subject = row['Subject'][:50]  # Truncate for logging
-                    
-                    self.context.add_log(f"Processing email: {subject}...")
-                    
-                    # Create subfolder for this email
-                    email_folder = os.path.join(save_folder, f"Email_{index}_{self._make_safe_filename(subject)}")
-                    
-                    saved_files = self._save_attachments_with_filters(
-                        outlook, entry_id, email_folder, filter_extensions, max_size_mb
-                    )
-                    
-                    if saved_files:
-                        results[entry_id] = saved_files
-                    
-                except Exception as e:
-                    self.context.add_log(f"Error processing email at index {index}: {str(e)}")
-                    continue
-            
-            total_files = sum(len(files) for files in results.values())
-            self.context.add_log(f"Total attachments saved: {total_files}")
-            
-            return results
-            
+            # Start recursion from the root of the mailbox
+            for folder in outlook.Folders:
+                 recurse_folders(folder)
+
+            self.folders_ready.emit(folder_list)
         except Exception as e:
-            self.context.add_log(f"Error in save_attachments_from_dataframe: {str(e)}")
-            return {}
+            self.error_occurred.emit(f"Could not access Outlook. Ensure it is installed and configured.\n\nError: {e}")
 
-    def _save_attachments_with_filters(self, outlook, entry_id: str, save_folder: str,
-                                      filter_extensions: Optional[List[str]] = None,
-                                      max_size_mb: Optional[float] = None) -> List[str]:
-        """
-        Save attachments with filtering options
-        """
-        try:
-            if not os.path.exists(save_folder):
-                os.makedirs(save_folder)
-            
-            namespace = outlook.GetNamespace("MAPI")
-            message = namespace.GetItemFromID(entry_id)
-            
-            if not message.Attachments or len(message.Attachments) == 0:
-                return []
-            
-            saved_files = []
-            
-            for attachment in message.Attachments:
-                try:
-                    filename = attachment.FileName
-                    file_ext = os.path.splitext(filename)[1].lower()
-                    
-                    # Filter by extension
-                    if filter_extensions:
-                        if file_ext not in [ext.lower() for ext in filter_extensions]:
-                            self.context.add_log(f"Skipped {filename} - extension not in filter")
-                            continue
-                    
-                    # Filter by size
-                    if max_size_mb:
-                        try:
-                            # Get attachment size (in bytes)
-                            attachment_size = attachment.Size
-                            size_mb = attachment_size / (1024 * 1024)
-                            
-                            if size_mb > max_size_mb:
-                                self.context.add_log(f"Skipped {filename} - size {size_mb:.1f}MB exceeds limit")
-                                continue
-                        except:
-                            # If we can't get size, save anyway
-                            pass
-                    
-                    # Save the attachment
-                    safe_filename = self._make_safe_filename(filename)
-                    file_path = os.path.join(save_folder, safe_filename)
-                    file_path = self._get_unique_filepath(file_path)
-                    
-                    attachment.SaveAsFile(file_path)
-                    saved_files.append(file_path)
-                    
-                    self.context.add_log(f"Saved: {filename}")
-                    
-                except Exception as e:
-                    self.context.add_log(f"Error saving attachment {filename}: {str(e)}")
-                    continue
-            
-            return saved_files
-            
-        except Exception as e:
-            self.context.add_log(f"Error in _save_attachments_with_filters: {str(e)}")
-            return []
+#
+# --- HELPER: The GUI Dialog for Reading Outlook Mail ---
+#
+class _ReadOutlookDialog(QDialog):
+    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None,
+                 initial_config: Optional[Dict[str, Any]] = None,
+                 initial_variable: Optional[str] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Read Outlook Emails")
+        self.setMinimumSize(700, 800)
+        self.global_variables = global_variables
+        self.initial_config = initial_config or {}
 
-    def _make_safe_filename(self, filename: str) -> str:
-        """
-        Make filename safe for Windows filesystem
-        """
-        try:
-            # Remove or replace invalid characters
-            invalid_chars = '<>:"/\\|?*'
-            safe_filename = filename
-            
-            for char in invalid_chars:
-                safe_filename = safe_filename.replace(char, '_')
-            
-            # Remove leading/trailing spaces and dots
-            safe_filename = safe_filename.strip(' .')
-            
-            # Ensure filename is not empty
-            if not safe_filename:
-                safe_filename = "attachment"
-            
-            # Limit length
-            if len(safe_filename) > 200:
-                name, ext = os.path.splitext(safe_filename)
-                safe_filename = name[:200-len(ext)] + ext
-            
-            return safe_filename
-            
-        except Exception:
-            return "attachment.txt"
+        main_layout = QVBoxLayout(self)
 
-    def _get_unique_filepath(self, file_path: str) -> str:
-        """
-        Get unique file path if file already exists
-        """
-        try:
-            if not os.path.exists(file_path):
-                return file_path
-            
-            base_path, extension = os.path.splitext(file_path)
-            counter = 1
-            
-            while os.path.exists(f"{base_path}_{counter}{extension}"):
-                counter += 1
-            
-            return f"{base_path}_{counter}{extension}"
-            
-        except Exception:
-            return file_path
-
-    def get_attachment_info(self, outlook, entry_id: str) -> List[Dict[str, Any]]:
-        """
-        Get detailed information about attachments without saving them
+        # 1. Folder Selection
+        folder_group = QGroupBox("Select Folders to Read")
+        folder_layout = QVBoxLayout(folder_group)
+        self.load_folders_button = QPushButton("Load Outlook Folders")
+        self.folder_tree = QTreeWidget()
+        self.folder_tree.setHeaderHidden(True)
         
-        Args:
-            outlook: Outlook application object
-            entry_id: EntryID of the email
+        self.selected_folders_display = QLineEdit()
+        self.selected_folders_display.setReadOnly(True)
+        self.selected_folders_display.setPlaceholderText("Selected folder paths will appear here...")
         
-        Returns:
-            List of dictionaries with attachment information
-        """
-        try:
-            if not outlook:
-                return []
-            
-            namespace = outlook.GetNamespace("MAPI")
-            message = namespace.GetItemFromID(entry_id)
-            
-            if not message.Attachments or len(message.Attachments) == 0:
-                return []
-            
-            attachment_info = []
-            
-            for i, attachment in enumerate(message.Attachments):
-                try:
-                    info = {
-                        'Index': i + 1,
-                        'FileName': getattr(attachment, 'FileName', f'Attachment_{i+1}'),
-                        'Size': getattr(attachment, 'Size', 0),
-                        'SizeMB': round(getattr(attachment, 'Size', 0) / (1024 * 1024), 2),
-                        'Type': getattr(attachment, 'Type', 'Unknown'),
-                        'Extension': os.path.splitext(getattr(attachment, 'FileName', ''))[1].lower()
-                    }
-                    attachment_info.append(info)
-                    
-                except Exception as e:
-                    self.context.add_log(f"Error getting info for attachment {i+1}: {str(e)}")
-                    continue
-            
-            return attachment_info
-            
-        except Exception as e:
-            self.context.add_log(f"Error getting attachment info: {str(e)}")
-            return []
-            
-    def read_emails_by_period(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
-                             start_date: Optional[Union[str, datetime.datetime]] = None,
-                             end_date: Optional[Union[str, datetime.datetime]] = None,
-                             days_back: Optional[int] = None,
-                             include_read: bool = True,
-                             include_unread: bool = True) -> pd.DataFrame:
-        """
-        Read all emails (read and unread) from a specific folder within a time period
-        
-        Args:
-            outlook: Outlook application object
-            folder_name: Name of the folder (e.g., "Inbox", "Sent Items", or custom folder name)
-            folder_path: Full path to folder for nested folders (e.g., "Inbox\\Custom Folder")
-            start_date: Start date (string 'YYYY-MM-DD' or datetime object)
-            end_date: End date (string 'YYYY-MM-DD' or datetime object)
-            days_back: Number of days back from today (alternative to start_date/end_date)
-            include_read: Include read emails
-            include_unread: Include unread emails
-        
-        Returns:
-            DataFrame with email data (datetime fields as strings)
-        """
-        try:
-            if not outlook:
-                self.context.add_log("Outlook object is None. Call connect() first.")
-                return pd.DataFrame()
-            
-            namespace = outlook.GetNamespace("MAPI")
-            target_folder = self._get_folder(namespace, folder_name, folder_path)
-            
-            if not target_folder:
-                return pd.DataFrame()
-            
-            # Calculate date range
-            start_dt, end_dt = self._calculate_date_range(start_date, end_date, days_back)
-            
-            if not start_dt or not end_dt:
-                self.context.add_log("Invalid date range specified")
-                return pd.DataFrame()
-            
-            self.context.add_log(f"Searching emails from {start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}")
-            
-            # Build filter string for date range and read status
-            filter_parts = []
-            
-            # Date filter
-            start_str = start_dt.strftime('%m/%d/%Y %H:%M %p')
-            end_str = end_dt.strftime('%m/%d/%Y %H:%M %p')
-            filter_parts.append(f"[ReceivedTime] >= '{start_str}'")
-            filter_parts.append(f"[ReceivedTime] <= '{end_str}'")
-            
-            # Read status filter
-            read_filters = []
-            if include_read:
-                read_filters.append("[Unread] = False")
-            if include_unread:
-                read_filters.append("[Unread] = True")
-            
-            if read_filters:
-                filter_parts.append(f"({' OR '.join(read_filters)})")
-            
-            filter_string = ' AND '.join(filter_parts)
-            
-            self.context.add_log(f"Using filter: {filter_string}")
-            
-            # Get messages with filter
-            messages = target_folder.Items
-            messages = messages.Restrict(filter_string)
-            
-            # Sort by received time (newest first)
-            try:
-                messages.Sort("[ReceivedTime]", True)
-            except:
-                pass
-            
-            email_data = []
-            
-            for message in messages:
-                try:
-                    email_info = {
-                        'Subject': str(getattr(message, 'Subject', '') or ''),
-                        'Sender': str(getattr(message, 'SenderName', '') or ''),
-                        'SenderEmail': str(getattr(message, 'SenderEmailAddress', '') or ''),
-                        'ReceivedTime_String': str(getattr(message, 'ReceivedTime', '') or ''),
-                        'Body': str(getattr(message, 'Body', '') or ''),
-                        'HTMLBody': str(getattr(message, 'HTMLBody', '') or ''),
-                        'HasAttachments': self._safe_has_attachments(message),
-                        'AttachmentCount': self._safe_attachment_count(message),
-                        'Importance': str(self._get_importance_text(getattr(message, 'Importance', 1))),
-                        'Size': int(getattr(message, 'Size', 0) or 0),
-                        'Categories': str(getattr(message, 'Categories', '') or ''),
-                        'EntryID': str(getattr(message, 'EntryID', '') or ''),
-                        'To': str(getattr(message, 'To', '') or ''),
-                        'CC': str(getattr(message, 'CC', '') or ''),
-                        'BCC': str(getattr(message, 'BCC', '') or ''),
-                        'Folder': str(target_folder.Name),
-                        'CreationTime_String': str(getattr(message, 'CreationTime', '') or ''),
-                        'MessageClass': str(getattr(message, 'MessageClass', '') or ''),
-                        'AttachmentNames': self._safe_attachment_names(message),
-                        'IsRead': not bool(getattr(message, 'Unread', False)),
-                        'IsUnread': bool(getattr(message, 'Unread', False)),
-                        'ConversationTopic': str(getattr(message, 'ConversationTopic', '') or ''),
-                        'SentOn_String': str(getattr(message, 'SentOn', '') or '')
-                    }
-                    
-                    email_data.append(email_info)
-                    
-                except Exception as e:
-                    self.context.add_log(f"Error processing message: {str(e)}")
-                    continue
-            
-            df = pd.DataFrame(email_data)
-            self.context.add_log(f"Retrieved {len(df)} emails from folder: {target_folder.Name}")
-            
-            # Add summary info
-            if not df.empty:
-                read_count = len(df[df['IsRead'] == True])
-                unread_count = len(df[df['IsUnread'] == True])
-                self.context.add_log(f"  - Read emails: {read_count}")
-                self.context.add_log(f"  - Unread emails: {unread_count}")
-            
-            return df
-            
-        except Exception as e:
-            self.context.add_log(f"Error reading emails by period: {str(e)}")
-            return pd.DataFrame()
+        folder_layout.addWidget(self.load_folders_button)
+        folder_layout.addWidget(self.folder_tree)
+        folder_layout.addWidget(QLabel("Selected Folders:"))
+        folder_layout.addWidget(self.selected_folders_display)
+        main_layout.addWidget(folder_group)
 
-    def _calculate_date_range(self, start_date, end_date, days_back):
-        """
-        Calculate start and end datetime objects from various input formats
-        """
-        try:
-            if days_back is not None:
-                # Use days_back to calculate range
-                end_dt = datetime.datetime.now()
-                start_dt = end_dt - datetime.timedelta(days=days_back)
-                return start_dt, end_dt
-            
-            # Parse start_date
-            if isinstance(start_date, str):
-                start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-            elif isinstance(start_date, datetime.datetime):
-                start_dt = start_date
-            elif isinstance(start_date, datetime.date):
-                start_dt = datetime.datetime.combine(start_date, datetime.time.min)
-            else:
-                start_dt = datetime.datetime.now() - datetime.timedelta(days=7)  # Default 7 days back
-            
-            # Parse end_date
-            if isinstance(end_date, str):
-                end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-                end_dt = end_dt.replace(hour=23, minute=59, second=59)  # End of day
-            elif isinstance(end_date, datetime.datetime):
-                end_dt = end_date
-            elif isinstance(end_date, datetime.date):
-                end_dt = datetime.datetime.combine(end_date, datetime.time.max)
-            else:
-                end_dt = datetime.datetime.now()  # Default to now
-            
-            return start_dt, end_dt
-            
-        except Exception as e:
-            self.context.add_log(f"Error calculating date range: {str(e)}")
-            return None, None
+        # 2. Filter by Time and Status
+        time_group = QGroupBox("Filter by Time and Status")
+        time_layout = QFormLayout(time_group)
+        self.from_date_edit = QDateTimeEdit(QDateTime.currentDateTime().addDays(-7)); self.from_date_edit.setCalendarPopup(True)
+        self.to_date_edit = QDateTimeEdit(QDateTime.currentDateTime()); self.to_date_edit.setCalendarPopup(True)
+        self.use_current_datetime_check = QCheckBox("Use Current Datetime for To (End Date)")
+        self.status_combo = QComboBox(); self.status_combo.addItems(["All Emails", "Unread Only", "Read Only"])
+        time_layout.addRow("From (Start Date):", self.from_date_edit)
+        to_layout = QHBoxLayout(); to_layout.addWidget(self.to_date_edit); to_layout.addWidget(self.use_current_datetime_check)
+        time_layout.addRow("To (End Date):", to_layout)
+        time_layout.addRow("Status:", self.status_combo)
+        main_layout.addWidget(time_group)
 
-    def read_emails_last_n_days(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
-                               days: int = 7, include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
-        """
-        Convenience method to read emails from last N days
-        
-        Args:
-            outlook: Outlook application object
-            folder_name: Name of the folder
-            folder_path: Full path to folder for nested folders
-            days: Number of days back from today
-            include_read: Include read emails
-            include_unread: Include unread emails
-        
-        Returns:
-            DataFrame with email data
-        """
-        return self.read_emails_by_period(
-            outlook=outlook,
-            folder_name=folder_name,
-            folder_path=folder_path,
-            days_back=days,
-            include_read=include_read,
-            include_unread=include_unread
-        )
+        # 3. Filter by Content
+        content_group = QGroupBox("Filter by Content (Use * as wildcard)")
+        content_layout = QFormLayout(content_group)
+        self.sender_edit = QLineEdit(); self.sender_edit.setPlaceholderText("e.g., *@example.com or user@*")
+        self.subject_edit = QLineEdit(); self.subject_edit.setPlaceholderText("e.g., *invoice* or Report*")
+        self.body_edit = QLineEdit(); self.body_edit.setPlaceholderText("e.g., *payment due*")
+        self.attachment_name_edit = QLineEdit(); self.attachment_name_edit.setPlaceholderText("e.g., *.pdf or *data.xlsx")
+        content_layout.addRow("From Sender:", self.sender_edit); content_layout.addRow("Subject:", self.subject_edit)
+        content_layout.addRow("Body contains:", self.body_edit); content_layout.addRow("Attachment Name:", self.attachment_name_edit)
+        main_layout.addWidget(content_group)
 
-    def read_emails_today(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
-                         include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
-        """
-        Convenience method to read emails from today only
-        """
-        today = datetime.date.today()
-        return self.read_emails_by_period(
-            outlook=outlook,
-            folder_name=folder_name,
-            folder_path=folder_path,
-            start_date=today.strftime('%Y-%m-%d'),
-            end_date=today.strftime('%Y-%m-%d'),
-            include_read=include_read,
-            include_unread=include_unread
-        )
+        # 4. Attachment Options
+        attachment_group = QGroupBox("Attachment Options")
+        attachment_layout = QFormLayout(attachment_group)
+        self.save_attachments_check = QCheckBox("Save attachments from matching emails")
+        self.save_location_edit = QLineEdit(); self.save_location_edit.setReadOnly(True)
+        browse_button = QPushButton("Browse...")
+        location_layout = QHBoxLayout(); location_layout.addWidget(self.save_location_edit); location_layout.addWidget(browse_button)
+        attachment_layout.addRow(self.save_attachments_check); attachment_layout.addRow("Save Location:", location_layout)
+        main_layout.addWidget(attachment_group)
 
-    def read_emails_this_week(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
-                             include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
-        """
-        Convenience method to read emails from this week (Monday to Sunday)
-        """
-        today = datetime.date.today()
-        start_of_week = today - datetime.timedelta(days=today.weekday())  # Monday
-        end_of_week = start_of_week + datetime.timedelta(days=6)  # Sunday
+        # 5. Assign Results
+        assign_group = QGroupBox("Assign Results to Variable")
+        assign_layout = QFormLayout(assign_group)
+        self.assign_results_check = QCheckBox("Assign results (DataFrame) to a variable")
+        self.new_var_radio = QRadioButton("New Variable Name:"); self.new_var_input = QLineEdit("outlook_emails")
+        self.existing_var_radio = QRadioButton("Existing Variable:"); self.existing_var_combo = QComboBox(); self.existing_var_combo.addItems(["-- Select --"] + global_variables)
+        assign_layout.addRow(self.assign_results_check); assign_layout.addRow(self.new_var_radio, self.new_var_input); assign_layout.addRow(self.existing_var_radio, self.existing_var_combo)
+        main_layout.addWidget(assign_group)
         
-        return self.read_emails_by_period(
-            outlook=outlook,
-            folder_name=folder_name,
-            folder_path=folder_path,
-            start_date=start_of_week.strftime('%Y-%m-%d'),
-            end_date=end_of_week.strftime('%Y-%m-%d'),
-            include_read=include_read,
-            include_unread=include_unread
-        )
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel); main_layout.addWidget(self.button_box)
 
-    def read_emails_this_month(self, outlook, folder_name: str = "Inbox", folder_path: Optional[str] = None,
-                              include_read: bool = True, include_unread: bool = True) -> pd.DataFrame:
-        """
-        Convenience method to read emails from this month
-        """
-        today = datetime.date.today()
-        start_of_month = today.replace(day=1)
+        # Connections
+        self.load_folders_button.clicked.connect(self._load_folders)
+        self.folder_tree.itemChanged.connect(self._update_selected_folders_display)
+        self.use_current_datetime_check.toggled.connect(self.to_date_edit.setDisabled)
+        self.save_attachments_check.toggled.connect(self._toggle_attachment_location)
+        browse_button.clicked.connect(self._browse_save_location)
+        self.assign_results_check.toggled.connect(self._toggle_assignment_widgets)
+        self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
+
+        self._populate_from_initial_config(initial_config, initial_variable)
+        self._toggle_attachment_location(self.save_attachments_check.isChecked())
+        self._toggle_assignment_widgets(self.assign_results_check.isChecked())
         
-        # Get last day of month
-        if today.month == 12:
-            end_of_month = today.replace(year=today.year + 1, month=1, day=1) - datetime.timedelta(days=1)
+    def _load_folders(self):
+        self.load_folders_button.setText("Loading..."); self.load_folders_button.setEnabled(False)
+        self.folder_loader_thread = _OutlookFolderLoaderThread()
+        self.folder_loader_thread.folders_ready.connect(self._on_folders_loaded)
+        self.folder_loader_thread.error_occurred.connect(lambda e: (QMessageBox.critical(self, "Error", e), self.load_folders_button.setText("Load Outlook Folders"), self.load_folders_button.setEnabled(True)))
+        self.folder_loader_thread.start()
+
+    def _on_folders_loaded(self, folder_paths: List[str]):
+        self.folder_tree.itemChanged.disconnect(self._update_selected_folders_display)
+        self.folder_tree.clear()
+        
+        items = {}
+        for path in sorted(folder_paths):
+            parts = path.strip('\\').split('\\')
+            parent = self.folder_tree.invisibleRootItem()
+            item_path_key = ""
+            for part in parts:
+                item_path_key += f"\\{part}"
+                if item_path_key not in items:
+                    item = QTreeWidgetItem(parent, [part])
+                    item.setData(0, Qt.ItemDataRole.UserRole, path)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(0, Qt.CheckState.Unchecked)
+                    items[item_path_key] = item
+                parent = items[item_path_key]
+        
+        self.load_folders_button.setText("Reload Folders"); self.load_folders_button.setEnabled(True)
+        self._restore_folder_selection()
+        self.folder_tree.itemChanged.connect(self._update_selected_folders_display)
+        self._update_selected_folders_display()
+
+    def _restore_folder_selection(self):
+        selected_paths = self.initial_config.get("folders", [])
+        if not selected_paths: return
+        iterator = QTreeWidgetItemIterator(self.folder_tree, QTreeWidgetItemIterator.IteratorFlag.All)
+        while iterator.value():
+            item = iterator.value()
+            item_path = item.data(0, Qt.ItemDataRole.UserRole)
+            if item_path in selected_paths:
+                item.setCheckState(0, Qt.CheckState.Checked)
+            iterator += 1
+
+    def _update_selected_folders_display(self):
+        checked_paths = []
+        iterator = QTreeWidgetItemIterator(self.folder_tree, QTreeWidgetItemIterator.IteratorFlag.All)
+        while iterator.value():
+            item = iterator.value()
+            if item.checkState(0) == Qt.CheckState.Checked:
+                path = item.data(0, Qt.ItemDataRole.UserRole)
+                if path: checked_paths.append(path)
+            iterator += 1
+        self.selected_folders_display.setText(", ".join(checked_paths))
+
+    def _toggle_attachment_location(self, checked):
+        self.save_location_edit.setEnabled(checked); self.save_location_edit.parent().findChild(QPushButton).setEnabled(checked)
+    def _browse_save_location(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder to Save Attachments");
+        if folder: self.save_location_edit.setText(folder)
+    def _toggle_assignment_widgets(self, checked):
+        self.new_var_radio.setEnabled(checked); self.new_var_input.setEnabled(checked)
+        self.existing_var_radio.setEnabled(checked); self.existing_var_combo.setEnabled(checked)
+    def _populate_from_initial_config(self, config, variable):
+        if not config:
+            self.assign_results_check.setChecked(True); self.new_var_radio.setChecked(True); self.use_current_datetime_check.setChecked(True)
+            return
+        if self.initial_config.get("folders"): self._load_folders()
+        self.from_date_edit.setDateTime(QDateTime.fromString(config.get("from_date", QDateTime.currentDateTime().addDays(-7).toString(Qt.DateFormat.ISODate)), Qt.DateFormat.ISODate))
+        self.to_date_edit.setDateTime(QDateTime.fromString(config.get("to_date", QDateTime.currentDateTime().toString(Qt.DateFormat.ISODate)), Qt.DateFormat.ISODate))
+        self.use_current_datetime_check.setChecked(config.get("use_current_datetime", True))
+        self.status_combo.setCurrentText(config.get("status", "All Emails"))
+        self.sender_edit.setText(config.get("sender", "")); self.subject_edit.setText(config.get("subject", ""))
+        self.body_edit.setText(config.get("body", "")); self.attachment_name_edit.setText(config.get("attachment_name", ""))
+        self.save_attachments_check.setChecked(config.get("save_attachments", False))
+        self.save_location_edit.setText(config.get("save_location", ""))
+        self.assign_results_check.setChecked(bool(variable))
+        if variable:
+            if variable in self.global_variables: self.existing_var_radio.setChecked(True); self.existing_var_combo.setCurrentText(variable)
+            else: self.new_var_radio.setChecked(True); self.new_var_input.setText(variable)
+        else: self.new_var_radio.setChecked(True)
+    def get_executor_method_name(self) -> str: return "_read_outlook_emails"
+    def get_config_data(self) -> Optional[Dict[str, Any]]:
+        folder_paths_str = self.selected_folders_display.text()
+        if not folder_paths_str:
+            QMessageBox.warning(self, "Input Error", "Please load and select at least one Outlook folder."); return None
+        selected_folders = [path.strip() for path in folder_paths_str.split(',') if path.strip()]
+        config = {
+            "folders": selected_folders,
+            "from_date": self.from_date_edit.dateTime().toString(Qt.DateFormat.ISODate),
+            "to_date": self.to_date_edit.dateTime().toString(Qt.DateFormat.ISODate),
+            "use_current_datetime": self.use_current_datetime_check.isChecked(),
+            "status": self.status_combo.currentText(),
+            "sender": self.sender_edit.text().strip(), "subject": self.subject_edit.text().strip(),
+            "body": self.body_edit.text().strip(), "attachment_name": self.attachment_name_edit.text().strip(),
+            "save_attachments": self.save_attachments_check.isChecked(), "save_location": self.save_location_edit.text()
+        }
+        if config["save_attachments"] and not config["save_location"]:
+            QMessageBox.warning(self, "Input Error", "Please select a save location for attachments."); return None
+        return config
+    def get_assignment_variable(self) -> Optional[str]:
+        if not self.assign_results_check.isChecked(): return None
+        if self.new_var_radio.isChecked():
+            var_name = self.new_var_input.text().strip()
+            if not var_name: QMessageBox.warning(self, "Input Error", "New variable name cannot be empty."); return None
+            return var_name
         else:
-            end_of_month = today.replace(month=today.month + 1, day=1) - datetime.timedelta(days=1)
+            var_name = self.existing_var_combo.currentText()
+            if var_name == "-- Select --": QMessageBox.warning(self, "Input Error", "Please select an existing variable."); return None
+            return var_name
+
+#
+# --- The Public-Facing Module Class for Reading Outlook Mail ---
+#
+class Read_Outlook_Mail:
+    def __init__(self, context: Optional[ExecutionContext] = None): self.context = context
+    def _log(self, m: str): (self.context.add_log(m) if self.context else print(m))
+
+    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str], **kwargs) -> QDialog:
+        self._log("Opening Read Outlook Emails configuration...")
+        return _ReadOutlookDialog(global_variables, parent_window, **kwargs)
+
+    def _read_outlook_emails(self, context: ExecutionContext, config_data: dict) -> pd.DataFrame:
+        self.context = context
+        if not win32com: raise ImportError("'pywin32' library is not installed.")
+
+        outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        from_date = QDateTime.fromString(config_data["from_date"], Qt.DateFormat.ISODate).toPyDateTime()
+        to_date = datetime.now() if config_data["use_current_datetime"] else QDateTime.fromString(config_data["to_date"], Qt.DateFormat.ISODate).toPyDateTime()
+
+        self._log(f"Searching emails from {from_date.strftime('%Y-%m-%d %H:%M')} to {to_date.strftime('%Y-%m-%d %H:%M')}")
+        all_emails_data = []
         
-        return self.read_emails_by_period(
-            outlook=outlook,
-            folder_name=folder_name,
-            folder_path=folder_path,
-            start_date=start_of_month.strftime('%Y-%m-%d'),
-            end_date=end_of_month.strftime('%Y-%m-%d'),
-            include_read=include_read,
-            include_unread=include_unread
+        for folder_path in config_data["folders"]:
+            folder = None
+            try:
+                # Resolve folder path using win32com's hierarchy
+                path_parts = folder_path.strip('\\').split('\\')
+                folder = outlook.Folders[path_parts[0]]
+                for part in path_parts[1:]:
+                    folder = folder.Folders[part]
+                self._log(f"Processing folder: {folder.Name}")
+            except Exception:
+                self._log(f"Warning: Could not find folder path: {folder_path}. Skipping."); continue
+
+            filter_str = f"[ReceivedTime] >= '{from_date.strftime('%m/%d/%Y %H:%M %p')}' AND [ReceivedTime] <= '{to_date.strftime('%m/%d/%Y %H:%M %p')}'"
+            if config_data["status"] == "Unread Only": filter_str += " AND [Unread] = true"
+            elif config_data["status"] == "Read Only": filter_str += " AND [Unread] = false"
+
+            try:
+                emails = folder.Items.Restrict(filter_str)
+                emails.Sort("[ReceivedTime]", True)
+            except Exception as e:
+                self._log(f"Warning: Error filtering items in folder '{folder.Name}': {e}"); continue
+            
+            for email in emails:
+                try:
+                    sender = email.SenderName if email.SenderName else ""
+                    subject = email.Subject if email.Subject else ""
+                    body = email.Body if email.Body else ""
+
+                    if config_data["sender"] and not fnmatch.fnmatch(sender.lower(), config_data["sender"].lower()): continue
+                    if config_data["subject"] and not fnmatch.fnmatch(subject.lower(), config_data["subject"].lower()): continue
+                    if config_data["body"] and not fnmatch.fnmatch(body.lower(), f'*{config_data["body"].lower()}*'): continue
+
+                    has_matching_attachment, attachment_filenames = False, []
+                    if email.Attachments.Count > 0:
+                        for attachment in email.Attachments:
+                            attachment_filenames.append(attachment.FileName)
+                            if config_data["attachment_name"] and fnmatch.fnmatch(attachment.FileName.lower(), config_data["attachment_name"].lower()):
+                                has_matching_attachment = True
+                    
+                    if config_data["attachment_name"] and not has_matching_attachment: continue
+                    
+                    saved_attachment_paths = []
+                    if config_data["save_attachments"] and email.Attachments.Count > 0:
+                        save_location = config_data["save_location"]
+                        os.makedirs(save_location, exist_ok=True)
+                        for attachment in email.Attachments:
+                            if not config_data["attachment_name"] or fnmatch.fnmatch(attachment.FileName.lower(), config_data["attachment_name"].lower()):
+                                file_path = os.path.join(save_location, attachment.FileName)
+                                try:
+                                    attachment.SaveAsFile(file_path)
+                                    saved_attachment_paths.append(file_path)
+                                except Exception as save_err:
+                                    self._log(f"Warning: Could not save attachment '{attachment.FileName}'. Error: {save_err}")
+                    
+                    email_data = {
+                        "Subject": subject, "Sender": sender,
+                        "ReceivedTime": email.ReceivedTime.strftime("%Y-%m-%d %H:%M:%S"),
+                        "Body": body, "To": email.To, "CC": email.CC,
+                        "Attachments": ", ".join(attachment_filenames),
+                        "SavedAttachments": ", ".join(saved_attachment_paths)
+                    }
+                    all_emails_data.append(email_data)
+                except Exception as e:
+                    self._log(f"Warning: Could not process an email. Subject: '{getattr(email, 'Subject', 'N/A')}'. Error: {e}")
+
+        self._log(f"Found {len(all_emails_data)} matching emails across all selected folders.")
+        return pd.DataFrame(all_emails_data)
+
+#
+# --- HELPER: The GUI Dialog for Sending Outlook Mail ---
+#
+class _SendOutlookDialog(QDialog):
+    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None,
+                 initial_config: Optional[Dict[str, Any]] = None, **kwargs):
+        super().__init__(parent)
+        self.setWindowTitle("Send Outlook Email")
+        self.setMinimumSize(600, 500)
+        self.global_variables = ["-- Select Variable --"] + global_variables
+        
+        main_layout = QVBoxLayout(self)
+
+        # Helper function to create a row with a text input and a variable selector
+        def create_input_row(label_text):
+            layout = QHBoxLayout()
+            line_edit = QLineEdit()
+            combo_box = QComboBox()
+            combo_box.addItems(self.global_variables)
+            layout.addWidget(line_edit)
+            layout.addWidget(QLabel("or from variable:"))
+            layout.addWidget(combo_box)
+            # When a variable is selected, disable the line edit
+            combo_box.currentTextChanged.connect(
+                lambda text, le=line_edit: le.setDisabled(text != "-- Select Variable --")
+            )
+            return layout, line_edit, combo_box
+
+        form_layout = QFormLayout()
+        
+        # To, CC, BCC, Subject
+        self.to_layout, self.to_edit, self.to_combo = create_input_row("To:")
+        self.cc_layout, self.cc_edit, self.cc_combo = create_input_row("CC:")
+        self.bcc_layout, self.bcc_edit, self.bcc_combo = create_input_row("BCC:")
+        self.subject_layout, self.subject_edit, self.subject_combo = create_input_row("Subject:")
+        
+        form_layout.addRow("To:", self.to_layout)
+        form_layout.addRow("CC (optional):", self.cc_layout)
+        form_layout.addRow("BCC (optional):", self.bcc_layout)
+        form_layout.addRow("Subject:", self.subject_layout)
+        
+        # Body
+        body_layout = QVBoxLayout()
+        self.body_edit = QPlainTextEdit()
+        self.body_edit.setPlaceholderText("Type email body here...")
+        body_var_layout = QHBoxLayout()
+        body_var_layout.addWidget(QLabel("... or use body from variable:"))
+        self.body_combo = QComboBox()
+        self.body_combo.addItems(self.global_variables)
+        body_var_layout.addWidget(self.body_combo)
+        body_var_layout.addStretch()
+        body_layout.addWidget(self.body_edit)
+        body_layout.addLayout(body_var_layout)
+        self.body_combo.currentTextChanged.connect(
+            lambda text: self.body_edit.setDisabled(text != "-- Select Variable --")
         )
+        form_layout.addRow("Body:", body_layout)
+        
+        # --- MODIFIED SECTION START ---
+        # Attachments with a browse button
+        self.attach_edit = QLineEdit()
+        self.attach_edit.setPlaceholderText("C:\\path\\file.txt;C:\\path\\report.xlsx")
+        self.attach_combo = QComboBox()
+        self.attach_combo.addItems(self.global_variables)
+        
+        attach_browse_button = QPushButton("Browse...")
+        attach_browse_button.clicked.connect(self._browse_for_attachments)
+
+        attach_layout = QHBoxLayout()
+        attach_layout.addWidget(self.attach_edit)
+        attach_layout.addWidget(attach_browse_button)
+        attach_layout.addWidget(QLabel("or from variable:"))
+        attach_layout.addWidget(self.attach_combo)
+
+        # Disable the text edit and browse button if a variable is selected
+        self.attach_combo.currentTextChanged.connect(
+            lambda text: (
+                self.attach_edit.setDisabled(text != "-- Select Variable --"),
+                attach_browse_button.setDisabled(text != "-- Select Variable --")
+            )
+        )
+        
+        form_layout.addRow("Attachments (optional, semi-colon separated):", attach_layout)
+        # --- MODIFIED SECTION END ---
+        
+        main_layout.addLayout(form_layout)
+        
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        main_layout.addWidget(self.button_box)
+
+        # Connections
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        
+        # Populate from initial config if it exists
+        self._populate_from_initial_config(initial_config)
+
+    # --- NEW METHOD ---
+    def _browse_for_attachments(self):
+        """Opens a file dialog to select multiple attachment files."""
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Attachments")
+        if files:
+            # Join the file paths with a semicolon and update the line edit
+            self.attach_edit.setText(";".join(files))
+    # --- END NEW METHOD ---
+
+    def _populate_from_initial_config(self, config: Optional[Dict[str, Any]]):
+        if not config:
+            return
+
+        # Helper to populate a single field
+        def populate_field(cfg_key, line_edit, combo):
+            value = config.get(f"{cfg_key}_var")
+            if value and value in self.global_variables:
+                combo.setCurrentText(value)
+            else:
+                # Handle QPlainTextEdit vs QLineEdit
+                if isinstance(line_edit, QPlainTextEdit):
+                    line_edit.setPlainText(config.get(cfg_key, ""))
+                else:
+                    line_edit.setText(config.get(cfg_key, ""))
+                combo.setCurrentText("-- Select Variable --")
+
+        populate_field("to", self.to_edit, self.to_combo)
+        populate_field("cc", self.cc_edit, self.cc_combo)
+        populate_field("bcc", self.bcc_edit, self.bcc_combo)
+        populate_field("subject", self.subject_edit, self.subject_combo)
+        populate_field("body", self.body_edit, self.body_combo) # Now works correctly with helper
+        populate_field("attachments", self.attach_edit, self.attach_combo)
+
+
+    def get_executor_method_name(self) -> str:
+        return "_send_outlook_email"
+
+    def get_assignment_variable(self) -> Optional[str]:
+        # This action does not produce a variable
+        return None
+
+    def get_config_data(self) -> Optional[Dict[str, Any]]:
+        config = {}
+        
+        # Helper to extract data from a field
+        def get_field_data(cfg_key, line_edit, combo):
+            if combo.currentText() != "-- Select Variable --":
+                config[f"{cfg_key}_var"] = combo.currentText()
+                config[cfg_key] = "" # Ensure the hardcoded value is empty
+            else:
+                # Handle QPlainTextEdit vs QLineEdit
+                text = line_edit.toPlainText().strip() if isinstance(line_edit, QPlainTextEdit) else line_edit.text().strip()
+                config[cfg_key] = text
+                config[f"{cfg_key}_var"] = "" # Ensure the var is empty
+        
+        get_field_data("to", self.to_edit, self.to_combo)
+        get_field_data("cc", self.cc_edit, self.cc_combo)
+        get_field_data("bcc", self.bcc_edit, self.bcc_combo)
+        get_field_data("subject", self.subject_edit, self.subject_combo)
+        get_field_data("body", self.body_edit, self.body_combo)
+        get_field_data("attachments", self.attach_edit, self.attach_combo)
+
+        # Validation: 'To' field must not be empty
+        if not config["to"] and not config["to_var"]:
+            QMessageBox.warning(self, "Input Error", "The 'To' field cannot be empty. Please provide an email address or select a variable.")
+            return None
+            
+        return config
+
+#
+# --- The Public-Facing Module Class for Sending Outlook Mail ---
+#
+class Send_Outlook_Mail:
+    def __init__(self, context: Optional[ExecutionContext] = None):
+        self.context = context
+
+    def _log(self, m: str):
+        if self.context:
+            self.context.add_log(m)
+        else:
+            print(m)
+
+    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str], **kwargs) -> QDialog:
+        """Opens the configuration dialog for sending an email."""
+        self._log("Opening Send Outlook Email configuration...")
+        return _SendOutlookDialog(global_variables, parent_window, **kwargs)
+
+    def _send_outlook_email(self, context: ExecutionContext, config_data: dict):
+        """Creates and sends an email using Outlook."""
+        self.context = context
+        if not win32com:
+            raise ImportError("'pywin32' library is not installed.")
+
+        # Helper to resolve value from hardcode or variable
+        def resolve_value(key: str) -> str:
+            var_name = config_data.get(f"{key}_var")
+            if var_name:
+                value = self.context.get_variable(var_name)
+                if value is None:
+                    self._log(f"Warning: Global variable '{var_name}' for '{key}' not found or is None. Using empty string.")
+                    return ""
+                return str(value)
+            return config_data.get(key, "")
+
+        try:
+            outlook = win32com.client.Dispatch("Outlook.Application")
+            mail = outlook.CreateItem(0)  # 0: olMailItem
+
+            mail.To = resolve_value("to")
+            mail.CC = resolve_value("cc")
+            mail.BCC = resolve_value("bcc")
+            mail.Subject = resolve_value("subject")
+            mail.Body = resolve_value("body")
+            
+            self._log(f"Preparing email to: {mail.To} with subject: '{mail.Subject}'")
+
+            # Handle attachments
+            attachments_str = resolve_value("attachments")
+            if attachments_str:
+                # Split by semicolon and strip whitespace from each path
+                attachment_paths = [path.strip() for path in attachments_str.split(';') if path.strip()]
+                for path in attachment_paths:
+                    if os.path.exists(path):
+                        mail.Attachments.Add(path)
+                        self._log(f"Attaching file: {path}")
+                    else:
+                        self._log(f"Warning: Attachment path not found, skipping: {path}")
+
+            mail.Send()
+            self._log("Email sent successfully.")
+
+        except Exception as e:
+            error_message = f"Failed to send Outlook email. Error: {e}"
+            self._log(error_message)
+            # Re-raise the exception to halt execution and show the error in the main app
+            raise RuntimeError(error_message) from e
