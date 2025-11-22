@@ -72,7 +72,7 @@ class Old_utility:
         while title not in full_tile:
             try:
                 need_avtive = gw.getWindowsWithTitle(title)[0]
-                need_avtive.maximize()
+                #need_avtive.maximize()
                 need_avtive.activate()
                 full_tile = gw.getActiveWindow().title
                 if title in full_tile:
@@ -493,7 +493,10 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
     def __init__(self, statup_image_param: str):
         super().__init__()
         self.setupUi(self)
-
+        # --- ADD THIS: Countdown Timer Setup ---
+        self.countdown_timer = QTimer()
+        self.countdown_timer.timeout.connect(self.on_countdown_tick)
+        self.countdown_val = 5
         # --- ADD THESE LINES ---
         # Define the path relative to this script
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # Goes up one level from my_lib
@@ -645,35 +648,52 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
     # --- UI Slot Methods (MODIFIED) ---
     @pyqtSlot()
     def Start_BOT(self):
-        #time.sleep(5)
+        # 1. Check File Logic (Keep your existing logic)
+        current_selection = self.conf_list_cob_img.currentText()
+        proceed = True
         
-# --- MODIFY THIS BLOCK ---
-        current_selection = self.conf_list_cob_img.currentText() # Get selection
-        # Only ask if a *real* file is selected
-        proceed=True
         if current_selection and current_selection != "---Add New---":
             reply = QMessageBox.question(self, 'Check file', 'Do you want to add to current file?',
                                          QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-            if reply == QMessageBox.StandardButton.Ok:
-                proceed = True # User clicked OK, so we will proceed
+            if reply != QMessageBox.StandardButton.Ok:
+                proceed = False
 
-            else:
-
-                proceed = False # User clicked Cancel, so we will NOT proceed
-            # --- END MODIFICATION ---
         if proceed:
-            self.setWindowState(QtCore.Qt.WindowState.WindowMinimized)
-            
-            # --- NEW PYQT6 SCREENSHOT LOGIC ---
-            time.sleep(3)
-            self.snipper = QtScreenshotter()
-            self.snipper.screenshotTaken.connect(self.on_screenshot_finished)
-            self.snipper.show()
-            # --- END NEW LOGIC ---
-            
-            # Note: The rest of the logic is moved to on_screenshot_finished
-            # because the screenshot is now asynchronous.
+            # 2. Setup Countdown
+            self.countdown_val = 5
+            self.Start_BOT_butt.setText(str(self.countdown_val))
+            self.Start_BOT_butt.setEnabled(False) # Disable button so user can't click twice
+            self.countdown_timer.start(1000) # Fire every 1000ms (1 second)
 
+    def on_countdown_tick(self):
+        """Called every second by the timer."""
+        self.countdown_val -= 1
+        
+        if self.countdown_val > 0:
+            # Update button text
+            self.Start_BOT_butt.setText(str(self.countdown_val))
+        else:
+            # Countdown finished
+            self.countdown_timer.stop()
+            self.Start_BOT_butt.setText("New Screenshot") # Reset text
+            self.Start_BOT_butt.setEnabled(True) # Re-enable button
+            
+            # Trigger the actual screenshot process
+            self.launch_screenshot_tool()
+
+    def launch_screenshot_tool(self):
+        """Minimizes window and starts the snipper."""
+        self.setWindowState(QtCore.Qt.WindowState.WindowMinimized)
+        
+        # Use a singleShot timer to give the window time to minimize animation 
+        # before the screenshot overlay appears (avoids ghosting)
+        QTimer.singleShot(300, self._show_snipper)
+
+    def _show_snipper(self):
+        """Internal helper to actually show the snipping widget."""
+        self.snipper = QtScreenshotter()
+        self.snipper.screenshotTaken.connect(self.on_screenshot_finished)
+        self.snipper.show()
     @pyqtSlot(str)
     def on_screenshot_finished(self, base64_image):
         """
@@ -697,7 +717,7 @@ class MainWindow(QtWidgets.QMainWindow, Ui_MainWindow_Base):
         if self.snipper:
             self.snipper.deleteLater()
             self.snipper = None
-
+        Old_utility().activate_window('Take and Manage')
     @pyqtSlot()
     def Save_img(self):
         if len(self.current_pic) <= 50:
