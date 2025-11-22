@@ -13,6 +13,7 @@ import ast
 import urllib.request
 import zipfile
 import shutil
+import subprocess
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
@@ -49,7 +50,7 @@ from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QPai
 # Use the actual libraries from the my_lib folder
 from my_lib.shared_context import ExecutionContext, GuiCommunicator
 from my_lib.BOT_take_image import MainWindow as BotTakeImageWindow
-
+from my_lib.Emailer import Emailer
 
 
 class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer a full window
@@ -236,12 +237,76 @@ class ExecutionStepCard(QWidget):
                 main_layout.addWidget(params_group)
 
     # FIXED DRAG AND DROP METHODS
+# In main_app.py, inside the WorkflowCanvas class
+
+# In main_app.py, inside the WorkflowCanvas class
+
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_start_position = event.pos()
-            self.dragging = False
-        super().mousePressEvent(event)
+            clicked_pos = event.pos() - self.canvas_offset
+            
+            # --- CORRECTED LOGIC STARTS HERE ---
+            # 1. Check for icon click first
+            for hotspot_rect, group_id in self.icon_hotspots:
+                if hotspot_rect.contains(clicked_pos):
+                    
+                    # 2. Toggle the group's expansion state in the main window
+                    current_state = self.main_window.group_expansion_states.get(group_id, True)
+                    self.main_window.group_expansion_states[group_id] = not current_state
+                    
+                    # 3. Find the data for the group_start step that was toggled
+                    group_start_data_to_focus = None
+                    for step_data in self.main_window.added_steps_data:
+                        if step_data.get("type") == "group_start" and step_data.get("group_id") == group_id:
+                            group_start_data_to_focus = step_data
+                            break
+                    
+                    # 4. Trigger a full, targeted rebuild of the UI
+                    # This will automatically handle redrawing the canvas AND centering on the specified item.
+                    if group_start_data_to_focus:
+                        self.main_window._rebuild_execution_tree(item_to_focus_data=group_start_data_to_focus)
+                    else:
+                        # Fallback to a general redraw if the specific item isn't found
+                        self.main_window._rebuild_execution_tree()
+                    
+                    # 5. Save the new layout state to the temp file
+                    self.main_window._save_workflow_to_temp_file()
+                    
+                    return # Stop further processing
+            # --- CORRECTED LOGIC ENDS HERE ---
 
+            # The rest of the method (node dragging and canvas panning) remains unchanged
+            node_clicked = False
+            for i in range(len(self.nodes) - 1, -1, -1):
+                rect, _, _, _ = self.nodes[i]
+                if rect.contains(clicked_pos):
+                    self.dragging_node_index = i
+                    self.drag_offset = clicked_pos - rect.topLeft()
+                    self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                    # ... (rest of drag logic is the same)
+                    node = self.nodes.pop(i)
+                    self.nodes.append(node)
+                    self._remap_edges_for_drag(i, len(self.nodes) - 1)
+                    self.dragging_node_index = len(self.nodes) - 1
+                    self.update()
+                    node_clicked = True
+                    break
+            
+            if not node_clicked:
+                self.dragging_canvas = True
+                self.last_pan_point = event.pos()
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        
+        elif event.button() == Qt.MouseButton.RightButton:
+            clicked_pos_local = event.pos() - self.canvas_offset
+            clicked_node_data = None
+            for rect, _, _, step_data in self.nodes:
+                if rect.contains(clicked_pos_local):
+                    clicked_node_data = step_data
+                    break
+            self._show_context_menu(event.pos(), clicked_node_data)
+            
+        super().mousePressEvent(event)
     def mouseMoveEvent(self, event: QtGui.QMoveEvent):
         if not (event.buttons() & Qt.MouseButton.LeftButton):
             return
@@ -381,6 +446,7 @@ class ExecutionStepCard(QWidget):
             right_str = f"@{right_op['value']}" if right_op['type'] == 'variable' else repr(right_op['value'])
             return f"{name_display} ({left_str} {op} {right_str})"
         return ""
+        
 
     def set_status(self, border_color: str, is_running: bool = False, is_error: bool = False):
         if is_running:
@@ -406,7 +472,13 @@ class ExecutionStepCard(QWidget):
                 border-radius: 6px; 
             }}
         """)
+# In main_app.py, inside the ExecutionStepCard class
+# ADD this method as well:
 
+    def clear_result(self):
+        if self.method_label:
+            self.method_label.setText(self._original_method_text)
+            self.method_label.setStyleSheet("font-size: 10pt; padding: 5px; background-color: white; border: 1px solid #E0E0E0; border-radius: 3px;")
     def set_result_text(self, result_message: str):
         #print(f"DEBUG: set_result_text called with message: '{result_message}'")
         #print(f"DEBUG: method_label exists: {self.method_label is not None}")
@@ -814,6 +886,8 @@ class GlobalVariableDialog(QDialog):
             QMessageBox.critical(self, "Error", f"An unexpected error occurred: {e}")
             return None
 
+# In main_app.py, REPLACE the entire ParameterInputDialog class with this one:
+
 class ParameterInputDialog(QDialog):
     request_screenshot = pyqtSignal()
     update_image_filenames = pyqtSignal(list, str)
@@ -823,7 +897,7 @@ class ParameterInputDialog(QDialog):
                  gui_communicator: GuiCommunicator,
                  initial_parameters_config: Optional[Dict[str, Any]] = None, 
                  initial_assign_to_variable_name: Optional[str] = None, 
-                 method_docstring: Optional[str] = None, # <--- NEW ARGUMENT HERE
+                 method_docstring: Optional[str] = None,
                  parent: Optional[QWidget] = None):
 
         super().__init__(parent)
@@ -833,35 +907,28 @@ class ParameterInputDialog(QDialog):
         self.gui_communicator = gui_communicator
         self._parent_main_window = parent
         
-        # --- MODIFICATION: Store all paths and derive folder list ---
         self._all_image_relative_paths = image_filenames 
-        # Get folder names (e.g., "FolderA") from paths ("FolderA/image1")
         self._folder_list = sorted(list(set([path.split('/')[0] for path in self._all_image_relative_paths if '/' in path])))
-        # --- END MODIFICATION ---
 
         self.param_editors: Dict[str, QLineEdit] = {}
         self.param_var_selectors: Dict[str, QComboBox] = {}
         self.param_value_source_combos: Dict[str, QComboBox] = {}
         self.file_selector_combos: Dict[str, QComboBox] = {}
-        # --- NEW: Add dict for new folder combos ---
         self.folder_selector_combos: Dict[str, QComboBox] = {}
-        # --- END NEW ---
         self.param_kinds: Dict[str, Any] = {}
 
         main_layout, form_layout = QVBoxLayoutDialog(), QFormLayout()
         
-        # --- NEW: Docstring Display ---
         if method_docstring:
             doc_group = QGroupBox("Method Documentation")
             doc_layout = QVBoxLayout()
-            self.docstring_display = QTextBrowser() # QTextBrowser is read-only by default and supports rich text
-            self.docstring_display.setMarkdown(method_docstring.strip()) # Use setMarkdown for better formatting
-            self.docstring_display.setFixedHeight(100) # Give it a reasonable height
-            self.docstring_display.setReadOnly(True) # Ensure it's read-only
+            self.docstring_display = QTextBrowser()
+            self.docstring_display.setMarkdown(method_docstring.strip())
+            self.docstring_display.setFixedHeight(100)
+            self.docstring_display.setReadOnly(True)
             doc_layout.addWidget(self.docstring_display)
             doc_group.setLayout(doc_layout)
             main_layout.addWidget(doc_group)
-        # --- END NEW ---
         
         initial_parameters_config = initial_parameters_config if initial_parameters_config is not None else {}
 
@@ -883,65 +950,51 @@ class ParameterInputDialog(QDialog):
             variable_select_combo.addItems(current_global_var_names)
             self.param_var_selectors[param_name] = variable_select_combo
 
-            if "file_link" in param_name:
-                browse_button = QPushButton("Browse...")
-                browse_button.clicked.connect(lambda _, p_name=param_name: self._open_file_dialog_for_param(p_name))
-                param_h_layout.addWidget(browse_button)
-
-            # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
-            if param_name.startswith("image_to_click"):
+            # --- MODIFICATION 1 of 3: Changed from 'startswith("image_to_click")' to '"image" in' ---
+            if "image" in param_name:
+                # This block now handles any parameter with "image" in its name
                 file_source_combo = QComboBox()
                 file_source_combo.addItems(["Select from Files", "Global Variable"])
                 self.param_value_source_combos[param_name] = file_source_combo
 
-                # --- NEW: Create and populate the folder dropdown ---
                 folder_selector_combo = QComboBox()
                 folder_selector_combo.addItem("All Folders")
                 folder_selector_combo.addItems(self._folder_list)
                 self.folder_selector_combos[param_name] = folder_selector_combo
-                # --- END NEW ---
 
                 file_selector_combo = QComboBox()
                 file_selector_combo.addItem("-- Select File --")
-                # --- MODIFICATION: Populate with all files initially ---
                 file_selector_combo.addItems(self._all_image_relative_paths)
                 file_selector_combo.addItem("--- Add new image ---")
                 self.file_selector_combos[param_name] = file_selector_combo
 
-                variable_select_combo = QComboBox()
-                variable_select_combo.addItem("-- Select Variable --")
-                variable_select_combo.addItems(current_global_var_names)
-                self.param_var_selectors[param_name] = variable_select_combo
+                variable_select_combo_for_image = QComboBox()
+                variable_select_combo_for_image.addItem("-- Select Variable --")
+                variable_select_combo_for_image.addItems(current_global_var_names)
+                self.param_var_selectors[param_name] = variable_select_combo_for_image
 
-                # --- MODIFICATION: Update connect to handle new folder combo ---
                 file_source_combo.currentIndexChanged.connect(
-                    lambda index, f_fold=folder_selector_combo, f_sel=file_selector_combo, v_sel=variable_select_combo: \
+                    lambda index, f_fold=folder_selector_combo, f_sel=file_selector_combo, v_sel=variable_select_combo_for_image: \
                     self._toggle_file_or_var_input(index, f_fold, f_sel, v_sel)
                 )
-                # --- END MODIFICATION ---
-
-                # --- NEW: Connect folder combo to filter method ---
+                
                 folder_selector_combo.currentIndexChanged.connect(
                     self._update_file_list_based_on_folder
                 )
-                # --- END NEW ---
                 
                 file_selector_combo.currentIndexChanged.connect(lambda index, p_name=param_name: self._on_file_selection_changed(p_name, index))
                 self.update_image_filenames.connect(self._refresh_file_selector_combo)
 
                 param_h_layout.addWidget(file_source_combo, 0)
-                # --- NEW: Add folder combo to layout ---
                 param_h_layout.addWidget(folder_selector_combo, 1)
-                # --- END NEW ---
                 param_h_layout.addWidget(file_selector_combo, 2)
-                param_h_layout.addWidget(variable_select_combo, 1)
+                param_h_layout.addWidget(variable_select_combo_for_image, 1)
 
                 if param_name in initial_parameters_config:
                     config = initial_parameters_config[param_name]
                     if config.get('type') == 'hardcoded_file':
                         file_source_combo.setCurrentIndex(0)
                         
-                        # --- MODIFICATION: Set folder and file dropdowns from saved path ---
                         saved_path = config['value']
                         saved_folder = "All Folders"
                         if '/' in saved_path:
@@ -950,26 +1003,45 @@ class ParameterInputDialog(QDialog):
                         folder_idx = folder_selector_combo.findText(saved_folder)
                         if folder_idx != -1:
                             folder_selector_combo.setCurrentIndex(folder_idx)
-                            # Manually trigger filter to populate file list
                             self._update_file_list_based_on_folder(folder_idx) 
                         
                         idx = file_selector_combo.findText(saved_path)
                         if idx != -1:
                             file_selector_combo.setCurrentIndex(idx)
                             self._on_file_selection_changed(param_name, idx)
-                        # --- END MODIFICATION ---
 
                     elif config.get('type') == 'variable':
                         file_source_combo.setCurrentIndex(1)
-                        idx = variable_select_combo.findText(config['value'])
+                        idx = variable_select_combo_for_image.findText(config['value'])
                         if idx != -1:
-                            variable_select_combo.setCurrentIndex(idx)
+                            variable_select_combo_for_image.setCurrentIndex(idx)
                 
-                # --- MODIFICATION: Pass folder combo to toggle function ---
-                self._toggle_file_or_var_input(file_source_combo.currentIndex(), folder_selector_combo, file_selector_combo, variable_select_combo)
-                # --- END MODIFICATION ---
-            
-            else: # Logic for all other parameters (unchanged)
+                self._toggle_file_or_var_input(file_source_combo.currentIndex(), folder_selector_combo, file_selector_combo, variable_select_combo_for_image)
+
+            elif "file_link" in param_name: # Handle file_link parameters separately
+                browse_button = QPushButton("Browse...")
+                browse_button.clicked.connect(lambda _, p_name=param_name: self._open_file_dialog_for_param(p_name))
+                param_h_layout.addWidget(browse_button)
+
+                param_h_layout.insertWidget(0, value_source_combo)
+                param_h_layout.insertWidget(1, hardcoded_editor, 2)
+                param_h_layout.insertWidget(2, variable_select_combo, 1)
+
+                value_source_combo.currentIndexChanged.connect(lambda index, editor=hardcoded_editor, selector=variable_select_combo: self._toggle_param_input_type(index, editor, selector))
+                self._toggle_param_input_type(value_source_combo.currentIndex(), hardcoded_editor, variable_select_combo)
+                
+                # Pre-fill data if editing
+                if param_name in initial_parameters_config:
+                    config = initial_parameters_config[param_name]
+                    if config.get('type') == 'hardcoded':
+                        value_source_combo.setCurrentIndex(0)
+                        hardcoded_editor.setText(str(config.get('value', '')))
+                    elif config.get('type') == 'variable':
+                        value_source_combo.setCurrentIndex(1)
+                        idx = variable_select_combo.findText(config.get('value'))
+                        if idx != -1: variable_select_combo.setCurrentIndex(idx)
+
+            else: # Logic for all other non-image, non-file_link parameters
                 if param_name in initial_parameters_config:
                     config = initial_parameters_config[param_name]
                     if config.get('type') == 'hardcoded':
@@ -1071,23 +1143,18 @@ class ParameterInputDialog(QDialog):
         if not is_hardcoded:
             hardcoded_editor.clear()
 
-    # --- MODIFICATION: Added folder_selector_combo ---
     def _toggle_file_or_var_input(self, index: int, folder_selector_combo: QComboBox, file_selector_combo: QComboBox, variable_select_combo: QComboBox) -> None:
         is_file_selection = (index == 0)
-        folder_selector_combo.setVisible(is_file_selection) # Show/hide folder combo
+        folder_selector_combo.setVisible(is_file_selection)
         file_selector_combo.setVisible(is_file_selection)
         variable_select_combo.setVisible(not is_file_selection)
         if not is_file_selection:
-            folder_selector_combo.setCurrentIndex(0) # Reset folder
+            folder_selector_combo.setCurrentIndex(0)
             file_selector_combo.setCurrentIndex(0)
-    # --- END MODIFICATION ---
 
-    # --- NEW: Method to filter file list based on folder selection ---
     def _update_file_list_based_on_folder(self, index: int = -1):
-        """Filters the file selector combo based on the folder selector combo."""
         folder_combo = self.sender()
         if not isinstance(folder_combo, QComboBox):
-            # Fallback if called manually (e.g., during init)
             folder_combos = self.folder_selector_combos.values()
             if not folder_combos:
                 return
@@ -1107,7 +1174,7 @@ class ParameterInputDialog(QDialog):
             return
 
         selected_folder = folder_combo.currentText()
-        current_file = file_combo.currentText() # Save current selection
+        current_file = file_combo.currentText()
 
         file_combo.blockSignals(True)
         file_combo.clear()
@@ -1116,9 +1183,7 @@ class ParameterInputDialog(QDialog):
         if selected_folder == "All Folders":
             filtered_files = self._all_image_relative_paths
         else:
-            # Filter by path prefix
             prefix = selected_folder + '/'
-            # Also include root files (those without any '/')
             root_files = [path for path in self._all_image_relative_paths if '/' not in path]
             folder_files = [path for path in self._all_image_relative_paths if path.startswith(prefix)]
             filtered_files = root_files + folder_files
@@ -1126,16 +1191,15 @@ class ParameterInputDialog(QDialog):
         file_combo.addItems(sorted(filtered_files))
         file_combo.addItem("--- Add new image ---")
         
-        idx = file_combo.findText(current_file) # Try to restore selection
+        idx = file_combo.findText(current_file)
         if idx != -1:
             file_combo.setCurrentIndex(idx)
         
         file_combo.blockSignals(False)
-    # --- END NEW ---
 
     def _on_file_selection_changed(self, param_name: str, index: int) -> None:
-        # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
-        if param_name.startswith("image_to_click") and param_name in self.file_selector_combos:
+        # --- MODIFICATION 2 of 3: Changed from 'startswith("image_to_click")' to '"image" in' ---
+        if "image" in param_name and param_name in self.file_selector_combos:
             file_selector_combo = self.file_selector_combos[param_name]
             selected_text = file_selector_combo.currentText()
             if selected_text == "--- Add new image ---":
@@ -1144,79 +1208,63 @@ class ParameterInputDialog(QDialog):
                 file_selector_combo.blockSignals(False)
                 self.request_screenshot.emit()
             elif selected_text != "-- Select File --":
-                # selected_text is now the relative path (e.g., "Folder/image")
                 self.gui_communicator.update_module_info_signal.emit(selected_text)
             else:
                 self.gui_communicator.update_module_info_signal.emit("")
 
     def _refresh_file_selector_combo(self, new_filenames: List[str], saved_filename: str = "") -> None:
-        # --- MODIFICATION: This method is now much more complex ---
-        # 1. Update master list
         self._all_image_relative_paths = new_filenames
-        # 2. Update folder list
         self._folder_list = sorted(list(set([path.split('/')[0] for path in new_filenames if '/' in path])))
         
         for param_name, combo_box in self.file_selector_combos.items():
-            # 3. Check for the correct parameter name
-            if param_name.startswith("image_to_click"):
-                folder_combo = self.folder_selector_combos.get(param_name)
+            # This check is implicitly correct because only image parameters will be in file_selector_combos
+            folder_combo = self.folder_selector_combos.get(param_name)
+            
+            target_folder_name = "All Folders"
+            if saved_filename and '/' in saved_filename:
+                target_folder_name = saved_filename.split('/')[0]
+            elif folder_combo:
+                target_folder_name = folder_combo.currentText()
+
+            if folder_combo:
+                folder_combo.blockSignals(True)
+                folder_combo.clear()
+                folder_combo.addItem("All Folders")
+                folder_combo.addItems(self._folder_list)
                 
-                # 4. Determine which folder should be selected
-                target_folder_name = "All Folders"
-                if saved_filename and '/' in saved_filename:
-                    target_folder_name = saved_filename.split('/')[0]
-                elif folder_combo: # Keep current folder if no new file is specified
-                    target_folder_name = folder_combo.currentText()
-
-                # 5. Re-populate folder combo
-                if folder_combo:
-                    folder_combo.blockSignals(True)
-                    folder_combo.clear()
-                    folder_combo.addItem("All Folders")
-                    folder_combo.addItems(self._folder_list)
-                    
-                    folder_idx = folder_combo.findText(target_folder_name)
-                    if folder_idx != -1:
-                        folder_combo.setCurrentIndex(folder_idx)
-                    else:
-                        folder_combo.setCurrentIndex(0) # Default to All Folders
-                    folder_combo.blockSignals(False)
-
-                # 6. Get the *actual* selected folder (might be "All Folders")
-                selected_folder = folder_combo.currentText() if folder_combo else "All Folders"
-
-                # 7. Filter file list based on selected folder
-                if selected_folder == "All Folders":
-                    filtered_files = self._all_image_relative_paths
+                folder_idx = folder_combo.findText(target_folder_name)
+                if folder_idx != -1:
+                    folder_combo.setCurrentIndex(folder_idx)
                 else:
-                    # Filter by path prefix
-                    prefix = selected_folder + '/'
-                    # Also include root files (those without any '/')
-                    root_files = [path for path in self._all_image_relative_paths if '/' not in path]
-                    folder_files = [path for path in self._all_image_relative_paths if path.startswith(prefix)]
-                    filtered_files = root_files + folder_files
+                    folder_combo.setCurrentIndex(0)
+                folder_combo.blockSignals(False)
 
+            selected_folder = folder_combo.currentText() if folder_combo else "All Folders"
 
-                # 8. Re-populate file combo
-                combo_box.blockSignals(True)
-                combo_box.clear()
-                combo_box.addItem("-- Select File --")
-                combo_box.addItems(sorted(filtered_files))
-                combo_box.addItem("--- Add new image ---")
+            if selected_folder == "All Folders":
+                filtered_files = self._all_image_relative_paths
+            else:
+                prefix = selected_folder + '/'
+                root_files = [path for path in self._all_image_relative_paths if '/' not in path]
+                folder_files = [path for path in self._all_image_relative_paths if path.startswith(prefix)]
+                filtered_files = root_files + folder_files
 
-                # 9. Try to select the newly saved file
-                if saved_filename:
-                    idx = combo_box.findText(saved_filename)
-                    if idx != -1:
-                        combo_box.setCurrentIndex(idx)
-                        self.gui_communicator.update_module_info_signal.emit(saved_filename)
-                
-                combo_box.blockSignals(False)
-                
-                # 10. Emit signal if no file is selected
-                if combo_box.currentIndex() <= 0 and saved_filename == "":
-                    self.gui_communicator.update_module_info_signal.emit("")
-        # --- END MODIFICATION ---
+            combo_box.blockSignals(True)
+            combo_box.clear()
+            combo_box.addItem("-- Select File --")
+            combo_box.addItems(sorted(filtered_files))
+            combo_box.addItem("--- Add new image ---")
+
+            if saved_filename:
+                idx = combo_box.findText(saved_filename)
+                if idx != -1:
+                    combo_box.setCurrentIndex(idx)
+                    self.gui_communicator.update_module_info_signal.emit(saved_filename)
+            
+            combo_box.blockSignals(False)
+            
+            if combo_box.currentIndex() <= 0 and saved_filename == "":
+                self.gui_communicator.update_module_info_signal.emit("")
 
     def _toggle_assignment_widgets(self) -> None:
         is_assign_enabled = self.assign_checkbox.isChecked()
@@ -1231,16 +1279,17 @@ class ParameterInputDialog(QDialog):
     def get_parameters_config(self) -> Optional[Dict[str, Any]]:
         config_data: Dict[str, Any] = {}
         for param_name, source_combo in self.param_value_source_combos.items():
-            # --- MODIFICATION: Changed "current_file" to "image_to_click" ---
-            if param_name.startswith("image_to_click") and param_name in self.file_selector_combos:
+            # --- MODIFICATION 3 of 3: Changed from 'startswith("image_to_click")' to '"image" in' ---
+            if "image" in param_name and param_name in self.file_selector_combos:
                 value_source_index = source_combo.currentIndex()
                 if value_source_index == 0:
-                    # The file name is now a relative path, e.g., "Folder/image"
                     file_name = self.file_selector_combos[param_name].currentText()
                     if file_name in ["-- Select File --", "--- Add new image ---"]:
-                        QMessageBox.warning(self, "Input Error", f"Please select a file for parameter '{param_name}'.")
-                        return None
-                    config_data[param_name] = {'type': 'hardcoded_file', 'value': file_name}
+                        # Allow empty image for parameters that might be optional
+                        # A check can be added in the bot module itself if an image is mandatory
+                        config_data[param_name] = {'type': 'hardcoded_file', 'value': ""}
+                    else:
+                        config_data[param_name] = {'type': 'hardcoded_file', 'value': file_name}
                 else:
                     var_name = self.param_var_selectors[param_name].currentText()
                     if var_name == "-- Select Variable --":
@@ -1248,8 +1297,8 @@ class ParameterInputDialog(QDialog):
                         return None
                     config_data[param_name] = {'type': 'variable', 'value': var_name}
                 continue
-            # --- END MODIFICATION ---
-
+            
+            # Logic for all other parameters (unchanged)
             value_source_index = source_combo.currentIndex()
             if value_source_index == 0:
                 value_str = self.param_editors[param_name].text().strip()
@@ -1281,7 +1330,12 @@ class ParameterInputDialog(QDialog):
                 except (ValueError, json.JSONDecodeError) as e:
                     QMessageBox.warning(self, "Input Error", f"Could not parse value '{value_str}' for '{param_name}' ({param_kind}): {e}. Storing as string.")
                     parsed_value = value_str
-                config_data[param_name] = {'type': 'hardcoded', 'value': parsed_value}
+                
+                # Also handle file_link parameters here now
+                if "file_link" in param_name:
+                    config_data[param_name] = {'type': 'hardcoded', 'value': value_str} # Always treat as string path
+                else:
+                    config_data[param_name] = {'type': 'hardcoded', 'value': parsed_value}
             else:
                 var_name = self.param_var_selectors[param_name].currentText()
                 if var_name == "-- Select Variable --":
@@ -1308,6 +1362,12 @@ class ParameterInputDialog(QDialog):
                 return None
             return var_name
 
+
+# REPLACE the entire ExecutionWorker class with this one:
+
+# In main_app.py
+# REPLACE the entire ExecutionWorker class with this one:
+
 class ExecutionWorker(QThread):
     execution_started = pyqtSignal(str)
     execution_progress = pyqtSignal(int)
@@ -1318,12 +1378,15 @@ class ExecutionWorker(QThread):
     loop_iteration_started = pyqtSignal(str, int)
 
     def __init__(self, steps_to_execute: List[Dict[str, Any]], module_directory: str, gui_communicator: GuiCommunicator,
-                 global_variables_ref: Dict[str, Any], 
+                 global_variables_ref: Dict[str, Any],
                  wait_config: Dict[str, Any],
                  parent: Optional[QWidget] = None,
-                 single_step_mode: bool = False, 
+                 single_step_mode: bool = False,
                  selected_start_index: int = 0,
-                 selected_end_index: Optional[int] = None):  # ADD THIS NEW PARAMETER
+                 selected_end_index: Optional[int] = None,
+                 # --- NEW ARGUMENTS FOR EMAIL NOTIFICATIONS ---
+                 bot_name: str = "Untitled Bot",
+                 email_config: Optional[Dict[str, Any]] = None):
         super().__init__(parent)
         self.steps_to_execute = steps_to_execute
         self.module_directory = module_directory
@@ -1335,15 +1398,19 @@ class ExecutionWorker(QThread):
         self._is_stopped = False
         self.loop_stack: List[Dict[str, Any]] = []
         self.conditional_stack: List[Dict[str, Any]] = []
-        self.group_stack: List[Dict[str, Any]] = [] 
+        self.group_stack: List[Dict[str, Any]] = []
         self.single_step_mode = single_step_mode
         self.selected_start_index = selected_start_index
-        self.selected_end_index = selected_end_index  # ADD THIS
+        self.selected_end_index = selected_end_index
         self.next_step_index_to_select: int = -1
-        self.click_image_dir = os.path.normpath(os.path.join(module_directory, "..", "Click_image"))
         self._is_paused = False
         self.wait_config = wait_config
+        # --- STORE NEW ATTRIBUTES ---
+        self.bot_name = bot_name
+        self.email_config = email_config or {}
+        self.error_message: Optional[str] = None # To store the specific error
 
+    # ... (Keep all existing methods like _resolve_loop_count, _resolve_operand_value, _evaluate_condition) ...
     def _resolve_loop_count(self, loop_config: Dict[str, Any]) -> int:
         count_config = loop_config["iteration_count_config"]
         if count_config["type"] == "variable":
@@ -1377,38 +1444,79 @@ class ExecutionWorker(QThread):
             elif operator == 'is not': return left_val is not right_val
             else: raise ValueError(f"Unknown operator: {operator}")
         except Exception as e: raise ValueError(f"Error evaluating condition '{left_val} {operator} {right_val}': {e}")
+        
+    # --- NEW METHOD TO SEND EMAIL ---
+    # --- NEW METHOD TO SEND EMAIL ---
+    def _send_notification_email(self):
+        """Sends an email based on the execution result and configuration."""
+        if not self.email_config.get("email_notification_enabled"):
+            return
 
+        is_error = self.error_message is not None
+        should_send = False
+
+        if is_error and self.email_config.get("notify_on_error"):
+            should_send = True
+        elif not is_error and self.email_config.get("notify_on_success"):
+            should_send = True
+
+        if should_send:
+            status = "Failed with Error" if is_error else "Completed Successfully"
+            recipient = self.email_config.get("recipient_email")
+            
+            try:
+                emailer = Emailer()
+                # --- THIS IS THE KEY CHANGE ---
+                # Check the return value of the send function.
+                was_sent = emailer.send_outlook_notification(
+                    recipient_email=recipient,
+                    bot_name=self.bot_name,
+                    status=status,
+                    error_message=self.error_message or ""
+                )
+                
+                if was_sent:
+                    self.context.add_log(f"Notification email sent to {recipient}.")
+                else:
+                    # If it fails, log a warning instead of crashing.
+                    self.context.add_log(f"WARNING: Could not send notification email to {recipient}. Outlook may not be installed or available.")
+                # --- END OF KEY CHANGE ---
+            except Exception as e:
+                # Log to the context if email sending fails for any other reason
+                self.context.add_log(f"CRITICAL: Failed to send notification email. Error: {e}")
+
+    # --- MODIFIED RUN METHOD ---
     def run(self) -> None:
         self.execution_started.emit("Starting execution...")
-        if not self.steps_to_execute: 
+        if not self.steps_to_execute:
             self.execution_finished_all.emit(self.context, False, -1)
             return
             
-        # Calculate the actual end index
         if self.selected_end_index is not None:
             actual_end_index = min(self.selected_end_index + 1, len(self.steps_to_execute))
         else:
             actual_end_index = len(self.steps_to_execute)
         
         total_steps_for_progress = (actual_end_index - self.selected_start_index) if not self.single_step_mode else 1
-        if total_steps_for_progress == 0: 
-            total_steps_for_progress = 1
+        if total_steps_for_progress == 0: total_steps_for_progress = 1
             
         current_execution_item_count = 0
         original_sys_path = sys.path[:]
         
-        if self.module_directory not in sys.path: 
+        if self.module_directory not in sys.path:
             sys.path.insert(0, self.module_directory)
             
-        self.context.set_click_image_base_dir(self.click_image_dir)    
+        self.context.set_click_image_base_dir(self.click_image_dir)
+        self.context.set_global_variables_ref(self.global_variables)     
+        
         self.loop_stack = []
         self.conditional_stack = []
         self.group_stack = []
         step_index = self.selected_start_index
         original_listbox_row_index = 0
-        
         try:
-            while step_index < actual_end_index:  # CHANGED: Use actual_end_index instead of len(self.steps_to_execute)
+            # ... (The entire 'while step_index < actual_end_index:' loop remains IDENTICAL) ...
+            while step_index < actual_end_index:
                 while self._is_paused:
                     if self._is_stopped: break
                     QThread.msleep(100)
@@ -1421,17 +1529,13 @@ class ExecutionWorker(QThread):
                     if self.wait_config['type'] == 'variable':
                         var_name = self.wait_config['value']
                         var_value = self.global_variables.get(var_name, 0)
-                        try:
-                            wait_seconds = float(var_value)
+                        try: wait_seconds = float(var_value)
                         except (ValueError, TypeError):
-                            self.context.add_log(f"Warning: Global variable '@{var_name}' does not contain a valid number for wait time. Using 0.")
-                            wait_seconds = 0
-                    else:
-                        wait_seconds = self.wait_config['value']
+                            self.context.add_log(f"Warning: Global variable '@{var_name}' does not contain a valid number for wait time. Using 0."); wait_seconds = 0
+                    else: wait_seconds = self.wait_config['value']
 
                     if wait_seconds > 0:
-                        self.context.add_log(f"Waiting for {wait_seconds:.2f} second(s)...")
-                        QThread.msleep(int(wait_seconds * 1000))
+                        self.context.add_log(f"Waiting for {wait_seconds:.2f} second(s)..."); QThread.msleep(int(wait_seconds * 1000))
                 
                 step_data = self.steps_to_execute[step_index]
                 step_type = step_data["type"]
@@ -1445,60 +1549,26 @@ class ExecutionWorker(QThread):
                     current_if_context = self.conditional_stack[-1]
                     is_in_false_if_branch = not current_if_context.get('condition_result', True) and not current_if_context.get('else_taken', False)
                     is_in_true_else_branch = current_if_context.get('condition_result', False) and current_if_context.get('else_taken', False)
-
-                    if is_in_false_if_branch:
-                        if not (step_type == "ELSE" and step_data.get("if_id") == current_if_context["if_id"]):
-                            is_skipping = True
-                    elif is_in_true_else_branch:
-                        if not (step_type == "IF_END" and step_data.get("if_id") == current_if_context["if_id"]):
-                            is_skipping = True
+                    if is_in_false_if_branch and not (step_type == "ELSE" and step_data.get("if_id") == current_if_context["if_id"]): is_skipping = True
+                    elif is_in_true_else_branch and not (step_type == "IF_END" and step_data.get("if_id") == current_if_context["if_id"]): is_skipping = True
                 
                 if is_skipping:
                     self.execution_item_started.emit(step_data, original_listbox_row_index)
-                    if step_type == "IF_START":
-                        self.conditional_stack.append({'if_id': step_data['if_id'], 'skipped_marker': True})
-                    elif step_type == "loop_start":
-                        self.loop_stack.append({'loop_id': step_data['loop_id'], 'skipped_marker': True})
-                    elif step_type == "group_start":
-                        self.group_stack.append({'group_id': step_data['group_id'], 'skipped_marker': True})
-                    elif step_type == "IF_END":
-                        if self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'):
-                            self.conditional_stack.pop()
-                    elif step_type == "loop_end":
-                        if self.loop_stack and self.loop_stack[-1].get('skipped_marker'):
-                            self.loop_stack.pop()
-                    elif step_type == "group_end":
-                        if self.group_stack and self.group_stack[-1].get('skipped_marker'):
-                            self.group_stack.pop()
-                    self.execution_item_finished.emit(step_data, "SKIPPED", original_listbox_row_index)
-                    step_index += 1
-                    continue
+                    if step_type == "IF_START": self.conditional_stack.append({'if_id': step_data['if_id'], 'skipped_marker': True})
+                    elif step_type == "loop_start": self.loop_stack.append({'loop_id': step_data['loop_id'], 'skipped_marker': True})
+                    elif step_type == "group_start": self.group_stack.append({'group_id': step_data['group_id'], 'skipped_marker': True})
+                    elif step_type == "IF_END" and self.conditional_stack and self.conditional_stack[-1].get('skipped_marker'): self.conditional_stack.pop()
+                    elif step_type == "loop_end" and self.loop_stack and self.loop_stack[-1].get('skipped_marker'): self.loop_stack.pop()
+                    elif step_type == "group_end" and self.group_stack and self.group_stack[-1].get('skipped_marker'): self.group_stack.pop()
+                    self.execution_item_finished.emit(step_data, "SKIPPED", original_listbox_row_index); step_index += 1; continue
                 
-                self.execution_item_started.emit(step_data, original_listbox_row_index)
-                QThread.msleep(50)
-
-                if step_type in ["group_start", "group_end"]:
-                    self.execution_item_finished.emit(step_data, "Organizational Step", original_listbox_row_index)
-
+                self.execution_item_started.emit(step_data, original_listbox_row_index); QThread.msleep(50)
+                if step_type in ["group_start", "group_end"]: self.execution_item_finished.emit(step_data, "Organizational Step", original_listbox_row_index)
                 elif step_type == "loop_start":
                     loop_id, loop_config = step_data["loop_id"], step_data["loop_config"]
                     is_new_loop = not (self.loop_stack and self.loop_stack[-1].get('loop_id') == loop_id)
-                    if is_new_loop:
-                        total_iterations = self._resolve_loop_count(loop_config)
-                        self.loop_stack.append({
-                            'loop_id': loop_id, 
-                            'start_index': step_index, 
-                            'current_iteration': 1, 
-                            'total_iterations': total_iterations, 
-                            'loop_config': loop_config
-                        })
-                        self.loop_iteration_started.emit(loop_id, 1)
-                    else:
-                        current_loop_info = self.loop_stack[-1]
-                        current_loop_info['current_iteration'] += 1
-                        current_loop_info['total_iterations'] = self._resolve_loop_count(loop_config)
-                        self.loop_iteration_started.emit(loop_id, current_loop_info['current_iteration'])
-
+                    if is_new_loop: total_iterations = self._resolve_loop_count(loop_config); self.loop_stack.append({'loop_id': loop_id, 'start_index': step_index, 'current_iteration': 1, 'total_iterations': total_iterations, 'loop_config': loop_config}); self.loop_iteration_started.emit(loop_id, 1)
+                    else: current_loop_info = self.loop_stack[-1]; current_loop_info['current_iteration'] += 1; current_loop_info['total_iterations'] = self._resolve_loop_count(loop_config); self.loop_iteration_started.emit(loop_id, current_loop_info['current_iteration'])
                     current_loop_info = self.loop_stack[-1]
                     if current_loop_info['current_iteration'] > current_loop_info['total_iterations']:
                         self.loop_stack.pop()
@@ -1506,150 +1576,98 @@ class ExecutionWorker(QThread):
                         for i in range(step_index + 1, len(self.steps_to_execute)):
                             s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
                             if s_type in ["loop_start", "IF_START", "group_start"]: nesting_level += 1
-                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0:
-                                loop_end_index = i
-                                break
+                            elif s_type == "loop_end" and s.get("loop_id") == loop_id and nesting_level == 0: loop_end_index = i; break
                             elif s_type in ["loop_end", "IF_END", "group_end"] and nesting_level > 0: nesting_level -= 1
-                        
-                        # --- [DEFINITIVE FIX IS HERE] ---
-                        if loop_end_index != -1:
-                            step_index = loop_end_index # Jump past the loop
+                        if loop_end_index != -1: step_index = loop_end_index
                         self.execution_item_finished.emit(step_data, "Loop Finished", original_listbox_row_index)
                     else:
                         assign_var = loop_config.get("assign_iteration_to_variable")
-                        if assign_var: 
-                            self.global_variables[assign_var] = current_loop_info['current_iteration']
-                            self.context.add_log(f"Assigned iteration {current_loop_info['current_iteration']} to @{assign_var}")
+                        if assign_var: self.global_variables[assign_var] = current_loop_info['current_iteration']; self.context.add_log(f"Assigned iteration {current_loop_info['current_iteration']} to @{assign_var}")
                         self.execution_item_finished.emit(step_data, f"Iter {current_loop_info['current_iteration']}/{current_loop_info['total_iterations']}", original_listbox_row_index)
-
                 elif step_type == "loop_end":
-                    if not self.loop_stack or self.loop_stack[-1].get('loop_id') != step_data['loop_id']: 
-                        raise ValueError(f"Mismatched loop_end for ID: {step_data['loop_id']}")
-                    step_index = self.loop_stack[-1]['start_index'] - 1
-                    self.execution_item_finished.emit(step_data, "Looping...", original_listbox_row_index)
-                
+                    if not self.loop_stack or self.loop_stack[-1].get('loop_id') != step_data['loop_id']: raise ValueError(f"Mismatched loop_end for ID: {step_data['loop_id']}")
+                    step_index = self.loop_stack[-1]['start_index'] - 1; self.execution_item_finished.emit(step_data, "Looping...", original_listbox_row_index)
                 elif step_type == "step":
-                    class_name, method_name, module_name = step_data["class_name"], step_data["method_name"], step_data["module_name"]
-                    parameters_config = step_data["parameters_config"]
-                    assign_to_variable_name = step_data["assign_to_variable_name"]
+                    class_name, method_name, module_name, parameters_config, assign_to_variable_name = step_data["class_name"], step_data["method_name"], step_data["module_name"], step_data["parameters_config"], step_data["assign_to_variable_name"]
                     resolved_parameters, params_str_debug = {}, []
                     for param_name, config in parameters_config.items():
                         if param_name == "original_listbox_row_index": continue
-                        if config['type'] == 'hardcoded': 
-                            resolved_parameters[param_name] = config['value']
-                            params_str_debug.append(f"{param_name}={repr(config['value'])}")
-                        elif config['type'] == 'hardcoded_file': 
-                            resolved_parameters[param_name] = config['value']
-                            params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
+                        if config['type'] == 'hardcoded': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}={repr(config['value'])}")
+                        elif config['type'] == 'hardcoded_file': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
                         elif config['type'] == 'variable':
                             var_name = config['value']
-                            if var_name in self.global_variables: 
-                                resolved_parameters[param_name] = self.global_variables[var_name]
-                                params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
+                            if var_name in self.global_variables: resolved_parameters[param_name] = self.global_variables[var_name]; params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
                             else: raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
                     self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
                     try:
-                        module = importlib.import_module(module_name)
-                        importlib.reload(module)
-                        class_obj = getattr(module, class_name)
+                        module = importlib.import_module(module_name); importlib.reload(module); class_obj = getattr(module, class_name)
                         instance_key = (class_name, module_name)
                         if instance_key not in self.instantiated_objects:
-                            init_kwargs = {}
+                            init_kwargs = {};
                             if 'context' in inspect.signature(class_obj.__init__).parameters: init_kwargs['context'] = self.context
                             self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
-                        instance = self.instantiated_objects[instance_key]
-                        method_func = getattr(instance, method_name)
-                        method_kwargs = {k:v for k,v in resolved_parameters.items()}
+                        instance = self.instantiated_objects[instance_key]; method_func = getattr(instance, method_name); method_kwargs = {k:v for k,v in resolved_parameters.items()}
                         if 'context' in inspect.signature(method_func).parameters: method_kwargs['context'] = self.context
                         result = method_func(**method_kwargs)
-                        if assign_to_variable_name: 
-                            self.global_variables[assign_to_variable_name] = result
-                            result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
+                        if assign_to_variable_name: self.global_variables[assign_to_variable_name] = result; result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
                         else: result_msg = f"Result: {result}"
                         self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
                     except Exception as e: raise e
-
                 elif step_type == "IF_START":
-                    condition_config = step_data["condition_config"]
-                    if_id = step_data["if_id"]
-                    condition_result = self._evaluate_condition(condition_config["condition"])
-                    self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}")
-                    self.conditional_stack.append({'if_id': if_id, 'condition_result': condition_result, 'else_taken': False})
+                    condition_config, if_id = step_data["condition_config"], step_data["if_id"]; condition_result = self._evaluate_condition(condition_config["condition"])
+                    self.context.add_log(f"IF '{if_id}' evaluated: {condition_result}"); self.conditional_stack.append({'if_id': if_id, 'condition_result': condition_result, 'else_taken': False})
                     self.execution_item_finished.emit(step_data, f"Condition: {condition_result}", original_listbox_row_index)
-                    
-                    # --- [DEFINITIVE FIX IS HERE] ---
                     if not condition_result:
-                        # Condition is false, find ELSE or IF_END and jump to it
                         nesting_level, target_index = 0, -1
                         for i in range(step_index + 1, len(self.steps_to_execute)):
                             s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
                             if s_type in ["loop_start", "IF_START", "group_start"]: nesting_level += 1
-                            elif s_type in ["ELSE", "IF_END"] and s.get("if_id") == if_id and nesting_level == 0:
-                                target_index = i
-                                break
+                            elif s_type in ["ELSE", "IF_END"] and s.get("if_id") == if_id and nesting_level == 0: target_index = i; break
                             elif s_type in ["loop_end", "IF_END", "group_end"] and nesting_level > 0: nesting_level -= 1
-                        
-                        if target_index != -1:
-                            step_index = target_index - 1 # Set index to one before the target, as it will be incremented
-                        else:
-                            raise ValueError(f"Mismatched IF_START for ID: {if_id}, no ELSE or IF_END found.")
-
+                        if target_index != -1: step_index = target_index - 1
+                        else: raise ValueError(f"Mismatched IF_START for ID: {if_id}, no ELSE or IF_END found.")
                 elif step_type == "ELSE":
-                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: 
-                        raise ValueError(f"Mismatched ELSE for ID: {step_data['if_id']}")
-                    current_if = self.conditional_stack[-1]
-                    current_if['else_taken'] = True
-                    self.execution_item_finished.emit(step_data, "Branching", original_listbox_row_index)
-                    
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: raise ValueError(f"Mismatched ELSE for ID: {step_data['if_id']}")
+                    current_if = self.conditional_stack[-1]; current_if['else_taken'] = True; self.execution_item_finished.emit(step_data, "Branching", original_listbox_row_index)
                     if current_if.get('condition_result', False):
                         nesting_level, target_index = 0, -1
                         for i in range(step_index + 1, len(self.steps_to_execute)):
                             s, s_type = self.steps_to_execute[i], self.steps_to_execute[i].get("type")
                             if s_type in ["loop_start", "IF_START", "group_start"]: nesting_level += 1
-                            elif s_type == "IF_END" and s.get("if_id") == current_if["if_id"] and nesting_level == 0: 
-                                target_index = i
-                                break
+                            elif s_type == "IF_END" and s.get("if_id") == current_if["if_id"] and nesting_level == 0: target_index = i; break
                             elif s_type in ["loop_end", "IF_END", "group_end"] and nesting_level > 0: nesting_level -= 1
-                        
-                        # --- [DEFINITIVE FIX IS HERE] ---
-                        if target_index != -1:
-                            step_index = target_index - 1 # Jump to the IF_END
-                        else:
-                            raise ValueError(f"Mismatched ELSE for ID: {current_if['if_id']}, no IF_END found.")
-
-
+                        if target_index != -1: step_index = target_index - 1
+                        else: raise ValueError(f"Mismatched ELSE for ID: {current_if['if_id']}, no IF_END found.")
                 elif step_type == "IF_END":
-                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: 
-                        raise ValueError(f"Mismatched IF_END for ID: {step_data['if_id']}")
-                    self.conditional_stack.pop()
-                    self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
-
+                    if not self.conditional_stack or self.conditional_stack[-1].get('if_id') != step_data['if_id']: raise ValueError(f"Mismatched IF_END for ID: {step_data['if_id']}")
+                    self.conditional_stack.pop(); self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
                 step_index += 1
-                
         except Exception as e:
-            error_msg = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"
-            self.context.add_log(error_msg)
-            self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, error_msg, original_listbox_row_index)
+            # --- MODIFICATION: STORE THE ERROR MESSAGE ---
+            self.error_message = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"
+            self.context.add_log(self.error_message)
+            self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, self.error_message, original_listbox_row_index)
             self._is_stopped = True
-            
         finally:
             sys.path = original_sys_path
             if self.single_step_mode:
                 next_index = -1
-                if not self._is_stopped and step_index < len(self.steps_to_execute): 
-                    next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
+                if not self._is_stopped and step_index < len(self.steps_to_execute): next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
                 self.next_step_index_to_select = next_index
+            
+            # --- MODIFICATION: SEND EMAIL AND EMIT FINISH SIGNAL ---
+            # Send email only if this is NOT single-step mode (i.e., a real run)
+            if not self.single_step_mode:
+                self._send_notification_email()
+            
             self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
 
-    def pause(self):
-        self._is_paused = True
-        self.context.add_log("Execution PAUSED.")
-        self.execution_started.emit("Execution PAUSED.")
+    # ... (Keep all existing methods like pause, resume, stop) ...
+    def pause(self): self._is_paused = True; self.context.add_log("Execution PAUSED."); self.execution_started.emit("Execution PAUSED.")
+    def resume(self): self._is_paused = False; self.context.add_log("Execution RESUMED."); self.execution_started.emit("Execution RESUMED.")
+    def stop(self): self._is_stopped = True; self.context.add_log("Execution STOP requested by user."); self.execution_started.emit("Execution STOPPED.")
 
-    def resume(self):
-        self._is_paused = False
-        self.context.add_log("Execution RESUMED.")
-        self.execution_started.emit("Execution RESUMED.")
+        
 class RearrangeStepItemWidget(QWidget):
     """A compact widget to display a step's details for the rearrange dialog."""
     def __init__(self, step_data: Dict[str, Any], step_number: int, parent: Optional[QWidget] = None):
@@ -1772,42 +1790,30 @@ class RearrangeStepItemWidget(QWidget):
         font.setBold(bold)
         self.label.setFont(font)
     
-# --- NEW DIALOG: RearrangeStepsDialog ---
 
-# --- DIALOG: RearrangeStepsDialog (WITH MULTI-SELECT AND EDITING) ---
-
-# --- DIALOG: RearrangeStepsDialog (WITH MULTI-SELECT AND EDITING) ---
+# --- DIALOG: RearrangeStepsDialog (WITH MULTI-SELECT, DRAG-DROP, AND PRECISE MOVE) ---
 
 class RearrangeStepsDialog(QDialog):
-    """A dialog to reorder steps using drag-and-drop."""
+    """A dialog to reorder steps using drag-and-drop or precise movement."""
     def __init__(self, steps_data: List[Dict[str, Any]], parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("Rearrange Bot Steps")
-        # --- CHANGE 1: Made the dialog wider (1000 instead of 800) ---
-        self.setMinimumSize(1000, 700) 
-        # --- END CHANGE 1 ---
+        self.setMinimumSize(1000, 700)
         
-        # This is a reference to the main window to access counters
         self.main_window_ref = parent 
-        
         self.original_steps = steps_data
         
         main_layout = QVBoxLayout(self)
 
         # Instructions
-        info_label = QLabel("Drag and drop to reorder. Use Ctrl or Shift to select multiple items.")
+        info_label = QLabel("Drag and drop to reorder. Use Ctrl/Shift to select multiple items, or use the controls below.")
         info_label.setStyleSheet("font-style: italic; color: #555;")
         main_layout.addWidget(info_label)
 
         # The list widget that will hold the steps
         self.steps_list_widget = QListWidget()
-        
-        # --- Critical part: Enable Drag and Drop ---
         self.steps_list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        
-        # --- Enable Multi-Selection ---
         self.steps_list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        
         self.steps_list_widget.setAlternatingRowColors(True)
         self.steps_list_widget.setStyleSheet("font-size: 12pt;")
         main_layout.addWidget(self.steps_list_widget)
@@ -1815,7 +1821,7 @@ class RearrangeStepsDialog(QDialog):
         # Populate the list with our custom widgets
         self.populate_list(self.original_steps)
         
-        # --- Add new buttons for editing ---
+        # --- Edit buttons (Group, Delete) ---
         edit_button_layout = QHBoxLayout()
         self.group_selected_button = QPushButton("📦 Group Selected")
         self.delete_selected_button = QPushButton("🗑️ Delete Selected")
@@ -1823,8 +1829,31 @@ class RearrangeStepsDialog(QDialog):
         edit_button_layout.addWidget(self.group_selected_button)
         edit_button_layout.addStretch()
         edit_button_layout.addWidget(self.delete_selected_button)
-        
         main_layout.addLayout(edit_button_layout)
+        
+        # --- NEW: Precise Move Controls ---
+        move_group = QGroupBox("Move Selected Steps")
+        move_layout = QHBoxLayout(move_group)
+        
+        self.move_position_combo = QComboBox()
+        self.move_position_combo.addItems(["Before Step #", "After Step #"])
+        
+        self.move_target_input = QLineEdit()
+        self.move_target_input.setPlaceholderText("Num")
+        self.move_target_input.setValidator(QIntValidator(1, 9999)) # Allow up to 9999 steps
+        self.move_target_input.setFixedWidth(60)
+
+        self.move_button = QPushButton("➡️ Move")
+        self.move_button.setToolTip("Move selected steps to the specified position")
+        
+        move_layout.addWidget(QLabel("Action:"))
+        move_layout.addWidget(self.move_position_combo)
+        move_layout.addWidget(self.move_target_input)
+        move_layout.addStretch()
+        move_layout.addWidget(self.move_button)
+        
+        main_layout.addWidget(move_group)
+        # --- END NEW ---
 
         # OK and Cancel buttons
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -1832,10 +1861,16 @@ class RearrangeStepsDialog(QDialog):
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)
         
-        # --- Connect new button signals ---
+        # --- Connect signals ---
         self.delete_selected_button.clicked.connect(self.delete_selected)
         self.group_selected_button.clicked.connect(self.group_selected)
         self.steps_list_widget.itemSelectionChanged.connect(self.on_selection_changed)
+        
+        # --- NEW: Connect precise move button signal ---
+        self.move_button.clicked.connect(self._handle_precise_move)
+
+        # --- Initial UI state ---
+        self.on_selection_changed() # Call once to set initial button states
 
     def populate_list(self, steps_to_load: List[Dict[str, Any]]):
         """Fills the QListWidget with the steps and updates step numbers."""
@@ -1843,30 +1878,17 @@ class RearrangeStepsDialog(QDialog):
         
         for i, step_data in enumerate(steps_to_load):
             list_item = QListWidgetItem(self.steps_list_widget)
-            
-            # Use our custom widget for the display, passing the *current* step number
             item_widget = RearrangeStepItemWidget(step_data, i + 1)
-            
-            # Store the data with the item
             list_item.setData(Qt.ItemDataRole.UserRole, step_data)
-            
-            # Set the size hint and associate the widget with the list item
             list_item.setSizeHint(item_widget.sizeHint())
             self.steps_list_widget.setItemWidget(list_item, item_widget)
 
     def get_current_steps_from_list(self) -> List[Dict[str, Any]]:
         """Helper to get the current list of data from the list widget."""
-        steps_data = []
-        for i in range(self.steps_list_widget.count()):
-            list_item = self.steps_list_widget.item(i)
-            # Retrieve the data we stored earlier
-            step_data = list_item.data(Qt.ItemDataRole.UserRole)
-            steps_data.append(step_data)
-        return steps_data
+        return [self.steps_list_widget.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.steps_list_widget.count())]
 
     def get_rearranged_steps(self) -> List[Dict[str, Any]]:
         """Returns the new, reordered list of step data."""
-        # This method now just gets the final state of the dynamic list
         return self.get_current_steps_from_list()
 
     def delete_selected(self):
@@ -1886,7 +1908,6 @@ class RearrangeStepsDialog(QDialog):
                 row = self.steps_list_widget.row(item)
                 self.steps_list_widget.takeItem(row)
             
-            # After deleting, we must re-populate to fix the step numbers
             self.populate_list(self.get_current_steps_from_list())
 
     def group_selected(self):
@@ -1896,43 +1917,31 @@ class RearrangeStepsDialog(QDialog):
             QMessageBox.information(self, "No Selection", "Please select one or more steps to group.")
             return
 
-        # Find the row of the first selected item
-        # We need to get the rows *before* modifying the list
         selected_rows = sorted([self.steps_list_widget.row(item) for item in selected_items])
         first_row = selected_rows[0]
         last_row = selected_rows[-1]
 
         group_name, ok = QInputDialog.getText(self, "Create Group", "Enter a name for the group:")
         if ok and group_name:
-            # Get a new group ID from the main window's counter
             if self.main_window_ref and hasattr(self.main_window_ref, 'group_id_counter'):
                 self.main_window_ref.group_id_counter += 1
                 group_id = f"group_{self.main_window_ref.group_id_counter}"
             else:
-                # Fallback if reference is lost
                 import time
                 group_id = f"group_temp_{int(time.time())}"
 
-            # Create new step data
             group_start_data = {"type": "group_start", "group_id": group_id, "group_name": group_name}
             group_end_data = {"type": "group_end", "group_id": group_id, "group_name": group_name}
             
-            # Create list items
             start_list_item = QListWidgetItem()
             start_list_item.setData(Qt.ItemDataRole.UserRole, group_start_data)
             
             end_list_item = QListWidgetItem()
             end_list_item.setData(Qt.ItemDataRole.UserRole, group_end_data)
             
-            # Insert the 'group_start' item *before* the first selection
             self.steps_list_widget.insertItem(first_row, start_list_item)
-            
-            # Insert the 'group_end' item *after* the last selection
-            # The index is +1 (for after) and +1 again (because we added the start item)
             self.steps_list_widget.insertItem(last_row + 2, end_list_item)
             
-            # Now that the data is correct, re-populate the entire list
-            # This fixes all step numbers and applies the correct widgets
             self.populate_list(self.get_current_steps_from_list())
             
     def get_step_identifier(self, step_data: Dict[str, Any]) -> Optional[Tuple[str, str]]:
@@ -1940,60 +1949,115 @@ class RearrangeStepsDialog(QDialog):
         step_type = step_data.get("type")
 
         if step_type in ["group_start", "group_end"]:
-            group_id = step_data.get("group_id")
-            if group_id: return ("group", group_id)
-        
+            return ("group", step_data.get("group_id"))
         elif step_type in ["loop_start", "loop_end"]:
-            loop_id = step_data.get("loop_id")
-            if loop_id: return ("loop", loop_id)
-
+            return ("loop", step_data.get("loop_id"))
         elif step_type in ["IF_START", "ELSE", "IF_END"]:
-            if_id = step_data.get("if_id")
-            if if_id: return ("if", if_id)
+            return ("if", step_data.get("if_id"))
         
         return None
 
     def on_selection_changed(self):
-        """Called when list selection changes. Bolds all related block parts."""
+        """Called when list selection changes. Bolds related block parts and enables/disables buttons."""
         
-        # 1. Build a map of {identifier: [row_index_1, row_index_2]}
+        # --- Update button enabled state ---
+        has_selection = len(self.steps_list_widget.selectedItems()) > 0
+        self.group_selected_button.setEnabled(has_selection)
+        self.delete_selected_button.setEnabled(has_selection)
+        self.move_button.setEnabled(has_selection)
+        # --- End button update ---
+
         identifier_to_rows = {}
-        
-        # First, un-bold everything
         for i in range(self.steps_list_widget.count()):
             item = self.steps_list_widget.item(i)
             widget = self.steps_list_widget.itemWidget(item)
             if widget and hasattr(widget, 'set_bold'):
                 widget.set_bold(False)
             
-            # Now, map the item
             step_data = item.data(Qt.ItemDataRole.UserRole)
             identifier = self.get_step_identifier(step_data)
             
-            if identifier:
+            if identifier and identifier[1]:
                 if identifier not in identifier_to_rows:
                     identifier_to_rows[identifier] = []
                 identifier_to_rows[identifier].append(i)
 
-        # 2. Find all rows that need to be bolded
         rows_to_bold = set()
-        selected_items = self.steps_list_widget.selectedItems()
-        
-        for item in selected_items:
+        for item in self.steps_list_widget.selectedItems():
             step_data = item.data(Qt.ItemDataRole.UserRole)
             identifier = self.get_step_identifier(step_data)
-            
-            # If the selected item is part of a block...
-            if identifier in identifier_to_rows:
-                #...add all rows related to that block to the set
+            if identifier and identifier[1] and identifier in identifier_to_rows:
                 rows_to_bold.update(identifier_to_rows[identifier])
 
-        # 3. Apply bolding
         for row in rows_to_bold:
             item = self.steps_list_widget.item(row)
             widget = self.steps_list_widget.itemWidget(item)
             if widget and hasattr(widget, 'set_bold'):
                 widget.set_bold(True)
+                
+    # --- NEW METHOD to handle the precise move logic ---
+    def _handle_precise_move(self):
+        """Orchestrates the moving of selected steps to a new, specific location."""
+        # 1. Input Validation
+        target_num_str = self.move_target_input.text()
+        if not target_num_str.isdigit():
+            QMessageBox.warning(self, "Invalid Input", "Please enter a valid step number.")
+            return
+            
+        target_step_num = int(target_num_str)
+        total_steps = self.steps_list_widget.count()
+        if not (1 <= target_step_num <= total_steps):
+            QMessageBox.warning(self, "Invalid Step Number", f"Please enter a number between 1 and {total_steps}.")
+            return
+
+        selected_items = self.steps_list_widget.selectedItems()
+        if not selected_items:
+            # This should not happen since the button is disabled, but it's good practice
+            return
+
+        # 2. Get Data and Indices of Selected Items
+        # Store tuples of (original_row, data)
+        selected_steps_info = sorted([(self.steps_list_widget.row(item), item.data(Qt.ItemDataRole.UserRole)) for item in selected_items], key=lambda x: x[0])
+        
+        # Extract just the data in the correct order
+        selected_data_to_move = [info[1] for info in selected_steps_info]
+
+        # 3. Remove Selected Items from the List
+        # It is crucial to remove items in reverse order to avoid index shifting issues
+        for row, _ in reversed(selected_steps_info):
+            self.steps_list_widget.takeItem(row)
+            
+        # Get the current state of the list after removal
+        current_steps_data = self.get_current_steps_from_list()
+
+        # 4. Calculate the Target Insertion Index
+        # The target_step_num is 1-based, but our list is now smaller.
+        # We need to calculate the 0-based index in the *new* list.
+        move_mode = self.move_position_combo.currentText()
+        
+        # Adjust target index to be 0-based
+        target_index_0based = target_step_num - 1
+
+        if move_mode == "Before Step #":
+            insertion_index = target_index_0based
+        else: # "After Step #"
+            insertion_index = target_index_0based + 1
+            
+        # Clamp the insertion index to be within the bounds of the list *after* removal
+        insertion_index = max(0, min(insertion_index, len(current_steps_data)))
+
+        # 5. Insert the items at the new location
+        # The list comprehension efficiently combines the parts
+        new_ordered_steps = (current_steps_data[:insertion_index] + 
+                             selected_data_to_move + 
+                             current_steps_data[insertion_index:])
+        
+        # 6. Repopulate the entire list
+        # This is the most reliable way to update all visuals and step numbers
+        self.populate_list(new_ordered_steps)
+        
+        # Clear the input for the next use
+        self.move_target_input.clear()
 class StepInsertionDialog(QDialog):
     def __init__(self, execution_tree: QTreeWidget, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -2639,393 +2703,8 @@ class HtmlViewerDialog(QDialog):
         except Exception as e:
             self.text_browser.setPlainText(f"Error loading documentation file:\n{e}")
             
-# --- NEW CLASS: PythonHighlighter (No changes from before) ---
-class PythonHighlighter(QSyntaxHighlighter):
-    """A syntax highlighter for Python code."""
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.highlighting_rules = []
+# REPLACE the entire ScheduleTaskDialog class with this one:
 
-        # Keywords
-        keyword_format = QTextCharFormat()
-        keyword_format.setForeground(QColor("#B57627")) # Orange-brown
-        keyword_format.setFontWeight(QFont.Weight.Bold)
-        keywords = ["and", "as", "assert", "break", "class", "continue",
-                    "def", "del", "elif", "else", "except", "False",
-                    "finally", "for", "from", "global", "if", "import",
-                    "in", "is", "lambda", "None", "nonlocal", "not",
-                    "or", "pass", "raise", "return", "True", "try",
-                    "while", "with", "yield"]
-        for word in keywords:
-            pattern = QRegularExpression(rf"\b{word}\b")
-            self.highlighting_rules.append((pattern, keyword_format))
-
-        # self
-        self_format = QTextCharFormat()
-        self_format.setForeground(QColor("#AF609F")) # Purple
-        self.highlighting_rules.append((QRegularExpression(r"\bself\b"), self_format))
-
-        # Decorators
-        decorator_format = QTextCharFormat()
-        decorator_format.setForeground(QColor("#7E9F43")) # Green
-        self.highlighting_rules.append((QRegularExpression(r"@[A-Za-z0-9_]+"), decorator_format))
-
-        # Strings
-        string_format = QTextCharFormat()
-        string_format.setForeground(QColor("#5D9248")) # Dark Green
-        self.highlighting_rules.append((QRegularExpression(r"\"[^\"\\]*(\\.[^\"\\]*)*\""), string_format))
-        self.highlighting_rules.append((QRegularExpression(r"'[^'\\]*(\\.[^'\\]*)*'"), string_format))
-
-        # Comments
-        comment_format = QTextCharFormat()
-        comment_format.setForeground(QColor("#A0A0A0")) # Gray
-        comment_format.setFontItalic(True)
-        self.highlighting_rules.append((QRegularExpression(r"#[^\n]*"), comment_format))
-
-    def highlightBlock(self, text):
-        for pattern, format in self.highlighting_rules:
-            match_iterator = pattern.globalMatch(text)
-            while match_iterator.hasNext():
-                match = match_iterator.next()
-                self.setFormat(match.capturedStart(), match.capturedLength(), format)
-
-# --- NEW WIDGET: CodeEditorWithLineNumbers ---
-# --- REPLACEMENT CLASS: CodeEditorWithLineNumbers (Complete Version) ---
-# This version includes all features: line numbers, zoom, tab handling,
-# indentation guides, and syntax error highlighting.
-# --- REPLACEMENT CLASS: CodeEditorWithLineNumbers (Final Corrected Version) ---
-
-class CodeEditorWithLineNumbers(QPlainTextEdit):
-    class LineNumberArea(QWidget):
-        def __init__(self, editor):
-            super().__init__(editor)
-            self.codeEditor = editor
-
-        def sizeHint(self):
-            return QSize(self.codeEditor.lineNumberAreaWidth(), 0)
-
-        def paintEvent(self, event):
-            self.codeEditor.lineNumberAreaPaintEvent(event)
-
-    def __init__(self):
-        super().__init__()
-        self.lineNumberArea = self.LineNumberArea(self)
-        self.blockCountChanged.connect(self.updateLineNumberAreaWidth)
-        self.updateRequest.connect(self.updateLineNumberArea)
-        self.cursorPositionChanged.connect(self.highlightCurrentLine)
-        
-        self.font_metrics = self.fontMetrics()
-        self.setTabStopDistance(self.font_metrics.horizontalAdvance(' ') * 4)
-
-        self.updateLineNumberAreaWidth(0)
-        self.highlightCurrentLine()
-
-    def lineNumberAreaWidth(self):
-        digits = 1
-        max_num = max(1, self.blockCount())
-        while max_num >= 10:
-            max_num //= 10
-            digits += 1
-        space = 3 + self.fontMetrics().horizontalAdvance('9') * digits + 15
-        return space
-
-    def updateLineNumberAreaWidth(self, _):
-        self.setViewportMargins(self.lineNumberAreaWidth(), 0, 0, 0)
-
-    def updateLineNumberArea(self, rect, dy):
-        if dy:
-            self.lineNumberArea.scroll(0, dy)
-        else:
-            self.lineNumberArea.update(0, rect.y(), self.lineNumberArea.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self.updateLineNumberAreaWidth(0)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        cr = self.contentsRect()
-        self.lineNumberArea.setGeometry(QRect(cr.left(), cr.top(), self.lineNumberAreaWidth(), cr.height()))
-
-    def lineNumberAreaPaintEvent(self, event):
-        painter = QPainter(self.lineNumberArea)
-        painter.fillRect(event.rect(), QColor("#F0F0F0"))
-        block = self.firstVisibleBlock()
-        blockNumber = block.blockNumber()
-        top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
-        bottom = top + self.blockBoundingRect(block).height()
-        while block.isValid() and top <= event.rect().bottom():
-            if block.isVisible() and bottom >= event.rect().top():
-                number = f"- {blockNumber + 1}"
-                painter.setPen(QColor("#A0A0A0"))
-                painter.drawText(0, int(top), self.lineNumberArea.width() - 5, self.fontMetrics().height(),
-                                 Qt.AlignmentFlag.AlignRight, number)
-            block = block.next()
-            top = bottom
-            bottom = top + self.blockBoundingRect(block).height()
-            blockNumber += 1
-
-    # --- CORRECTED METHOD ---
-    def highlightCurrentLine(self):
-        extraSelections = []
-        if not self.isReadOnly():
-            selection = QTextEdit.ExtraSelection()
-            lineColor = QColor(Qt.GlobalColor.yellow).lighter(160)
-            selection.format.setBackground(lineColor)
-            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-            selection.cursor = self.textCursor()
-            selection.cursor.clearSelection()
-            extraSelections.append(selection)
-        
-        # Keep existing error highlights when updating the current line highlight
-        current_selections = self.extraSelections()
-        for sel in current_selections:
-            # FIX IS HERE: .color().name()
-            if sel.format.background().color().name() == "#ffcccc":
-                extraSelections.append(sel)
-        
-        self.setExtraSelections(extraSelections)
-
-    def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_Tab:
-            cursor = self.textCursor()
-            cursor.insertText(" " * 4)
-            return
-        super().keyPressEvent(event)
-
-    def paintEvent(self, event: QtGui.QPaintEvent):
-        super().paintEvent(event)
-        painter = QPainter(self.viewport())
-        color = QColor("#D3D3D3")
-        pen = QPen(color)
-        pen.setStyle(Qt.PenStyle.DotLine)
-        painter.setPen(pen)
-        tab_width = self.tabStopDistance()
-        left_margin = self.contentsRect().left()
-        block = self.firstVisibleBlock()
-        while block.isValid() and block.isVisible():
-            geom = self.blockBoundingGeometry(block).translated(self.contentOffset())
-            text = block.text()
-            leading_spaces = len(text) - len(text.lstrip(' '))
-            for i in range(1, (leading_spaces // 4) + 2):
-                x = left_margin + (i * tab_width)
-                if x > self.viewport().width(): break
-                painter.drawLine(int(x), int(geom.top()), int(x), int(geom.bottom()))
-            block = block.next()
-
-    def wheelEvent(self, event: QtGui.QWheelEvent):
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            delta = event.angleDelta().y()
-            font = self.font()
-            current_size = font.pointSize()
-            if delta > 0 and current_size < 30:
-                font.setPointSize(current_size + 1)
-            elif delta < 0 and current_size > 6:
-                font.setPointSize(current_size - 1)
-            self.setFont(font)
-        else:
-            super().wheelEvent(event)
-
-    def highlight_error_line(self, line_number):
-        self.clear_error_highlight()
-        selection = QTextEdit.ExtraSelection()
-        lineColor = QColor("#FFCCCC")
-        selection.format.setBackground(lineColor)
-        selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-        block = self.document().findBlockByNumber(line_number - 1)
-        if block.isValid():
-            cursor = self.textCursor()
-            cursor.setPosition(block.position())
-            selection.cursor = cursor
-            self.setExtraSelections(self.extraSelections() + [selection])
-            self.setTextCursor(cursor)
-
-    # --- CORRECTED METHOD ---
-    def clear_error_highlight(self):
-        current_selections = self.extraSelections()
-        # FIX IS HERE: .color().name()
-        new_selections = [sel for sel in current_selections if sel.format.background().color().name() != "#ffcccc"]
-        self.setExtraSelections(new_selections)
-
-# --- REPLACEMENT CLASS: CodeEditorDialog (with Syntax Checking) ---
-class CodeEditorDialog(QDialog):
-    def __init__(self, module_path: str, class_name: str, method_name: str,
-                 all_method_data: dict, parent: Optional[QWidget] = None):
-        super().__init__(parent)
-        self.module_path = module_path
-        self.class_name = class_name
-        self.method_name = method_name
-        self.all_method_data = all_method_data
-        self.uses_tabs = False
-
-        self.setWindowTitle(f"Editing: {class_name} in {os.path.basename(module_path)}")
-        self.setWindowState(Qt.WindowState.WindowMaximized)
-
-        main_layout = QHBoxLayout(self)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        self.nav_tree = QTreeWidget()
-        self.nav_tree.setHeaderLabels(["Available Modules"])
-        self.nav_tree.itemDoubleClicked.connect(self.insert_method_call)
-        left_layout.addWidget(self.nav_tree)
-
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        
-        self.code_editor = CodeEditorWithLineNumbers()
-        self.code_editor.setFont(QFont("Courier New", 10))
-        # Clear error highlight whenever the user types
-        self.code_editor.textChanged.connect(self.code_editor.clear_error_highlight)
-        self.highlighter = PythonHighlighter(self.code_editor.document())
-
-        self.find_replace_widget = FindReplaceWidget(self.code_editor)
-        right_layout.addWidget(self.find_replace_widget)
-        right_layout.addWidget(self.code_editor)
-
-        splitter.addWidget(left_panel)
-        splitter.addWidget(right_panel)
-        splitter.setSizes([300, 700])
-        main_layout.addWidget(splitter)
-        
-        button_box = QDialogButtonBox()
-        # --- ADD NEW SYNTAX CHECK BUTTON ---
-        self.check_syntax_button = button_box.addButton("Check Syntax", QDialogButtonBox.ButtonRole.ActionRole)
-        self.save_button = button_box.addButton("Save Changes", QDialogButtonBox.ButtonRole.AcceptRole)
-        cancel_button = button_box.addButton(QDialogButtonBox.StandardButton.Cancel)
-        right_layout.addWidget(button_box)
-        
-        self.check_syntax_button.clicked.connect(self.check_syntax)
-        self.save_button.clicked.connect(self.save_changes)
-        cancel_button.clicked.connect(self.reject)
-        self.find_replace_widget.next_button.clicked.connect(self.find_next)
-        self.find_replace_widget.prev_button.clicked.connect(self.find_previous)
-        self.find_replace_widget.replace_button.clicked.connect(self.replace_one)
-        self.find_replace_widget.replace_all_button.clicked.connect(self.replace_all)
-        
-        self.load_and_display_code()
-
-    # --- NEW METHOD: Checks Python syntax ---
-    def check_syntax(self):
-        """Validates the Python syntax of the code in the editor."""
-        code_to_check = self.code_editor.toPlainText()
-        
-        try:
-            ast.parse(code_to_check)
-            self.code_editor.clear_error_highlight()
-            QMessageBox.information(self, "Syntax OK", "The Python syntax is valid.")
-            return True
-        except SyntaxError as e:
-            # Highlight the line with the error
-            self.code_editor.highlight_error_line(e.lineno)
-            QMessageBox.critical(self, "Syntax Error", f"Error on line {e.lineno}:\n{e.msg}")
-            return False
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"An unexpected error occurred during syntax check:\n{e}")
-            return False
-
-    def insert_method_call(self, item: QTreeWidgetItem, column: int):
-        method_data = item.data(0, Qt.ItemDataRole.UserRole)
-        if not (method_data and isinstance(method_data, tuple)): return
-        _, clicked_class_name, clicked_method_name, clicked_module_name, params_dict = method_data
-        param_names = [name for name, (_, kind) in params_dict.items() if kind != inspect.Parameter.VAR_KEYWORD and kind != inspect.Parameter.VAR_POSITIONAL]
-        param_string = ", ".join(param_names)
-        if clicked_class_name == self.class_name:
-            text_to_insert = f"self.{clicked_method_name}({param_string})"
-        else:
-            text_to_insert = f"{clicked_module_name}.{clicked_class_name}(self.context).{clicked_method_name}({param_string})"
-        self.code_editor.textCursor().insertText(text_to_insert)
-
-    def populate_nav_tree(self):
-        self.nav_tree.clear()
-        for module_name, classes in self.all_method_data.items():
-            module_item = QTreeWidgetItem(self.nav_tree, [module_name])
-            for class_name, methods in classes.items():
-                class_item = QTreeWidgetItem(module_item, [class_name])
-                for method_info in methods:
-                    display_text, _, _, _, _ = method_info
-                    method_item = QTreeWidgetItem(class_item, [display_text])
-                    method_item.setData(0, Qt.ItemDataRole.UserRole, method_info)
-        self.nav_tree.expandToDepth(0)
-    
-    def detect_indentation(self, code_lines):
-        for line in code_lines[:20]:
-            if len(line) > 0 and line[0] == '\t':
-                self.uses_tabs = True; return
-        self.uses_tabs = False
-    
-    def load_and_display_code(self):
-        try:
-            with open(self.module_path, 'r', encoding='utf-8') as f: original_code_lines = f.readlines()
-            self.detect_indentation(original_code_lines)
-            code_with_spaces = [line.replace('\t', ' ' * 4) for line in original_code_lines]
-            self.code_editor.setPlainText("".join(code_with_spaces))
-            self.populate_nav_tree()
-            self.find_and_highlight_method()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not load source file:\n{e}")
-
-    def find_and_highlight_method(self):
-        cursor = self.code_editor.textCursor()
-        regex = QRegularExpression(rf"^\s*def\s+{self.method_name}\s*\(")
-        found_cursor = self.code_editor.document().find(regex, cursor)
-        if not found_cursor.isNull():
-            self.code_editor.setTextCursor(found_cursor)
-            self.code_editor.ensureCursorVisible()
-        else:
-            QMessageBox.warning(self, "Warning", f"Could not find method '{self.method_name}'.")
-
-    # --- UPDATED METHOD: Now checks syntax before saving ---
-    def save_changes(self):
-        # First, validate the syntax. If it's not valid, stop the save process.
-        if not self.check_syntax():
-            return
-
-        reply = QMessageBox.question(self, "Confirm Save", "Syntax is OK. Overwrite the file?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            try:
-                code_to_save = self.code_editor.toPlainText()
-                if self.uses_tabs: code_to_save = code_to_save.replace(' ' * 4, '\t')
-                with open(self.module_path, 'w', encoding='utf-8') as f: f.write(code_to_save)
-                QMessageBox.information(self, "Success", "File saved.")
-                self.accept()
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Could not save file:\n{e}")
-
-    def find_next(self):
-        query = self.find_replace_widget.find_input.text()
-        flags = self.find_replace_widget.get_find_flags()
-        if not self.code_editor.find(query, flags):
-            self.code_editor.moveCursor(QTextCursor.MoveOperation.Start)
-            self.code_editor.find(query, flags)
-
-    def find_previous(self):
-        query = self.find_replace_widget.find_input.text()
-        flags = self.find_replace_widget.get_find_flags()
-        flags |= QTextDocument.FindFlag.FindBackward
-        if not self.code_editor.find(query, flags):
-            self.code_editor.moveCursor(QTextCursor.MoveOperation.End)
-            self.code_editor.find(query, flags)
-            
-    def replace_one(self):
-        if self.code_editor.textCursor().hasSelection():
-            replace_text = self.find_replace_widget.replace_input.text()
-            self.code_editor.textCursor().insertText(replace_text)
-        self.find_next()
-
-    def replace_all(self):
-        find_text = self.find_replace_widget.find_input.text()
-        replace_text = self.find_replace_widget.replace_input.text()
-        if not find_text: return
-        cursor = self.code_editor.textCursor()
-        cursor.setPosition(0)
-        self.code_editor.setTextCursor(cursor)
-        count = 0
-        while self.find_next() and self.code_editor.textCursor().hasSelection():
-            self.code_editor.textCursor().insertText(replace_text)
-            count += 1
-        QMessageBox.information(self, "Finished", f"Replaced {count} occurrence(s).")
-
-# In main_app.py
 # REPLACE the entire ScheduleTaskDialog class with this one:
 
 class ScheduleTaskDialog(QDialog):
@@ -3048,7 +2727,7 @@ class ScheduleTaskDialog(QDialog):
         self.repeat_combo.addItems(["Do not repeat", "Hourly", "Daily", "Monthly"])
         self.layout.addRow("Repeat:", self.repeat_combo)
 
-        # --- NEW: Days of Week Group ---
+        # --- Days of Week Group ---
         self.days_of_week_group = QGroupBox("Run on Specific Days")
         days_layout = QHBoxLayout()
         self.day_checkboxes = {}
@@ -3059,7 +2738,7 @@ class ScheduleTaskDialog(QDialog):
         self.days_of_week_group.setLayout(days_layout)
         self.layout.addRow(self.days_of_week_group)
 
-        # --- NEW: Time Boundary Group ---
+        # --- Time Boundary Group ---
         self.time_boundary_group = QGroupBox("Time Boundary")
         time_boundary_form_layout = QFormLayout()
         
@@ -3075,6 +2754,24 @@ class ScheduleTaskDialog(QDialog):
         self.time_boundary_group.setLayout(time_boundary_form_layout)
         self.layout.addRow(self.time_boundary_group)
 
+        # --- NEW: Email Notification Group ---
+        self.email_group = QGroupBox("Email Notification (via Outlook)")
+        self.email_group.setCheckable(True) # Makes the whole group enable/disable
+        email_form_layout = QFormLayout()
+
+        self.email_input = QLineEdit()
+        self.email_input.setPlaceholderText("e.g., user.name@example.com")
+        email_form_layout.addRow("Recipient Email:", self.email_input)
+
+        self.notify_on_error_check = QCheckBox("Notify on Error")
+        self.notify_on_success_check = QCheckBox("Notify on Success")
+        email_form_layout.addRow("Send When:", self.notify_on_error_check)
+        email_form_layout.addRow("", self.notify_on_success_check)
+        
+        self.email_group.setLayout(email_form_layout)
+        self.layout.addRow(self.email_group)
+        # --- END NEW ---
+
         # --- Buttons ---
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.accepted.connect(self.accept)
@@ -3084,57 +2781,85 @@ class ScheduleTaskDialog(QDialog):
         # --- Connections for new widgets ---
         self.repeat_combo.currentTextChanged.connect(self._update_widget_visibility)
         self.enable_time_boundary_check.toggled.connect(self._update_widget_visibility)
+        self.enable_checkbox.toggled.connect(self._update_widget_visibility)
 
         # --- Load existing data ---
         if schedule_data:
-            self.enable_checkbox.setChecked(schedule_data.get("enabled", False))
-            start_datetime_str = schedule_data.get("start_datetime")
-            if start_datetime_str:
-                self.date_edit.setDateTime(QDateTime.fromString(start_datetime_str, Qt.DateFormat.ISODate))
-            
-            repeat_str = schedule_data.get("repeat")
-            if repeat_str:
-                index = self.repeat_combo.findText(repeat_str, Qt.MatchFlag.MatchFixedString)
-                if index >= 0:
-                    self.repeat_combo.setCurrentIndex(index)
-
-            # Load new properties
-            selected_days = schedule_data.get("selected_days", [])
-            for day, cb in self.day_checkboxes.items():
-                cb.setChecked(day in selected_days)
-
-            self.enable_time_boundary_check.setChecked(schedule_data.get("time_boundary_enabled", False))
-            
-            start_time_str = schedule_data.get("start_time", "08:00:00")
-            self.start_time_edit.setTime(QTime.fromString(start_time_str, Qt.DateFormat.ISODate))
-            
-            end_time_str = schedule_data.get("end_time", "17:00:00")
-            self.end_time_edit.setTime(QTime.fromString(end_time_str, Qt.DateFormat.ISODate))
+            self.load_schedule_data(schedule_data)
+        else:
+            # Set sensible defaults for a new schedule
+            self.email_group.setChecked(False)
+            self.notify_on_error_check.setChecked(True)
 
         # --- Initial visibility update ---
         self._update_widget_visibility()
 
     def _update_widget_visibility(self):
-        """Shows/hides the new groups based on user selection."""
-        repeat_mode = self.repeat_combo.currentText()
+        """Shows/hides the groups based on user selection."""
+        is_schedule_enabled = self.enable_checkbox.isChecked()
         
-        # Show Day of Week only for "Daily" or "Hourly"
-        is_daily_or_hourly = repeat_mode in ["Daily", "Hourly"]
+        # All scheduling options are only visible if the schedule is enabled
+        self.date_edit.setVisible(is_schedule_enabled)
+        self.repeat_combo.setVisible(is_schedule_enabled)
+        
+        repeat_mode = self.repeat_combo.currentText()
+        is_daily_or_hourly = repeat_mode in ["Daily", "Hourly"] and is_schedule_enabled
         self.days_of_week_group.setVisible(is_daily_or_hourly)
         
-        # Show Time Boundary for any repeat mode
-        is_repeat = repeat_mode != "Do not repeat"
+        is_repeat = repeat_mode != "Do not repeat" and is_schedule_enabled
         self.time_boundary_group.setVisible(is_repeat)
         
-        # Enable/disable time edits based on the checkbox
         time_boundary_enabled = self.enable_time_boundary_check.isChecked()
         self.start_time_edit.setEnabled(time_boundary_enabled)
         self.end_time_edit.setEnabled(time_boundary_enabled)
 
-    def get_schedule_data(self) -> Dict[str, Any]:
-        """Returns the schedule data from the dialog, including new properties."""
+        # Email group is only visible if the schedule is enabled
+        self.email_group.setVisible(is_schedule_enabled)
+
+    def load_schedule_data(self, schedule_data: Dict[str, Any]):
+        """Loads data into the dialog's widgets."""
+        self.enable_checkbox.setChecked(schedule_data.get("enabled", False))
         
-        # Get selected days
+        start_datetime_str = schedule_data.get("start_datetime")
+        if start_datetime_str:
+            self.date_edit.setDateTime(QDateTime.fromString(start_datetime_str, Qt.DateFormat.ISODate))
+        
+        repeat_str = schedule_data.get("repeat")
+        if repeat_str:
+            index = self.repeat_combo.findText(repeat_str, Qt.MatchFlag.MatchFixedString)
+            if index >= 0: self.repeat_combo.setCurrentIndex(index)
+
+        selected_days = schedule_data.get("selected_days", [])
+        for day, cb in self.day_checkboxes.items():
+            cb.setChecked(day in selected_days)
+
+        self.enable_time_boundary_check.setChecked(schedule_data.get("time_boundary_enabled", False))
+        
+        start_time_str = schedule_data.get("start_time", "08:00:00")
+        self.start_time_edit.setTime(QTime.fromString(start_time_str, Qt.DateFormat.ISODate))
+        
+        end_time_str = schedule_data.get("end_time", "17:00:00")
+        self.end_time_edit.setTime(QTime.fromString(end_time_str, Qt.DateFormat.ISODate))
+
+        # Load new email properties
+        self.email_group.setChecked(schedule_data.get("email_notification_enabled", False))
+        self.email_input.setText(schedule_data.get("recipient_email", ""))
+        self.notify_on_error_check.setChecked(schedule_data.get("notify_on_error", True))
+        self.notify_on_success_check.setChecked(schedule_data.get("notify_on_success", False))
+
+    def get_schedule_data(self) -> Optional[Dict[str, Any]]:
+        """Returns the schedule data from the dialog, including new email properties."""
+        
+        # --- NEW: Validate email if notifications are enabled ---
+        if self.email_group.isChecked():
+            email = self.email_input.text().strip()
+            if not email:
+                QMessageBox.warning(self, "Input Error", "Please enter a recipient email address for notifications.")
+                return None
+            if not ("@" in email and "." in email):
+                QMessageBox.warning(self, "Input Error", f"'{email}' is not a valid email address.")
+                return None
+
         selected_days = [day for day, cb in self.day_checkboxes.items() if cb.isChecked()]
         
         return {
@@ -3144,7 +2869,12 @@ class ScheduleTaskDialog(QDialog):
             "selected_days": selected_days,
             "time_boundary_enabled": self.enable_time_boundary_check.isChecked(),
             "start_time": self.start_time_edit.time().toString(Qt.DateFormat.ISODate),
-            "end_time": self.end_time_edit.time().toString(Qt.DateFormat.ISODate)
+            "end_time": self.end_time_edit.time().toString(Qt.DateFormat.ISODate),
+            # Add new email properties
+            "email_notification_enabled": self.email_group.isChecked(),
+            "recipient_email": self.email_input.text().strip(),
+            "notify_on_error": self.notify_on_error_check.isChecked(),
+            "notify_on_success": self.notify_on_success_check.isChecked()
         }
 class UpdateDialog(QDialog):
     def __init__(self, update_dir, target_folder, parent=None):
@@ -3341,10 +3071,13 @@ class WorkflowCanvas(QWidget):
     def __init__(self, workflow_tree: List[Dict[str, Any]], main_window, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.workflow_tree = workflow_tree
-        self.main_window = main_window  # Add this line
-        
+        self.main_window = main_window
+
         # (rect, text, shape, step_data)
         self.nodes: List[Tuple[QRect, str, str, Dict[str, Any]]] = [] 
+        # --- NEW: Hotspot for collapse/expand icons ---
+        # (rect, group_id)
+        self.icon_hotspots: List[Tuple[QRect, str]] = []
         
         self.edges: List[Tuple[Optional[str], Tuple[int, str], Tuple[int, str]]] = []
         self.merge_lines: List[Tuple[int, int]] = []
@@ -3374,53 +3107,11 @@ class WorkflowCanvas(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding)
 
         
-    def _should_show_group_collapsed(self, group_start_index: int) -> bool:
-        """
-        Determines if a group should be shown as collapsed (single box) or expanded (individual steps).
-        
-        Returns True if group should be collapsed (show as single box)
-        Returns False if group should be expanded (show individual steps)
-        """
-        # Get the main window reference to access added_steps_data
-        main_window = self.main_window
-        if not hasattr(main_window, 'added_steps_data'):
-            return True  # Default to collapsed if we can't access the data
-        
-        added_steps_data = main_window.added_steps_data
-        
-        # Check if there are any steps before this group
-        has_steps_before = group_start_index > 0
-        
-        # Find the end of this group to check what comes after
-        if group_start_index >= len(added_steps_data):
-            return True
-            
-        group_step = added_steps_data[group_start_index]
-        group_id = group_step.get("group_id")
-        group_end_index = group_start_index
-        
-        # Find the matching group_end
-        nesting_level = 0
-        for i in range(group_start_index + 1, len(added_steps_data)):
-            step = added_steps_data[i]
-            step_type = step.get("type")
-            
-            if step_type == "group_start":
-                nesting_level += 1
-            elif step_type == "group_end":
-                if nesting_level == 0 and step.get("group_id") == group_id:
-                    group_end_index = i
-                    break
-                else:
-                    nesting_level -= 1
-        
-        # Check if there are any steps after this group
-        has_steps_after = group_end_index < len(added_steps_data) - 1
-        
-        # If there are steps before OR after, show as collapsed (single box)
-        # If there are NO steps before AND NO steps after, show expanded (individual steps)
-        return has_steps_before or has_steps_after       
-        
+    def _is_group_expanded(self, group_id: str) -> bool:
+        """Checks the main window's state to see if a group is expanded."""
+        # Default to expanded if not found
+        return self.main_window.group_expansion_states.get(group_id, False)
+
     def _smart_redraw_layout(self):
         """Enhanced smart redraw that ensures proper sizing after layout."""
         # Clear existing user positions to force smart layout
@@ -3430,6 +3121,7 @@ class WorkflowCanvas(QWidget):
         self.nodes.clear()
         self.edges.clear()
         self.merge_lines.clear()
+        self.icon_hotspots.clear() # <<< ADD THIS LINE
         
         # Calculate optimal starting position (centered at top)
         canvas_center_x = max(800, self.width()) // 2
@@ -3491,10 +3183,11 @@ class WorkflowCanvas(QWidget):
                     step_data["workflow_pos"] = (new_rect.x(), new_rect.y())
                     new_nodes.append((new_rect, text, shape, step_data))
                 self.nodes = new_nodes
-
+    
+    # --- THIS IS THE MAIN LOGIC CHANGE ---
     def _recursive_smart_layout(self, nodes: List[Dict], x: int, y: int, 
                                last_node_idx: int) -> Tuple[int, int, int]:
-        """Enhanced smart recursive layout with proper integer handling."""
+        """Enhanced smart recursive layout that handles collapsed groups."""
         current_y = y
         last_node_idx_in_level = last_node_idx
         max_x = x
@@ -3506,45 +3199,85 @@ class WorkflowCanvas(QWidget):
             current_step_num = step_data.get("original_listbox_row_index", -1) + 1
             text = self._get_node_text(step_data, current_step_num)
             
-            # Determine node shape and color
             node_shape = self._get_node_shape(step_type)
             
+            # --- NEW LOGIC FOR HANDLING GROUPS ---
             if step_type == "group_start":
-                group_start_index = step_data.get("original_listbox_row_index", -1)
-                
-                if self._should_show_group_collapsed(group_start_index):
-                    # Show as single collapsed box
+                group_id = step_data.get("group_id")
+                # Check if the group should be drawn expanded or collapsed
+                if self._is_group_expanded(group_id):
+                    # --- DRAW EXPANDED (existing logic, but now we add an icon) ---
                     node_y = current_y
                     node_idx = len(self.nodes)
                     
-                    # Ensure all QRect parameters are integers
                     rect = QRect(int(x), int(node_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
                     self.nodes.append((rect, text, node_shape, step_data))
                     step_data["workflow_pos"] = (int(x), int(node_y))
                     
+                    # Add icon hotspot for the [-] icon
+                    icon_rect = QRect(rect.x() + 5, rect.y() + 5, 15, 15)
+                    self.icon_hotspots.append((icon_rect, group_id))
+
                     if last_node_idx_in_level != -1:
                         self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
                     
+                    # Recursively layout children
+                    children = node.get('children', [])
+                    child_y, last_child_idx, child_max_x = self._recursive_smart_layout(children, x, current_y + self.NODE_HEIGHT + self.V_SPACING, node_idx)
+                    current_y = child_y
+                    max_x = max(max_x, child_max_x)
+
+                    # Layout the group_end node
+                    end_node_data = node.get('end_node')
+                    if end_node_data:
+                        end_step_num = end_node_data['step_data'].get("original_listbox_row_index", -1) + 1
+                        end_text = self._get_node_text(end_node_data['step_data'], end_step_num)
+                        
+                        end_y = current_y
+                        end_x = x
+                        
+                        end_rect = QRect(int(end_x), int(end_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
+                        end_node_data['step_data']["workflow_pos"] = (int(end_x), int(end_y))
+                        
+                        end_node_idx = len(self.nodes)
+                        self.nodes.append((end_rect, end_text, "rect_gray", end_node_data['step_data']))
+                        
+                        if last_child_idx != -1:
+                            self.edges.append((None, (last_child_idx, "bottom"), (end_node_idx, "top")))
+                        else: # Group is empty
+                            self.edges.append((None, (node_idx, "bottom"), (end_node_idx, "top")))
+                        
+                        last_node_idx_in_level = end_node_idx
+                        current_y = end_y + self.NODE_HEIGHT + self.V_SPACING
+                    else:
+                        last_node_idx_in_level = last_child_idx
+                else:
+                    # --- DRAW COLLAPSED (new logic) ---
+                    node_y = current_y
+                    node_idx = len(self.nodes)
+                    
+                    rect = QRect(int(x), int(node_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
+                    self.nodes.append((rect, text, node_shape, step_data))
+                    step_data["workflow_pos"] = (int(x), int(node_y))
+
+                    # Add icon hotspot for the [+] icon
+                    icon_rect = QRect(rect.x() + 5, rect.y() + 5, 15, 15)
+                    self.icon_hotspots.append((icon_rect, group_id))
+
+                    if last_node_idx_in_level != -1:
+                        self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
+
                     last_node_idx_in_level = node_idx
                     current_y += self.NODE_HEIGHT + self.V_SPACING
                     max_x = max(max_x, x + self.NODE_WIDTH)
-                else:
-                    # Show individual steps within the group
-                    children = node.get('children', [])
-                    if children:
-                        child_y, child_last_idx, child_max_x = self._recursive_smart_layout(
-                            children, x, current_y, last_node_idx_in_level
-                        )
-                        current_y = child_y
-                        last_node_idx_in_level = child_last_idx
-                        max_x = max(max_x, child_max_x)
-                continue
-                
+
+                continue # Skip to the next node in the main loop
+            # --- END OF NEW GROUP LOGIC ---
+
             elif step_type in ["IF_START", "loop_start"]:
                 node_y = current_y
                 node_idx = len(self.nodes)
                 
-                # Add the control node - ensure integer values
                 rect = QRect(int(x), int(node_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
                 self.nodes.append((rect, text, node_shape, step_data))
                 step_data["workflow_pos"] = (int(x), int(node_y))
@@ -3552,59 +3285,42 @@ class WorkflowCanvas(QWidget):
                 if last_node_idx_in_level != -1:
                     self.edges.append((None, (last_node_idx_in_level, "bottom"), (node_idx, "top")))
 
-                # Layout branches with enhanced spacing for IF-ELSE
                 true_children = node.get('children', [])
                 false_children = node.get('false_children', [])
                 end_node_data = node.get('end_node')
                 
                 branch_start_y = node_y + self.NODE_HEIGHT + self.V_SPACING
                 
-                # Enhanced branch positioning with more generous left spacing
-                # Ensure all calculations result in integers
                 if true_children and false_children:
-                    # Both branches exist - give more space for left branch
                     true_x = int(x - (self.H_SPACING * 1.5))
                     false_x = int(x + (self.H_SPACING * 1.2))
                 elif true_children:
-                    # Only true branch - keep it centered but account for potential false branch space
                     true_x = int(x - (self.H_SPACING * 0.3))
                     false_x = x
                 else:
-                    # No branches - continue straight down
-                    true_x = x
-                    false_x = x
+                    true_x, false_x = x, x
                 
-                # Layout true branch
                 first_true_node_idx = len(self.nodes)
-                true_y_end, last_true_node_idx, true_max_x = self._recursive_smart_layout(
-                    true_children, true_x, branch_start_y, -1
-                )
+                true_y_end, last_true_node_idx, true_max_x = self._recursive_smart_layout(true_children, true_x, branch_start_y, -1)
                 
                 if true_children:
                     true_label = "True" if step_type == "IF_START" else "Loop Body"
                     true_port = "left" if step_type == "IF_START" and false_children else "bottom"
                     self.edges.append((true_label, (node_idx, true_port), (first_true_node_idx, "top")))
 
-                # Layout false branch (for IF statements)
-                false_y_end = branch_start_y
-                last_false_node_idx = -1
-                false_max_x = false_x
+                false_y_end, last_false_node_idx, false_max_x = branch_start_y, -1, false_x
                 
                 if step_type == "IF_START" and false_children:
                     first_false_node_idx = len(self.nodes)
-                    false_y_end, last_false_node_idx, false_max_x = self._recursive_smart_layout(
-                        false_children, false_x, branch_start_y, -1
-                    )
+                    false_y_end, last_false_node_idx, false_max_x = self._recursive_smart_layout(false_children, false_x, branch_start_y, -1)
                     self.edges.append(("False", (node_idx, "right"), (first_false_node_idx, "top")))
 
-                # Position end node smartly
                 if end_node_data:
                     end_step_num = end_node_data['step_data'].get("original_listbox_row_index", -1) + 1
                     end_text = self._get_node_text(end_node_data['step_data'], end_step_num)
                     
-                    # Smart positioning of end node - ensure integers
                     end_y = max(true_y_end, false_y_end) + self.V_SPACING
-                    end_x = x  # Center under the control node
+                    end_x = x
                     
                     end_node_rect = QRect(int(end_x), int(end_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
                     end_node_data['step_data']["workflow_pos"] = (int(end_x), int(end_y))
@@ -3613,27 +3329,20 @@ class WorkflowCanvas(QWidget):
                     end_node_shape = self._get_node_shape("IF_END" if step_type == "IF_START" else "loop_end")
                     self.nodes.append((end_node_rect, end_text, end_node_shape, end_node_data['step_data']))
                     
-                    # Connect branches to end node
-                    if last_true_node_idx != -1:
-                        self.merge_lines.append((last_true_node_idx, end_node_idx))
-                    if last_false_node_idx != -1:
-                        self.merge_lines.append((last_false_node_idx, end_node_idx))
+                    if last_true_node_idx != -1: self.merge_lines.append((last_true_node_idx, end_node_idx))
+                    if last_false_node_idx != -1: self.merge_lines.append((last_false_node_idx, end_node_idx))
                     
-                    # Add loop-back edge for loops
-                    if step_type == "loop_start":
-                        self.edges.append(("Loop Again", (end_node_idx, "right"), (node_idx, "top")))
+                    if step_type == "loop_start": self.edges.append(("Loop Again", (end_node_idx, "right"), (node_idx, "top")))
 
                     last_node_idx_in_level = end_node_idx
                     current_y = end_y + self.NODE_HEIGHT + self.V_SPACING
                 else:
                     current_y = max(true_y_end, false_y_end)
-                    if last_true_node_idx != -1:
-                        last_node_idx_in_level = last_true_node_idx
+                    if last_true_node_idx != -1: last_node_idx_in_level = last_true_node_idx
                 
                 max_x = max(max_x, true_max_x, false_max_x)
                 
-            else:
-                # Regular step - simple vertical layout
+            else: # Regular step
                 current_node_idx = len(self.nodes)
                 rect = QRect(int(x), int(current_y), int(self.NODE_WIDTH), int(self.NODE_HEIGHT))
                 step_data["workflow_pos"] = (int(x), int(current_y))
@@ -3658,7 +3367,7 @@ class WorkflowCanvas(QWidget):
             return "diamond"
         elif step_type in ["loop_start", "loop_end"]:
             return "loop_rect"
-        elif step_type in ["ELSE", "IF_END"]:
+        elif step_type in ["ELSE", "IF_END", "group_end"]: # group_end is now gray
             return "rect_gray"
         elif step_type == "group_start":
             return "rect_group"
@@ -3671,62 +3380,71 @@ class WorkflowCanvas(QWidget):
         pen.setStyle(Qt.PenStyle.DotLine)
         painter.setPen(pen)
         
-        # Adjust grid based on canvas offset
         offset_x = self.canvas_offset.x() % self.GRID_SIZE
         offset_y = self.canvas_offset.y() % self.GRID_SIZE
         
-        width = self.width()
-        height = self.height()
+        width, height = self.width(), self.height()
         
-        for x in range(-offset_x, width, self.GRID_SIZE):
-            painter.drawLine(x, 0, x, height)
-            
-        for y in range(-offset_y, height, self.GRID_SIZE):
-            painter.drawLine(0, y, width, y)
+        for x in range(-offset_x, width, self.GRID_SIZE): painter.drawLine(x, 0, x, height)
+        for y in range(-offset_y, height, self.GRID_SIZE): painter.drawLine(0, y, width, y)
 
     def wheelEvent(self, event: QtGui.QWheelEvent):
         """Enhanced wheel event with better zoom and pan."""
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
-            # Zoom functionality
             delta = event.angleDelta().y()
             zoom_factor = 1.15 if delta > 0 else (1 / 1.15)
-            
-            anchor_point = event.position()
-            self._scale_layout(zoom_factor, anchor_point)
+            self._scale_layout(zoom_factor, event.position())
             self._adjust_canvas_size()
             self.update()
             event.accept()
         else:
-            # Pan with mouse wheel (shift for horizontal)
             delta = event.angleDelta().y()
             pan_speed = 30
-            
             if event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
-                # Horizontal pan
                 self.canvas_offset.setX(self.canvas_offset.x() + (pan_speed if delta > 0 else -pan_speed))
             else:
-                # Vertical pan
                 self.canvas_offset.setY(self.canvas_offset.y() + (pan_speed if delta > 0 else -pan_speed))
-            
             self.update()
             event.accept()
 
-    # In the WorkflowCanvas class, modify the mousePressEvent method
+# In main_app.py, inside the WorkflowCanvas class
+# REPLACE this method:
+
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
-            # ... (existing left-click logic for dragging remains the same)
-            # Check if clicking on a node first
             clicked_pos = event.pos() - self.canvas_offset
-            node_clicked = False
             
+            # --- NEW AND CORRECTED LOGIC ---
+            # 1. Check for icon click first
+            for hotspot_rect, group_id in self.icon_hotspots:
+                if hotspot_rect.contains(clicked_pos):
+                    # 2. Toggle the group's expansion state in the main window
+                    current_state = self.main_window.group_expansion_states.get(group_id, True)
+                    self.main_window.group_expansion_states[group_id] = not current_state
+                    
+                    # 3. Tell the main window to perform a full redraw of the workflow tab
+                    self.main_window._update_workflow_tab(switch_to_tab=True)
+                    self.main_window._save_workflow_to_temp_file()
+
+                    # 4. Schedule the centering action to run *after* the redraw is complete.
+                    # The timer is crucial for allowing the UI to stabilize.
+                    def center_on_group_after_redraw():
+                        # This calls the *new* centering method in MainWindow
+                        self.main_window._center_canvas_on_group(group_id)
+
+                    QTimer.singleShot(150, center_on_group_after_redraw)
+                    
+                    return # Stop further processing; this was an icon click.
+            # --- END OF CORRECTED LOGIC ---
+
+            # The rest of the method for node dragging and canvas panning remains unchanged
+            node_clicked = False
             for i in range(len(self.nodes) - 1, -1, -1):
                 rect, _, _, _ = self.nodes[i]
                 if rect.contains(clicked_pos):
                     self.dragging_node_index = i
                     self.drag_offset = clicked_pos - rect.topLeft()
                     self.setCursor(Qt.CursorShape.ClosedHandCursor)
-                    
-                    # Move clicked node to front
                     node = self.nodes.pop(i)
                     self.nodes.append(node)
                     self._remap_edges_for_drag(i, len(self.nodes) - 1)
@@ -3741,66 +3459,54 @@ class WorkflowCanvas(QWidget):
                 self.setCursor(Qt.CursorShape.ClosedHandCursor)
         
         elif event.button() == Qt.MouseButton.RightButton:
-            # --- NEW LOGIC FOR RIGHT-CLICK ---
             clicked_pos_local = event.pos() - self.canvas_offset
             clicked_node_data = None
             for rect, _, _, step_data in self.nodes:
                 if rect.contains(clicked_pos_local):
                     clicked_node_data = step_data
                     break
-            
-            # Show the context menu
             self._show_context_menu(event.pos(), clicked_node_data)
-            # --- END NEW LOGIC ---
-
-        # Keep this call for other event handling
+            
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QtGui.QMoveEvent):
         if self.dragging_node_index is not None:
-            # Node dragging
             new_top_left = event.pos() - self.canvas_offset - self.drag_offset
-            
             _, text, shape, step_data = self.nodes[self.dragging_node_index]
             old_rect = self.nodes[self.dragging_node_index][0]
-            
             self.nodes[self.dragging_node_index] = (QRect(new_top_left, old_rect.size()), text, shape, step_data)
             self.update()
-            
         elif self.dragging_canvas:
-            # Canvas panning
             delta = event.pos() - self.last_pan_point
             self.canvas_offset += delta
             self.last_pan_point = event.pos()
             self.update()
-            
         else:
-            # Update cursor based on what's under the mouse
+            # --- NEW: Change cursor for icon hotspots ---
             cursor = Qt.CursorShape.ArrowCursor
             clicked_pos = event.pos() - self.canvas_offset
             
-            for rect, _, _, _ in self.nodes:
-                if rect.contains(clicked_pos):
+            on_hotspot = any(hotspot_rect.contains(clicked_pos) for hotspot_rect, _ in self.icon_hotspots)
+            if on_hotspot:
+                cursor = Qt.CursorShape.PointingHandCursor
+            else:
+                on_node = any(rect.contains(clicked_pos) for rect, _, _, _ in self.nodes)
+                if on_node:
                     cursor = Qt.CursorShape.OpenHandCursor
-                    break
-            
             self.setCursor(cursor)
+            # --- END NEW ---
         
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             if self.dragging_node_index is not None:
-                # Snap node to grid
                 rect, text, shape, step_data = self.nodes[self.dragging_node_index]
                 top_left = rect.topLeft()
-
                 snapped_x = round(top_left.x() / self.GRID_SIZE) * self.GRID_SIZE
                 snapped_y = round(top_left.y() / self.GRID_SIZE) * self.GRID_SIZE
-
                 new_top_left = QPoint(snapped_x, snapped_y)
                 snapped_rect = QRect(new_top_left, rect.size())
-
                 step_data["workflow_pos"] = (snapped_rect.x(), snapped_rect.y())
                 self.nodes[self.dragging_node_index] = (snapped_rect, text, shape, step_data)
                 self.update()
@@ -3811,128 +3517,89 @@ class WorkflowCanvas(QWidget):
 
         super().mouseReleaseEvent(event)
 
-# In the WorkflowCanvas class, update the _show_context_menu method
+# In main_app.py, inside the WorkflowCanvas class
+
+# In main_app.py, inside the WorkflowCanvas class
+
     def _show_context_menu(self, pos: QPoint, clicked_node_data: Optional[Dict] = None):
         """Shows a context menu with workflow options."""
         context_menu = QMenu(self)
-        
-        # --- UPDATED LOGIC: Better action text based on step type ---
-        configure_action = None
-        execute_action = None
+        configure_action, execute_action, save_template_action = None, None, None # <-- Add save_template_action
         
         if clicked_node_data:
             step_type = clicked_node_data.get("type")
             
-            # Action 1: Execute This Step (with better descriptions)
-            if step_type not in ["group_end", "loop_end", "IF_END", "ELSE"]:
-                if step_type == "group_start":
-                    group_name = clicked_node_data.get('group_name', 'Group')
-                    execute_action = context_menu.addAction(f"▶️ Execute Entire Group: {group_name}")
-                elif step_type == "loop_start":
-                    loop_config = clicked_node_data.get('loop_config', {})
-                    loop_name = loop_config.get('loop_name', 'Loop')
-                    execute_action = context_menu.addAction(f"▶️ Execute Entire Loop: {loop_name}")
-                elif step_type == "IF_START":
-                    condition_config = clicked_node_data.get('condition_config', {})
-                    if_name = condition_config.get('block_name', 'IF Block')
-                    execute_action = context_menu.addAction(f"▶️ Execute Entire IF: {if_name}")
+            # --- START: New logic for Save Template action ---
+            # If a group start, group end, loop start, or if start is clicked, add a "Save Template" option
+            if step_type in ["group_start", "group_end", "loop_start", "IF_START"]:
+                block_name = clicked_node_data.get('group_name', 
+                                clicked_node_data.get('loop_config', {}).get('loop_name', 
+                                clicked_node_data.get('condition_config', {}).get('block_name', 'Block')))
+                if block_name:
+                    save_template_action = context_menu.addAction(f"💾 Save Template: '{block_name}'")
                 else:
-                    method_name = clicked_node_data.get('method_name', 'Step')
-                    execute_action = context_menu.addAction(f"▶️ Execute This Step: {method_name}")
+                    save_template_action = context_menu.addAction("💾 Save As Template")
+            # --- END: New logic for Save Template action ---
+            
+            if step_type not in ["group_end", "loop_end", "IF_END", "ELSE"]:
+                if step_type == "group_start": execute_action = context_menu.addAction(f"▶️ Execute Entire Group: {clicked_node_data.get('group_name', 'Group')}")
+                elif step_type == "loop_start": execute_action = context_menu.addAction(f"▶️ Execute Entire Loop: {clicked_node_data.get('loop_config', {}).get('loop_name', 'Loop')}")
+                elif step_type == "IF_START": execute_action = context_menu.addAction(f"▶️ Execute Entire IF: {clicked_node_data.get('condition_config', {}).get('block_name', 'IF Block')}")
+                else: execute_action = context_menu.addAction(f"▶️ Execute This Step: {clicked_node_data.get('method_name', 'Step')}")
             else:
-                # For end markers, allow executing the entire block
-                if step_type == "group_end":
-                    group_name = clicked_node_data.get('group_name', 'Group')
-                    execute_action = context_menu.addAction(f"▶️ Execute Entire Group: {group_name}")
-                elif step_type == "loop_end":
-                    loop_config = clicked_node_data.get('loop_config', {})
-                    loop_name = loop_config.get('loop_name', 'Loop')
-                    execute_action = context_menu.addAction(f"▶️ Execute Entire Loop: {loop_name}")
-                elif step_type in ["IF_END", "ELSE"]:
-                    condition_config = clicked_node_data.get('condition_config', {})
-                    if_name = condition_config.get('block_name', 'IF Block')
-                    execute_action = context_menu.addAction(f"▶️ Execute Entire IF: {if_name}")
+                if step_type == "group_end": execute_action = context_menu.addAction(f"▶️ Execute Entire Group: {clicked_node_data.get('group_name', 'Group')}")
+                elif step_type == "loop_end": execute_action = context_menu.addAction(f"▶️ Execute Entire Loop: {clicked_node_data.get('loop_config', {}).get('loop_name', 'Loop')}")
+                elif step_type in ["IF_END", "ELSE"]: execute_action = context_menu.addAction(f"▶️ Execute Entire IF: {clicked_node_data.get('condition_config', {}).get('block_name', 'IF Block')}")
 
-            # Action 2: Configure Parameters (unchanged)
             if step_type in ["step", "loop_start", "IF_START", "group_start"]:
                 configure_action = context_menu.addAction("⚙️ Configure Parameters")
 
-            if execute_action or configure_action:
-                 context_menu.addSeparator()
+            # Add separator if any primary actions exist
+            if execute_action or configure_action or save_template_action: context_menu.addSeparator()
         
-        # General Canvas Actions (unchanged)
         redraw_action = context_menu.addAction("🔄 Smart Redraw Layout")
         reset_zoom_action = context_menu.addAction("🔍 Reset Zoom")
         center_action = context_menu.addAction("🎯 Center Workflow")
         
-        # Show the menu and get the selected action
         action = context_menu.exec(self.mapToGlobal(pos))
         
-        # --- Handle the clicked action (unchanged) ---
-        if action == execute_action and clicked_node_data:
-            # Emit our signal with the step's data
-            self.execute_step_requested.emit(clicked_node_data)
+        if action == execute_action and clicked_node_data: self.execute_step_requested.emit(clicked_node_data)
+        elif action == configure_action and clicked_node_data: self.main_window.edit_step_from_data(clicked_node_data)
+        # --- START: Handle the new action ---
+        elif action == save_template_action and clicked_node_data:
+            # We can directly call the existing handler method from MainWindow
+            self.main_window._handle_save_as_template_request(clicked_node_data)
+        # --- END: Handle the new action ---
+        elif action == redraw_action: self._smart_redraw_layout()
+        elif action == reset_zoom_action: self._reset_zoom()
+        elif action == center_action: self._center_workflow()
 
-        elif action == configure_action and clicked_node_data:
-            # This existing logic remains the same
-            self.main_window.edit_step_from_data(clicked_node_data)
-            
-        elif action == redraw_action:
-            self._smart_redraw_layout()
-        elif action == reset_zoom_action:
-            self._reset_zoom()
-        elif action == center_action:
-            self._center_workflow()
 
     def _reset_zoom(self):
         """Resets zoom to default size."""
-        self.NODE_WIDTH = 220
-        self.NODE_HEIGHT = 50
-        self.V_SPACING = 40
-        self.H_SPACING = 120
-        self.GRID_SIZE = 20
+        self.NODE_WIDTH, self.NODE_HEIGHT, self.V_SPACING, self.H_SPACING, self.GRID_SIZE = 220, 50, 40, 120, 20
         self._smart_redraw_layout()
 
     def _center_workflow(self):
         """Centers the workflow in the current view."""
-        if not self.nodes:
-            return
-        
-        # Calculate workflow bounds
-        min_x = min(rect.x() for rect, _, _, _ in self.nodes)
-        max_x = max(rect.right() for rect, _, _, _ in self.nodes)
-        min_y = min(rect.y() for rect, _, _, _ in self.nodes)
-        max_y = max(rect.bottom() for rect, _, _, _ in self.nodes)
-        
-        workflow_center_x = (min_x + max_x) // 2
-        workflow_center_y = (min_y + max_y) // 2
-        
-        canvas_center_x = self.width() // 2
-        canvas_center_y = self.height() // 2
-        
-        # Calculate offset to center the workflow
-        offset_x = canvas_center_x - workflow_center_x
-        offset_y = canvas_center_y - workflow_center_y
-        
-        self.canvas_offset = QPoint(offset_x, offset_y)
+        if not self.nodes: return
+        min_x, max_x = min(r.x() for r,_,_,_ in self.nodes), max(r.right() for r,_,_,_ in self.nodes)
+        min_y, max_y = min(r.y() for r,_,_,_ in self.nodes), max(r.bottom() for r,_,_,_ in self.nodes)
+        workflow_center_x, workflow_center_y = (min_x + max_x) // 2, (min_y + max_y) // 2
+        canvas_center_x, canvas_center_y = self.width() // 2, self.height() // 2
+        self.canvas_offset = QPoint(canvas_center_x - workflow_center_x, canvas_center_y - workflow_center_y)
         self.update()
 
-    # ... (keep all the existing methods like _scale_layout, _get_port_pos, _draw_right_angle_line, etc.)
-    # I'll include the essential ones that might need updates:
-    
     def _scale_layout(self, factor: float, anchor: QPointF):
         """Enhanced scaling with better anchor point handling."""
-        # Adjust anchor point for canvas offset
         adjusted_anchor = anchor - QPointF(self.canvas_offset)
         
-        # Scale the base layout parameters
         self.NODE_WIDTH = max(50, int(self.NODE_WIDTH * factor))
         self.NODE_HEIGHT = max(30, int(self.NODE_HEIGHT * factor))
         self.V_SPACING = max(10, int(self.V_SPACING * factor))
         self.H_SPACING = max(20, int(self.H_SPACING * factor))
         self.GRID_SIZE = max(5, int(self.GRID_SIZE * factor))
 
-        # Scale USER-DEFINED positions
         def scale_user_pos_recursive(nodes: List[Dict]):
             for node in nodes:
                 step_data = node['step_data']
@@ -3943,11 +3610,9 @@ class WorkflowCanvas(QWidget):
                             current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
                             new_pos_f = (current_pos - adjusted_anchor) * factor + adjusted_anchor
                             step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
-                        else:
-                            del step_data["workflow_pos"]
+                        else: del step_data["workflow_pos"]
                     except (TypeError, ValueError, IndexError):
-                        if "workflow_pos" in step_data:
-                            del step_data["workflow_pos"]
+                        if "workflow_pos" in step_data: del step_data["workflow_pos"]
 
                 scale_user_pos_recursive(node.get('children', []))
                 scale_user_pos_recursive(node.get('false_children', []))
@@ -3961,640 +3626,427 @@ class WorkflowCanvas(QWidget):
                                 current_pos = QPointF(float(current_pos_tuple[0]), float(current_pos_tuple[1]))
                                 new_pos_f = (current_pos - adjusted_anchor) * factor + adjusted_anchor
                                 end_node_step_data["workflow_pos"] = (int(new_pos_f.x()), int(new_pos_f.y()))
-                            else:
-                                del end_node_step_data["workflow_pos"]
+                            else: del end_node_step_data["workflow_pos"]
                         except (TypeError, ValueError, IndexError):
-                            if "workflow_pos" in end_node_step_data:
-                                del end_node_step_data["workflow_pos"]
+                            if "workflow_pos" in end_node_step_data: del end_node_step_data["workflow_pos"]
 
         scale_user_pos_recursive(self.workflow_tree)
 
-        # Clear and rebuild layout
-        self.nodes.clear()
-        self.edges.clear()
-        self.merge_lines.clear()
-        self.total_width = 0
-        self.total_height = 0
+        self.nodes.clear(); self.edges.clear(); self.merge_lines.clear(); self.icon_hotspots.clear()
+        self.total_width, self.total_height = 0, 0
 
-        # Rebuild with new parameters
         canvas_center_x = max(800, self.width()) // 2
-        start_x = canvas_center_x - self.NODE_WIDTH // 2
-        start_y = 30
+        start_x, start_y = canvas_center_x - self.NODE_WIDTH // 2, 30
         self._recursive_smart_layout(self.workflow_tree, start_x, start_y, -1)
 
+# In main_app.py, inside the WorkflowCanvas class
+# REPLACE the existing paintEvent method with this one:
+
     def paintEvent(self, event: QtGui.QPaintEvent):
-        """Enhanced paint event with execution status visualization."""
+        """Enhanced paint event with execution status and expand/collapse icons."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Apply canvas offset
         painter.translate(self.canvas_offset)
-        
         self._draw_grid(painter)
-        
         font = QFont("Arial", max(8, int(9 * (self.NODE_WIDTH / 220))))
         painter.setFont(font)
-
         labels_to_draw = []
 
-        # Draw edges with enhanced styling
         for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
-            try:
-                p1 = self._get_port_pos(from_idx, from_port)
-                p2 = self._get_port_pos(to_idx, to_port)
-            except IndexError:
-                continue
+            try: p1, p2 = self._get_port_pos(from_idx, from_port), self._get_port_pos(to_idx, to_port)
+            except IndexError: continue
 
-            # Use different colors for different edge types
-            if label == "True":
-                painter.setPen(QPen(QColor("#28a745"), 2))  # Green for True
-            elif label == "False":
-                painter.setPen(QPen(QColor("#dc3545"), 2))  # Red for False  
-            elif label and "Loop" in label:
-                painter.setPen(QPen(QColor("#007bff"), 2))  # Blue for Loop
-            else:
-                painter.setPen(QPen(Qt.GlobalColor.black, 2))  # Black for normal flow
-
+            if label == "True": painter.setPen(QPen(QColor("#28a745"), 2))
+            elif label == "False": painter.setPen(QPen(QColor("#dc3545"), 2))
+            elif label and "Loop" in label: painter.setPen(QPen(QColor("#007bff"), 2))
+            else: painter.setPen(QPen(Qt.GlobalColor.black, 2))
+            
             line_points = self._draw_right_angle_line(painter, p1, p2, from_port, to_port)
-
             if label:
-                # Enhanced label positioning
-                if from_port == "left":
-                    mid_point = line_points[0] + QPoint(-40, -15)
-                    label_rect = QRect(-30, -10, 60, 20)
-                elif from_port == "right":
-                    mid_point = line_points[0] + QPoint(40, -15)
-                    label_rect = QRect(-30, -10, 60, 20)
-                elif label == "Loop Again":
-                    mid_point = (line_points[1] + line_points[2]) / 2 + QPoint(0, -15)
-                    label_rect = QRect(-40, -10, 80, 20)
-                else:
-                    mid_point = line_points[0] + QPoint(40, 15)
-                    label_rect = QRect(-40, -10, 80, 20)
-                
+                if from_port == "left": mid_point, label_rect = line_points[0] + QPoint(-40, -15), QRect(-30, -10, 60, 20)
+                elif from_port == "right": mid_point, label_rect = line_points[0] + QPoint(40, -15), QRect(-30, -10, 60, 20)
+                elif label == "Loop Again": mid_point, label_rect = (line_points[1] + line_points[2]) / 2 + QPoint(0, -15), QRect(-40, -10, 80, 20)
+                else: mid_point, label_rect = line_points[0] + QPoint(40, 15), QRect(-40, -10, 80, 20)
                 labels_to_draw.append((label, mid_point, label_rect))
 
-        # Draw merge lines
         painter.setPen(QPen(Qt.GlobalColor.gray, 2, Qt.PenStyle.DashLine))
         for from_idx, to_idx in self.merge_lines:
-            try:
-                from_rect, _, _, _ = self.nodes[from_idx]
-                to_rect, _, _, _ = self.nodes[to_idx]
-            except IndexError:
-                continue
-
+            try: from_rect, to_rect = self.nodes[from_idx][0], self.nodes[to_idx][0]
+            except IndexError: continue
+            
+            # --- MODIFICATION START ---
+            # Always start the merge line from the bottom port of the source node.
             from_port = "bottom"
-            if self.nodes[from_idx][2] == "diamond":
-                from_port = "left" if from_rect.center().x() >= to_rect.center().x() else "right"
+            # --- MODIFICATION END ---
             
-            p1 = self._get_port_pos(from_idx, from_port)
-            p2 = self._get_port_pos(to_idx, "top")
-            
+            p1, p2 = self._get_port_pos(from_idx, from_port), self._get_port_pos(to_idx, "top")
             merge_y = p2.y() - self.V_SPACING // 2
             points = [p1, QPoint(p1.x(), merge_y), QPoint(p2.x(), merge_y), p2]
-            
-            for i in range(len(points) - 1):
-                painter.drawLine(points[i], points[i+1])
+            for i in range(len(points) - 1): painter.drawLine(points[i], points[i+1])
 
-        # Draw nodes with execution status visualization
         for rect, text, shape, step_data in self.nodes:
-            
-            # Determine execution status from step_data
-            execution_status = step_data.get("execution_status", "normal")  # normal, running, completed, error
-            
-            # Set border properties based on execution status
-            if execution_status == "running":
-                border_color = QColor("#FFD700")  # Gold/Yellow
-                border_width = 4  # 100% thicker
-                fill_color = QColor("#FFFBF0")  # Light yellow background
-            elif execution_status == "error":
-                border_color = QColor("#DC3545")  # Red
-                border_width = 4  # 100% thicker  
-                fill_color = QColor("#FFF5F5")  # Light red background
-            elif execution_status == "completed":
-                border_color = QColor("#28a745")  # Green
-                border_width = 2  # Normal thickness
-                fill_color = QColor("#F8FFF8")  # Light green background
+            status = step_data.get("execution_status", "normal")
+            if status == "running": border_color, border_width, fill_color = QColor("#FFD700"), 4, QColor("#FFFBF0")
+            elif status == "error": border_color, border_width, fill_color = QColor("#DC3545"), 4, QColor("#FFF5F5")
+            elif status == "completed": border_color, border_width, fill_color = QColor("#28a745"), 2, QColor("#F8FFF8")
             else:
-                # Default styling based on node type
-                border_color = QColor("#333333")
-                border_width = 2
-                if shape == "rect":
-                    fill_color = QColor("#f8f9fa")
-                elif shape == "diamond":
-                    fill_color = QColor("#e3f2fd")
-                elif shape == "loop_rect":
-                    fill_color = QColor("#e8f5e8")
-                elif shape == "rect_gray":
-                    fill_color = QColor("#f5f5f5")
-                elif shape == "rect_group":
-                    fill_color = QColor("#fce4ec")
-                else:
-                    fill_color = QColor("#f8f9fa")
+                border_color, border_width = QColor("#333333"), 2
+                if shape == "rect": fill_color = QColor("#f8f9fa")
+                elif shape == "diamond": fill_color = QColor("#e3f2fd")
+                elif shape == "loop_rect": fill_color = QColor("#e8f5e8")
+                elif shape == "rect_gray": fill_color = QColor("#f5f5f5")
+                elif shape == "rect_group": fill_color = QColor("#fce4ec")
+                else: fill_color = QColor("#f8f9fa")
             
-            # Draw node with dynamic styling
-            painter.setPen(QPen(border_color, border_width))
-            painter.setBrush(fill_color)
-            
-            # Draw node shape
+            painter.setPen(QPen(border_color, border_width)); painter.setBrush(fill_color)
             if shape == "diamond":
-                poly = QPolygonF([
-                    QPointF(rect.center() - QPoint(rect.width() // 2, 0)),
-                    QPointF(rect.center() - QPoint(0, rect.height() // 2)),
-                    QPointF(rect.center() + QPoint(rect.width() // 2, 0)),
-                    QPointF(rect.center() + QPoint(0, rect.height() // 2))
-                ])
+                poly = QPolygonF([QPointF(rect.center() - QPoint(rect.width() // 2, 0)), QPointF(rect.center() - QPoint(0, rect.height() // 2)), QPointF(rect.center() + QPoint(rect.width() // 2, 0)), QPointF(rect.center() + QPoint(0, rect.height() // 2))])
                 painter.drawPolygon(poly)
-            else:
-                painter.drawRoundedRect(rect, 8, 8)
+            else: painter.drawRoundedRect(rect, 8, 8)
 
-            # Add execution status indicator (optional - small icon in corner)
-            if execution_status == "running":
-                # Draw a small spinning indicator or pulse effect
-                painter.save()
-                painter.setPen(QPen(QColor("#FF8C00"), 2))
+            if step_data.get("type") == "group_start":
+                icon_rect = QRect(rect.x() + 5, rect.y() + 5, 15, 15)
+                painter.setPen(QPen(QColor("#555"), 1.5))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
-                indicator_rect = QRect(rect.right() - 15, rect.top() + 5, 10, 10)
-                painter.drawEllipse(indicator_rect)
-                painter.restore()
-            elif execution_status == "completed":
-                # Draw a small checkmark
-                painter.save()
-                painter.setPen(QPen(QColor("#28a745"), 3))
-                check_x = rect.right() - 15
-                check_y = rect.top() + 10
-                painter.drawLine(check_x, check_y, check_x + 3, check_y + 3)
-                painter.drawLine(check_x + 3, check_y + 3, check_x + 8, check_y - 2)
-                painter.restore()
-            elif execution_status == "error":
-                # Draw a small X mark
-                painter.save()
-                painter.setPen(QPen(QColor("#DC3545"), 3))
-                x_mark_x = rect.right() - 15
-                x_mark_y = rect.top() + 5
-                painter.drawLine(x_mark_x, x_mark_y, x_mark_x + 8, x_mark_y + 8)
-                painter.drawLine(x_mark_x + 8, x_mark_y, x_mark_x, x_mark_y + 8)
-                painter.restore()
+                painter.drawRect(icon_rect)
+                painter.drawLine(icon_rect.left() + 4, icon_rect.center().y(), icon_rect.right() - 4, icon_rect.center().y())
+                if self._is_group_expanded(step_data.get("group_id")):
+                    pass 
+                else:
+                    painter.drawLine(icon_rect.center().x(), icon_rect.top() + 4, icon_rect.center().x(), icon_rect.bottom() - 4)
 
-            # --- MODIFICATION TO SHOW RESULT STARTS HERE ---
-            # Draw text with better formatting, including the result if available
+            if status == "running":
+                painter.save(); painter.setPen(QPen(QColor("#FF8C00"), 2)); painter.setBrush(Qt.BrushStyle.NoBrush); painter.drawEllipse(QRect(rect.right() - 15, rect.top() + 5, 10, 10)); painter.restore()
+            elif status == "completed":
+                painter.save(); painter.setPen(QPen(QColor("#28a745"), 3)); painter.drawLine(rect.right() - 15, rect.top() + 10, rect.right() - 12, rect.top() + 13); painter.drawLine(rect.right() - 12, rect.top() + 13, rect.right() - 7, rect.top() + 8); painter.restore()
+            elif status == "error":
+                painter.save(); painter.setPen(QPen(QColor("#DC3545"), 3)); painter.drawLine(rect.right() - 15, rect.top() + 5, rect.right() - 7, rect.top() + 13); painter.drawLine(rect.right() - 7, rect.top() + 5, rect.right() - 15, rect.top() + 13); painter.restore()
+
             painter.setPen(Qt.GlobalColor.black)
             text_rect = rect.adjusted(5, 5, -5, -5)
-            
-            # 1. Check for a completed result
-            result_message = step_data.get("execution_result")
-            execution_status = step_data.get("execution_status")
-            
+            result_message, execution_status = step_data.get("execution_result"), step_data.get("execution_status")
             if result_message and execution_status == "completed":
-                # 2. Try to parse the result (similar to ExecutionStepCard)
                 display_result_text = ""
                 assign_to_var = step_data.get("assign_to_variable_name")
-                
                 if step_data.get("type") == "step" and assign_to_var and "Result: " in result_message:
                     try:
-                        # Extract the actual result value
-                        if " (Assigned to @" in result_message:
-                            result_val_str = result_message.split("Result: ")[1].split(" (Assigned to @")[0]
-                        elif " (Assigned to" in result_message:
-                             result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0]
-                        else:
-                            result_val_str = result_message.split("Result: ")[1]
-                        
-                        # Truncate if very long
-                        if len(result_val_str) > 30:
-                            result_val_str = result_val_str[:27] + "..."
-                            
+                        result_val_str = result_message.split("Result: ")[1].split(" (Assigned to")[0] if " (Assigned to" in result_message else result_message.split("Result: ")[1]
+                        if len(result_val_str) > 30: result_val_str = result_val_str[:27] + "..."
                         display_result_text = f"@{assign_to_var} = {result_val_str}"
-                    except IndexError:
-                        display_result_text = "✓ Completed" # Fallback
-                
+                    except IndexError: display_result_text = "✓ Completed"
                 else:
-                    # For other types (loops, ifs) or steps without assignment
                     display_result_text = result_message
-                    if len(display_result_text) > 35:
-                         display_result_text = display_result_text[:32] + "..."
-
-                # 3. Draw the main text (title) in the top half
-                title_rect = QRect(text_rect.x(), text_rect.y(), text_rect.width(), text_rect.height() // 2)
-                painter.drawText(title_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+                    if len(display_result_text) > 35: display_result_text = display_result_text[:32] + "..."
                 
-                # 4. Draw the result text in the bottom half
-                result_rect = QRect(text_rect.x(), text_rect.y() + text_rect.height() // 2, text_rect.width(), text_rect.height() // 2)
-                
-                result_font = QFont("Arial", max(7, int(8 * (self.NODE_WIDTH / 220))))
-                result_font.setItalic(True)
-                painter.setFont(result_font)
-                painter.setPen(QColor("#155724")) # Dark green, like on the card
-                
-                painter.drawText(result_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, display_result_text)
-                
-                # 5. Restore the original font for the next node
+                painter.drawText(QRect(text_rect.x(), text_rect.y(), text_rect.width(), text_rect.height() // 2), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
+                result_font = QFont("Arial", max(7, int(8 * (self.NODE_WIDTH / 220)))); result_font.setItalic(True); painter.setFont(result_font)
+                painter.setPen(QColor("#155724"))
+                painter.drawText(QRect(text_rect.x(), text_rect.y() + text_rect.height() // 2, text_rect.width(), text_rect.height() // 2), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, display_result_text)
                 painter.setFont(font)
-                
             else:
-                # 6. If no result, just draw the main text centered
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, text)
-            # --- MODIFICATION ENDS HERE ---
 
-        # Draw edge labels with enhanced styling
         for label, mid_point, label_rect in labels_to_draw:
-            painter.save()
-            painter.translate(mid_point)
-            painter.setPen(QPen(Qt.GlobalColor.darkGray, 1))
-            painter.setBrush(QColor("#ffffff"))
-            painter.drawRoundedRect(label_rect, 3, 3)
-            
-            # Color-coded text
-            if label == "True":
-                painter.setPen(QColor("#28a745"))
-            elif label == "False":
-                painter.setPen(QColor("#dc3545"))
-            elif "Loop" in label:
-                painter.setPen(QColor("#007bff"))
-            else:
-                painter.setPen(Qt.GlobalColor.black)
-                
+            painter.save(); painter.translate(mid_point); painter.setPen(QPen(Qt.GlobalColor.darkGray, 1)); painter.setBrush(QColor("#ffffff")); painter.drawRoundedRect(label_rect, 3, 3)
+            if label == "True": painter.setPen(QColor("#28a745"))
+            elif label == "False": painter.setPen(QColor("#dc3545"))
+            elif "Loop" in label: painter.setPen(QColor("#007bff"))
+            else: painter.setPen(Qt.GlobalColor.black)
             painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
             painter.restore()
-            
-    # Keep all other existing methods like _get_port_pos, _draw_right_angle_line, 
-    # _get_node_text, _adjust_canvas_size, _remap_edges_for_drag, etc.
-    # [Previous methods remain the same]
-    
+
     def _get_port_pos(self, node_idx: int, port: str) -> QPoint:
         """Gets the QPoint for a given port on a node."""
         rect = self.nodes[node_idx][0]
-        if port == "top":
-            return rect.center() - QPoint(0, rect.height() // 2)
-        if port == "bottom":
-            return rect.center() + QPoint(0, rect.height() // 2)
-        if port == "left":
-            return rect.center() - QPoint(rect.width() // 2, 0)
-        if port == "right":
-            return rect.center() + QPoint(rect.width() // 2, 0)
+        if port == "top": return rect.center() - QPoint(0, rect.height() // 2)
+        if port == "bottom": return rect.center() + QPoint(0, rect.height() // 2)
+        if port == "left": return rect.center() - QPoint(rect.width() // 2, 0)
+        if port == "right": return rect.center() + QPoint(rect.width() // 2, 0)
         return rect.center()
 
     def _draw_right_angle_line(self, painter: QPainter, p1: QPoint, p2: QPoint, from_port: str, to_port: str):
         """Draws a rectilinear line between two points."""
-        
-        if from_port == "bottom" and to_port == "top":
-            # Standard vertical connection
-            mid_y = p1.y() + self.V_SPACING // 2
-            points = [p1, QPoint(p1.x(), mid_y), QPoint(p2.x(), mid_y), p2]
-        
-        elif from_port in ("left", "right") and to_port == "top":
-            # IF branch connection (True or False)
-            points = [p1, QPoint(p2.x(), p1.y()), p2]
-        
-        elif from_port == "right" and to_port == "top":
-            # Loop Recycle (loop_end -> loop_start)
-            mid_x = p1.x() + self.H_SPACING // 2
-            points = [p1, QPoint(mid_x, p1.y()), QPoint(mid_x, p2.y() - self.V_SPACING // 2),
-                      QPoint(p2.x(), p2.y() - self.V_SPACING // 2), p2]
-        
-        else:
-            # Default fallback
-            points = [p1, QPoint(p1.x(), p2.y()), p2]
-            
-        for i in range(len(points) - 1):
-            painter.drawLine(points[i], points[i+1])
+        if from_port == "bottom" and to_port == "top": points = [p1, QPoint(p1.x(), p1.y() + self.V_SPACING // 2), QPoint(p2.x(), p1.y() + self.V_SPACING // 2), p2]
+        elif from_port in ("left", "right") and to_port == "top": points = [p1, QPoint(p2.x(), p1.y()), p2]
+        elif from_port == "right" and to_port == "top": points = [p1, QPoint(p1.x() + self.H_SPACING // 2, p1.y()), QPoint(p1.x() + self.H_SPACING // 2, p2.y() - self.V_SPACING // 2), QPoint(p2.x(), p2.y() - self.V_SPACING // 2), p2]
+        else: points = [p1, QPoint(p1.x(), p2.y()), p2]
+        for i in range(len(points) - 1): painter.drawLine(points[i], points[i+1])
         return points
 
     def _get_node_text(self, step_data: Dict[str, Any], step_num: int) -> str:
         """Generates a concise text for the workflow node."""
         step_type = step_data.get("type")
-        
         title_prefix = f"{step_num}. "
-        
+
         if step_type == "step":
             method_name = step_data.get("method_name", "Unknown")
             assign_var = step_data.get("assign_to_variable_name")
-            
-            # --- LOGIC TO ADD PARAMETER VALUES ---
             params_config = step_data.get("parameters_config", {})
             param_values = []
-            
             for name, config in params_config.items():
                 if name == "original_listbox_row_index":
                     continue
-
-                value_display = ""
                 param_type = config.get('type')
-
                 if param_type == 'hardcoded':
                     value_display = repr(config['value'])
                 elif param_type == 'hardcoded_file':
-                    base_name = os.path.basename(config['value'])
-                    value_display = f"File:'{base_name}'"
+                    value_display = f"File:'{os.path.basename(config['value'])}'"
                 elif param_type == 'variable':
                     value_display = f"@{config['value']}"
                 else:
                     value_display = "???"
-
                 if len(value_display) > 20:
                     value_display = value_display[:17] + "..."
-
                 param_values.append(value_display)
-            
             param_str = ", ".join(param_values)
-            # --- END PARAMETER LOGIC ---
-            
             if assign_var:
                 return f"{title_prefix}@{assign_var} = {method_name}({param_str})"
             return f"{title_prefix}{method_name}({param_str})"
-            
+
         elif step_type == "loop_start":
             config = step_data.get("loop_config", {})
-            # --- NEW: Add Loop Name ---
-            loop_name = config.get("loop_name")
-            name_str = f"'{loop_name}': " if loop_name else "Loop "
-            # --- END NEW ---
+            name_str = f"'{config.get('loop_name')}': " if config.get("loop_name") else "Loop "
             count_config = config.get("iteration_count_config", {})
             val = count_config.get("value", "N")
             if count_config.get("type") == "variable":
                 val = f"@{val}"
             return f"{title_prefix}{name_str}{val} times"
-            
+
         elif step_type == "IF_START":
             config = step_data.get("condition_config", {})
-            # --- NEW: Add IF Name ---
-            block_name = config.get("block_name")
-            name_str = f"'{block_name}': " if block_name else "IF "
-            # --- END NEW ---
+            name_str = f"'{config.get('block_name')}': " if config.get("block_name") else "IF "
             cond = config.get("condition", {})
             left_val = cond.get("left_operand", {}).get("value", "L")
             if cond.get("left_operand", {}).get("type") == "variable":
                 left = f"@{left_val}"
             else:
-                left = repr(left_val) 
-
+                left = repr(left_val)
             right_val = cond.get("right_operand", {}).get("value", "R")
             if cond.get("right_operand", {}).get("type") == "variable":
                 right = f"@{right_val}"
             else:
                 right = repr(right_val)
-                
             op = cond.get("operator", "??")
-            
             if len(left) > 15: left = left[:12] + "..."
             if len(right) > 15: right = right[:12] + "..."
-            
             return f"{title_prefix}{name_str}({left} {op} {right})"
-            
+
         elif step_type == "ELSE":
             return f"{title_prefix}ELSE"
-            
+
         elif step_type == "group_start":
             group_name = step_data.get('group_name', 'Unnamed')
             if len(group_name) > 25:
                 group_name = group_name[:22] + "..."
             return f"{title_prefix}Group: {group_name}"
-        
-        # --- NEW: Handle End Caps with Names ---
+
+        # --- THIS IS THE CORRECTED BLOCK ---
         elif step_type == "loop_end":
-            config = step_data.get("loop_config", {})
-            loop_name = config.get("loop_name")
-            name_str = f" '{loop_name}'" if loop_name else ""
+            loop_name = step_data.get('loop_config', {}).get('loop_name')
+            name_str = f' "{loop_name}"' if loop_name else ""
             return f"End Loop{name_str}"
-            
+        
         elif step_type == "IF_END":
-            config = step_data.get("condition_config", {})
-            block_name = config.get("block_name")
-            name_str = f" '{block_name}'" if block_name else ""
+            block_name = step_data.get('condition_config', {}).get('block_name')
+            name_str = f' "{block_name}"' if block_name else ""
             return f"End IF{name_str}"
-            
+
         elif step_type == "group_end":
-            group_name = step_data.get("group_name")
-            name_str = f" '{group_name}'" if group_name else ""
+            group_name = step_data.get('group_name')
+            name_str = f' "{group_name}"' if group_name else ""
             return f"End Group{name_str}"
-        # --- END NEW ---
-            
+        # --- END OF CORRECTION ---
+
         return f"{title_prefix}{step_type.replace('_', ' ').title()}"
 
-# In main_app.py, inside the WorkflowCanvas class
     def _adjust_canvas_size(self):
-        """
-        Enhanced canvas sizing with proper integer handling and extra generous left margin.
-        """
+        """Enhanced canvas sizing with proper integer handling and extra generous left margin."""
         if not hasattr(self.main_window, 'added_steps_data') or not self.main_window.added_steps_data:
-            self.setMinimumSize(400, 300)
-            return
-
+            self.setMinimumSize(400, 300); return
         try:
-            # Force a complete layout calculation to ensure all steps are positioned
             self._force_complete_layout_calculation()
-            
-            if not self.nodes:
-                self._use_fallback_sizing()
-                return
-            
-            # Calculate bounds from the complete layout
-            min_x = min(rect.x() for rect, _, _, _ in self.nodes)
-            max_x = max(rect.right() for rect, _, _, _ in self.nodes)
-            min_y = min(rect.y() for rect, _, _, _ in self.nodes)
-            max_y = max(rect.bottom() for rect, _, _, _ in self.nodes)
-            
-            content_width = max_x - min_x
-            content_height = max_y - min_y
-            
-            # Add extra generous left margin for IF-ELSE branches
-            # Ensure all calculations are integers
-            left_margin = int(max(200, abs(min_x) + 100))
-            right_margin = int(150)
-            top_margin = int(100)
-            bottom_margin = int(150)
-            
-            # Add 20% padding as requested
+            if not self.nodes: self._use_fallback_sizing(); return
+            min_x, max_x = min(r.x() for r,_,_,_ in self.nodes), max(r.right() for r,_,_,_ in self.nodes)
+            min_y, max_y = min(r.y() for r,_,_,_ in self.nodes), max(r.bottom() for r,_,_,_ in self.nodes)
+            content_width, content_height = max_x - min_x, max_y - min_y
+            left_margin, right_margin, top_margin, bottom_margin = int(max(200, abs(min_x) + 100)), 150, 100, 150
             padding_factor = 1.2
-            
-            required_width = int((content_width + left_margin + right_margin) * padding_factor)
-            required_height = int((content_height + top_margin + bottom_margin) * padding_factor)
-            
-            # Ensure reasonable minimums
-            required_width = max(required_width, 1200)
-            required_height = max(required_height, 600)
-            
-            # Set the size
+            required_width, required_height = int((content_width + left_margin + right_margin) * padding_factor), int((content_height + top_margin + bottom_margin) * padding_factor)
+            required_width, required_height = max(required_width, 1200), max(required_height, 600)
             self.setMinimumSize(required_width, required_height)
-            
-            self.main_window._log_to_console(
-                f"Canvas sized with enhanced left margin: {required_width}x{required_height} "
-                f"(content: {content_width}x{content_height}, min_x: {min_x}, "
-                f"left_margin: {left_margin}, {len(self.nodes)} nodes positioned)"
-            )
-            
+            self.main_window._log_to_console(f"Canvas sized with enhanced left margin: {required_width}x{required_height} (content: {content_width}x{content_height}, min_x: {min_x}, left_margin: {left_margin}, {len(self.nodes)} nodes positioned)")
         except Exception as e:
-            self.main_window._log_to_console(f"Error in complete layout calculation: {e}")
-            self._use_fallback_sizing()
-            
+            self.main_window._log_to_console(f"Error in complete layout calculation: {e}"); self._use_fallback_sizing()
             
     def _remap_edges_for_drag(self, old_idx: int, new_idx: int):
         """Updates all edge indices when a node is moved in the list."""
-        new_edges = []
+        new_edges, new_merges = [], []
         for label, (from_idx, from_port), (to_idx, to_port) in self.edges:
-            new_from_idx = from_idx
-            new_to_idx = to_idx
-            
-            if from_idx == old_idx: 
-                new_from_idx = new_idx
-            elif from_idx > old_idx: 
-                new_from_idx -= 1
-            
-            if to_idx == old_idx: 
-                new_to_idx = new_idx
-            elif to_idx > old_idx: 
-                new_to_idx -= 1
-                
+            new_from_idx, new_to_idx = from_idx, to_idx
+            if from_idx == old_idx: new_from_idx = new_idx
+            elif from_idx > old_idx: new_from_idx -= 1
+            if to_idx == old_idx: new_to_idx = new_idx
+            elif to_idx > old_idx: new_to_idx -= 1
             new_edges.append((label, (new_from_idx, from_port), (new_to_idx, to_port)))
         self.edges = new_edges
-        
-        new_merges = []
         for from_idx, to_idx in self.merge_lines:
-            new_from_idx = from_idx
-            new_to_idx = to_idx
-
-            if from_idx == old_idx: 
-                new_from_idx = new_idx
-            elif from_idx > old_idx: 
-                new_from_idx -= 1
-            
-            if to_idx == old_idx: 
-                new_to_idx = new_idx
-            elif to_idx > old_idx: 
-                new_to_idx -= 1
-            
+            new_from_idx, new_to_idx = from_idx, to_idx
+            if from_idx == old_idx: new_from_idx = new_idx
+            elif from_idx > old_idx: new_from_idx -= 1
+            if to_idx == old_idx: new_to_idx = new_idx
+            elif to_idx > old_idx: new_to_idx -= 1
             new_merges.append((new_from_idx, new_to_idx))
         self.merge_lines = new_merges    
 
     def _use_fallback_sizing(self):
-        """
-        Fallback sizing method when layout calculation fails.
-        """
+        """Fallback sizing method when layout calculation fails."""
         step_count = len(self.main_window.added_steps_data) if hasattr(self.main_window, 'added_steps_data') else 0
-        
-        # Conservative estimates based on step count - ensure integers
-        estimated_width = int(max(1200, step_count * 50))
-        estimated_height = int(max(800, step_count * 80))
-        
-        # Add 20% padding
-        required_width = int(estimated_width * 1.2) + 200
-        required_height = int(estimated_height * 1.2) + 200
-        
+        estimated_width, estimated_height = int(max(1200, step_count * 50)), int(max(800, step_count * 80))
+        required_width, required_height = int(estimated_width * 1.2) + 200, int(estimated_height * 1.2) + 200
         self.setMinimumSize(required_width, required_height)
-        
-        self.main_window._log_to_console(
-            f"Canvas sized with fallback method: {required_width}x{required_height} "
-            f"(estimated for {step_count} steps)"
-        )
+        self.main_window._log_to_console(f"Canvas sized with fallback method: {required_width}x{required_height} (estimated for {step_count} steps)")
             
     def _force_complete_layout_calculation(self):
-        """
-        Forces a complete recalculation of the entire workflow layout with proper left-side spacing.
-        """
-        # Clear current layout
-        self.nodes.clear()
-        self.edges.clear()
-        self.merge_lines.clear()
+        """Forces a complete recalculation of the entire workflow layout with proper left-side spacing."""
+        self.nodes.clear(); self.edges.clear(); self.merge_lines.clear(); self.icon_hotspots.clear() # <<< ADD icon_hotspots.clear()
+        if not hasattr(self, 'workflow_tree') or not self.workflow_tree: self.workflow_tree = self.main_window._build_workflow_tree_data()
+        if not self.workflow_tree: return
         
-        # Ensure we have workflow tree data
-        if not hasattr(self, 'workflow_tree') or not self.workflow_tree:
-            self.workflow_tree = self.main_window._build_workflow_tree_data()
-        
-        if not self.workflow_tree:
-            return
-        
-        # Calculate maximum potential left expansion needed
         max_left_expansion = self._calculate_max_left_expansion()
-        
-        # Calculate starting position with generous left margin
-        # Ensure all values are integers
-        start_x = int(max(600, max_left_expansion + 200))
-        start_y = int(50)
+        start_x, start_y = int(max(600, max_left_expansion + 200)), 50
         
         self.main_window._log_to_console(f"Starting layout at x={start_x} (left expansion: {max_left_expansion})")
-        
-        # Force the complete layout build
         self._recursive_smart_layout(self.workflow_tree, start_x, start_y, -1)
         
-        # After layout, check if we need even more left space
         if self.nodes:
             min_x = min(rect.x() for rect, _, _, _ in self.nodes)
-            if min_x < 50:  # If any node is too close to the left edge
-                offset_needed = int(100 - min_x)  # Calculate how much to shift right
+            if min_x < 50:
+                offset_needed = int(100 - min_x)
                 self._shift_all_nodes_right(offset_needed)
                 self.main_window._log_to_console(f"Shifted all nodes right by {offset_needed} pixels")
 
     def _calculate_max_left_expansion(self) -> int:
-        """
-        Calculates the maximum potential leftward expansion based on workflow structure.
-        """
-        if not hasattr(self.main_window, 'added_steps_data'):
-            return 400  # Default safe margin
-        
-        max_nesting_depth = 0
-        current_depth = 0
-        if_else_count = 0
-        
+        """Calculates the maximum potential leftward expansion based on workflow structure."""
+        if not hasattr(self.main_window, 'added_steps_data'): return 400
+        max_nesting_depth, current_depth, if_else_count = 0, 0, 0
         for step_data in self.main_window.added_steps_data:
             step_type = step_data.get("type")
-            
-            if step_type == "IF_START":
-                current_depth += 1
-                if_else_count += 1
-                max_nesting_depth = max(max_nesting_depth, current_depth)
-            elif step_type in ["loop_start", "group_start"]:
-                current_depth += 1
-                max_nesting_depth = max(max_nesting_depth, current_depth)
-            elif step_type in ["IF_END", "loop_end", "group_end"]:
-                current_depth = max(0, current_depth - 1)
-        
-        # Each IF-ELSE can expand left by H_SPACING, plus node width
-        # Each nesting level needs additional horizontal space
+            if step_type == "IF_START": current_depth += 1; if_else_count += 1; max_nesting_depth = max(max_nesting_depth, current_depth)
+            elif step_type in ["loop_start", "group_start"]: current_depth += 1; max_nesting_depth = max(max_nesting_depth, current_depth)
+            elif step_type in ["IF_END", "loop_end", "group_end"]: current_depth = max(0, current_depth - 1)
         potential_left_expansion = int((if_else_count * self.H_SPACING) + (max_nesting_depth * self.H_SPACING // 2))
-        
         self.main_window._log_to_console(f"Calculated potential left expansion: {potential_left_expansion} (IF count: {if_else_count}, max depth: {max_nesting_depth})")
-        
-        return max(potential_left_expansion, 400)  # Minimum 400 pixels
+        return max(potential_left_expansion, 400)
 
     def _shift_all_nodes_right(self, offset: int):
-        """
-        Shifts all nodes to the right by the specified offset.
-        """
+        """Shifts all nodes to the right by the specified offset."""
         new_nodes = []
         for rect, text, shape, step_data in self.nodes:
-            # Ensure all values are integers
-            new_x = int(rect.x() + offset)
-            new_y = int(rect.y())
-            new_width = int(rect.width())
-            new_height = int(rect.height())
-            
+            new_x, new_y = int(rect.x() + offset), int(rect.y())
+            new_width, new_height = int(rect.width()), int(rect.height())
             new_rect = QRect(new_x, new_y, new_width, new_height)
-            # Update the stored position in step_data
             step_data["workflow_pos"] = (new_x, new_y)
             new_nodes.append((new_rect, text, shape, step_data))
         self.nodes = new_nodes
+        
+# In main_app.py, add this new class definition before the MainWindow class.
 
-    def _use_fallback_sizing(self):
+class TemplateTreeWidget(QTreeWidget):
+    """
+    A QTreeWidget with drag-and-drop support for organizing bot templates.
+    """
+    def __init__(self, main_window_ref: 'MainWindow', parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.main_window = main_window_ref
+        
+        # Enable drag and drop
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+
+    def startDrag(self, supportedActions: Qt.DropAction):
         """
-        Fallback sizing method when layout calculation fails.
+        Overridden to control what can be dragged. We only allow templates, not folders.
         """
-        step_count = len(self.main_window.added_steps_data) if hasattr(self.main_window, 'added_steps_data') else 0
-        
-        # Conservative estimates based on step count
-        estimated_width = max(1200, step_count * 50)  # Width grows with complexity
-        estimated_height = max(800, step_count * 80)   # Height grows with step count
-        
-        # Add 20% padding
-        required_width = int(estimated_width * 1.2) + 200
-        required_height = int(estimated_height * 1.2) + 200
-        
-        self.setMinimumSize(required_width, required_height)
-        
-        self.main_window._log_to_console(
-            f"Canvas sized with fallback method: {required_width}x{required_height} "
-            f"(estimated for {step_count} steps)"
+        item = self.currentItem()
+        if item:
+            item_data = self.main_window._get_item_data(item)
+            if isinstance(item_data, dict) and item_data.get('type') == 'template':
+                # Only start the drag if the item is a template
+                super().startDrag(supportedActions)
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent):
+        """
+        Overridden to provide visual feedback during a drag operation.
+        """
+        # We only accept drops onto folders or the template root
+        target_item = self.itemAt(event.position().toPoint())
+        if target_item:
+            target_data = self.main_window._get_item_data(target_item)
+            if isinstance(target_data, dict) and target_data.get('type') in ['template_folder', 'template_root']:
+                event.accept()
+                return
+        event.ignore()
+
+    def dropEvent(self, event: QtGui.QDropEvent):
+        """
+        Overridden to handle the file move operation when an item is dropped.
+        """
+        source_item = self.currentItem()
+        target_item = self.itemAt(event.position().toPoint())
+
+        if not source_item or not target_item:
+            event.ignore()
+            return
+
+        source_data = self.main_window._get_item_data(source_item)
+        target_data = self.main_window._get_item_data(target_item)
+
+        # Validate that we are dropping a template onto a folder or root
+        is_valid_drop = (
+            isinstance(source_data, dict) and source_data.get('type') == 'template' and
+            isinstance(target_data, dict) and target_data.get('type') in ['template_folder', 'template_root']
         )
-        
+
+        if not is_valid_drop:
+            event.ignore()
+            return
+
+        # --- Perform the move operation ---
+        try:
+            # 1. Get original file path
+            source_relative_path = source_data['path']
+            source_full_path = os.path.join(self.main_window.steps_template_directory, source_relative_path)
+            
+            # 2. Determine destination directory path
+            if target_data['type'] == 'template_root':
+                dest_dir_path = self.main_window.steps_template_directory
+            else: # It's a template_folder
+                dest_dir_path = os.path.join(self.main_window.steps_template_directory, target_data['path'])
+
+            # 3. Construct new file path
+            file_name = os.path.basename(source_full_path)
+            dest_full_path = os.path.join(dest_dir_path, file_name)
+            
+            # 4. Check if the file already exists at the destination
+            if os.path.exists(dest_full_path):
+                # Don't show a popup, just log and abort
+                self.main_window._log_to_console(f"Drop cancelled: A template named '{file_name}' already exists in the target folder.")
+                event.ignore()
+                return
+
+            # 5. Move the file on disk
+            shutil.move(source_full_path, dest_full_path)
+            self.main_window._log_to_console(f"Moved template from '{source_relative_path}' to '{os.path.relpath(dest_full_path, self.main_window.steps_template_directory)}'")
+            
+            # 6. Accept the drop and refresh the tree
+            event.accept()
+            self.main_window.load_all_modules_to_tree()
+
+        except Exception as e:
+            QMessageBox.critical(self.main_window, "Drag & Drop Error", f"Failed to move template: {e}")
+            event.ignore()        
 # --- MAIN APPLICATION WINDOW ---
 class MainWindow(QMainWindow):
 # In MainWindow class
@@ -4637,8 +4089,11 @@ class MainWindow(QMainWindow):
         # 3. Define the variable that holds the *currently active* temp file.
         #    It starts as the default one.
         self.current_temp_file_path = self.default_temp_file_path
-        # --- END NEW TEMP FILE LOGIC ---
-            
+        
+        # --- NEW: Define the restore file for scheduled tasks ---
+        self.scheduled_task_restore_file = os.path.join(self.bot_steps_directory, "_scheduled_task_restore.json")
+        # --- END NEW ---
+
         self.steps_template_subfolder = "Steps_template"
         self.steps_template_directory = os.path.join(self.base_directory, self.steps_template_subfolder)
         self.template_document_directory = os.path.join(self.base_directory, "template_document")
@@ -4648,6 +4103,8 @@ class MainWindow(QMainWindow):
         self.loop_id_counter: int = 0
         self.if_id_counter: int = 0
         self.group_id_counter: int = 0
+        self.group_expansion_states: Dict[str, bool] = {}  # <<< ADD THIS LINE
+        
         self.active_param_input_dialog: Optional[ParameterInputDialog] = None
         self.all_parsed_method_data: Dict[str, Dict[str, List[Tuple[str, str, str, str, Dict[str, Any]]]]] = {}
         self.data_to_item_map: Dict[int, QTreeWidgetItem] = {}
@@ -4662,7 +4119,10 @@ class MainWindow(QMainWindow):
         
         # --- Create UI ---
         self.init_ui()
-
+        # --- ADD THESE TWO LINES ---
+        self.gui_communicator.hide_gui_signal.connect(self.hide)
+        self.gui_communicator.show_gui_signal.connect(self.show)
+        # ---------------------------
         # --- Connect signals and start logic ---
         self.gui_communicator.log_message_signal.connect(self._log_to_console)
         self.gui_communicator.update_module_info_signal.connect(self.update_label_info_from_module)
@@ -4816,7 +4276,7 @@ class MainWindow(QMainWindow):
         self.clear_selected_button.clicked.connect(self.clear_selected_steps)
         self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
-        self.view_workflow_button.clicked.connect(lambda: self._update_workflow_tab(switch_to_tab=True))
+        self.view_workflow_button.clicked.connect(self._handle_view_workflow_click)
         self.update_app_btn.clicked.connect(self.update_application)
         self.always_on_top_button.setCheckable(True)
         self.set_wait_time_button.clicked.connect(self.set_wait_time)
@@ -4921,7 +4381,9 @@ class MainWindow(QMainWindow):
         self.module_filter_dropdown = QComboBox(); self.module_filter_dropdown.addItem("-- Show All --"); filter_layout.addWidget(self.module_filter_dropdown)
         module_layout.addLayout(filter_layout)
         self.search_box = QLineEdit(); self.search_box.setPlaceholderText("Search modules..."); module_layout.addWidget(self.search_box)
-        self.module_tree = QTreeWidget(); self.module_tree.setHeaderHidden(True); module_layout.addWidget(self.module_tree)
+        self.module_tree = QTreeWidget()
+        self.module_tree = TemplateTreeWidget(main_window_ref=self)
+        self.module_tree.setHeaderHidden(True); module_layout.addWidget(self.module_tree)
         
         # Variables Panel
         vars_panel = QWidget()
@@ -5737,16 +5199,26 @@ class MainWindow(QMainWindow):
              new_filenames = self._get_image_filenames()
              self.active_param_input_dialog.update_image_filenames.emit(new_filenames, saved_filename)
     
+# In MainWindow class
+# REPLACE your existing load_all_modules_to_tree method with this one:
+
     def load_all_modules_to_tree(self) -> None:
+        """
+        Loads all modules and templates into the tree view.
+        This version recursively scans the templates folder to build a hierarchical view.
+        """
         self.module_tree.clear()
         self.module_filter_dropdown.clear()
         self.module_filter_dropdown.addItem("-- Show All Modules --")
         self.label_info1.setText("Module Info: Loading modules...")
         self.all_parsed_method_data.clear()
+
+        # --- Part 1: Load Python Bot Modules (Unchanged) ---
         dummy_context = ExecutionContext()
         dummy_communicator = GuiCommunicator()
         dummy_context.set_gui_communicator(dummy_communicator)
         try:
+            # ... (The entire try-finally block for loading .py modules remains identical to your original code)
             if self.module_directory not in sys.path:
                 sys.path.insert(0, self.module_directory)
             if not os.path.exists(self.module_directory):
@@ -5757,7 +5229,7 @@ class MainWindow(QMainWindow):
             module_files.sort()
             if not module_files:
                 self.label_info1.setText(f"No Python modules found in '{self.module_subfolder}' folder.")
-                
+
             for module_name in module_files:
                 self.all_parsed_method_data[module_name] = {}
                 self.module_filter_dropdown.addItem(module_name)
@@ -5768,14 +5240,11 @@ class MainWindow(QMainWindow):
                     module_item.setText(0, module_name)
                     module_item.setFlags(module_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                     module_item.setToolTip(0, f"Module: {module_name}")
-            
+
                     for name, obj in inspect.getmembers(module):
-                        # --- THIS IS THE MODIFIED LOGIC ---
-                        if (inspect.isclass(obj) and 
-                            obj.__module__ == module.__name__ and 
-                            not name.startswith('_')): # <-- This new check hides helper classes
-                            # --- END MODIFICATION ---
-                            
+                        if (inspect.isclass(obj) and
+                            obj.__module__ == module.__name__ and
+                            not name.startswith('_')):
                             class_name = name
                             self.all_parsed_method_data[module_name][class_name] = []
                             class_item = QTreeWidgetItem(module_item)
@@ -5792,8 +5261,7 @@ class MainWindow(QMainWindow):
                                 self._log_to_console(f"Warning: Could not instantiate class '{class_name}' for inspection: {e}")
                                 class_item.addChild(QTreeWidgetItem(["(Init error, cannot inspect methods)"]))
                                 continue
-                            
-                            # This loop already (correctly) ignores methods starting with '_'
+
                             for method_name, method_obj in inspect.getmembers(temp_instance):
                                 if (not method_name.startswith('_') and callable(method_obj) and not inspect.isclass(method_obj) and not isinstance(method_obj, staticmethod) and not isinstance(method_obj, classmethod)):
                                     func_obj = method_obj.__func__ if inspect.ismethod(method_obj) else method_obj
@@ -5801,7 +5269,6 @@ class MainWindow(QMainWindow):
                                         sig = inspect.signature(func_obj)
                                         params_for_dialog: Dict[str, Tuple[Any, Any]] = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
                                         display_text = method_name
-                                        
                                         method_info_tuple = (display_text, class_name, method_name, module_name, params_for_dialog)
                                         self.all_parsed_method_data[module_name][class_name].append(method_info_tuple)
                                         method_item = QTreeWidgetItem(class_item)
@@ -5812,29 +5279,96 @@ class MainWindow(QMainWindow):
                                         self._log_to_console(f"Warning: Error inspecting '{class_name}.{method_name}': {e}")
                 except Exception as e:
                     self._log_to_console(f"Error loading module '{module_name}': {e}")
-
-            template_root_item = QTreeWidgetItem(self.module_tree)
-            template_root_item.setText(0, "Bot Templates")
-            template_root_item.setFlags(template_root_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            template_root_item.setToolTip(0, "Saved step templates")
-            try:
-                for template_name in self._get_template_names():
-                    template_item = QTreeWidgetItem(template_root_item)
-                    template_item.setText(0, template_name)
-                    template_item.setToolTip(0, f"Template: {template_name}")
-                    template_item.setData(0, Qt.ItemDataRole.UserRole, QVariant({'type': 'template', 'name': template_name}))
-            except Exception as e:
-                self._log_to_console(f"Error loading templates into tree: {e}")
-                error_item = QTreeWidgetItem(template_root_item)
-                error_item.setText(0, "(Error loading templates)")
-
-            self.module_tree.collapseAll()
-            self.label_info1.setText("Module Info: All modules loaded.")
-
         finally:
             if self.module_directory in sys.path:
                 sys.path.remove(self.module_directory)
+
+
+        # --- Part 2: Recursively Load Bot Templates (NEW and IMPROVED) ---
+        template_root_item = QTreeWidgetItem(self.module_tree)
+        template_root_item.setText(0, "Bot Templates")
+        template_root_item.setToolTip(0, "Saved step templates. Right-click to create folders.")
+        # Store data identifying this as the root for templates
+        template_root_item.setData(0, Qt.ItemDataRole.UserRole, QVariant({'type': 'template_root'}))
+
+        os.makedirs(self.steps_template_directory, exist_ok=True)
+        self._load_templates_recursively(self.steps_template_directory, template_root_item)
+
+        # --- Part 3: Final UI Updates (Unchanged) ---
+        self.module_tree.collapseAll()
+        self.label_info1.setText("Module Info: All modules loaded.")
+        # This connection should already exist, but re-asserting it is safe
         self.module_tree.itemClicked.connect(self.update_selected_method_info)
+# In MainWindow class
+# ADD this new helper method
+
+# In MainWindow class
+# REPLACE the _load_templates_recursively method with this corrected version:
+
+    def _load_templates_recursively(self, directory: str, parent_item: QTreeWidgetItem):
+        """
+        Recursively scans a directory for subdirectories (folders) and .json files (templates)
+        and adds them to the parent_item in the tree.
+        [CORRECTED VERSION]
+        """
+        try:
+            # Ensure the directory exists before trying to list its contents
+            if not os.path.isdir(directory):
+                self._log_to_console(f"Warning: Template directory not found: {directory}")
+                return
+
+            items = sorted(os.listdir(directory))
+
+            # Process subdirectories (folders) first
+            for item_name in items:
+                full_path = os.path.join(directory, item_name)
+                if os.path.isdir(full_path):
+                    try:
+                        folder_item = QTreeWidgetItem(parent_item)
+                        folder_item.setText(0, item_name)
+                        # REMOVED: folder_item.setIcon(0, QIcon.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon))
+                        folder_item.setToolTip(0, f"Folder: {item_name}")
+
+                        relative_path = os.path.relpath(full_path, self.steps_template_directory)
+                        folder_item.setData(0, Qt.ItemDataRole.UserRole, QVariant({
+                            'type': 'template_folder',
+                            'name': item_name,
+                            'path': relative_path
+                        }))
+                        
+                        self._load_templates_recursively(full_path, folder_item)
+                    except Exception as e:
+                        # Add specific logging for an error on a single folder
+                        self._log_to_console(f"Error processing template folder '{item_name}': {e}")
+
+
+            # Then process files (templates)
+            for item_name in items:
+                full_path = os.path.join(directory, item_name)
+                if os.path.isfile(full_path) and item_name.endswith(".json"):
+                    try:
+                        template_name = os.path.splitext(item_name)[0]
+                        template_item = QTreeWidgetItem(parent_item)
+                        template_item.setText(0, template_name)
+                        # REMOVED: template_item.setIcon(0, QIcon.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+                        template_item.setToolTip(0, f"Template: {template_name}")
+
+                        relative_path = os.path.relpath(full_path, self.steps_template_directory)
+                        template_item.setData(0, Qt.ItemDataRole.UserRole, QVariant({
+                            'type': 'template',
+                            'name': template_name,
+                            'path': relative_path.replace(os.sep, '/')
+                        }))
+                    except Exception as e:
+                         # Add specific logging for an error on a single file
+                        self._log_to_console(f"Error processing template file '{item_name}': {e}")
+
+        except Exception as e:
+            # This is the generic error you saw. Now it will log the real cause.
+            self._log_to_console(f"CRITICAL: Failed to load templates from '{directory}'. The error was: {e}")
+            error_item = QTreeWidgetItem(parent_item)
+            error_item.setText(0, "(Error loading templates - Check Log)")
+
 
     def filter_module_tree(self, index: int) -> None:
         selected_module_name = self.module_filter_dropdown.currentText()
@@ -5849,32 +5383,81 @@ class MainWindow(QMainWindow):
         
         self.module_tree.collapseAll()
 
+# In the MainWindow class
+
     def search_module_tree(self, text: str) -> None:
-        """Filters the module tree based on the search text."""
+        """
+        Enhanced search that filters the module tree.
+        - Shows methods if they match.
+        - Shows a class AND all its methods if the class name matches.
+        - Shows a module AND all its contents if the module name matches.
+        """
         search_text = text.lower()
         root = self.module_tree.invisibleRootItem()
 
-        def filter_recursive(item: QTreeWidgetItem) -> bool:
-            child_matches = False
-            for i in range(item.childCount()):
-                if filter_recursive(item.child(i)):
-                    child_matches = True
-            
-            item_text = item.text(0).lower()
-            item_matches = search_text in item_text
-            
-            should_be_visible = item_matches or child_matches
-            item.setHidden(not should_be_visible)
-
-            if should_be_visible and not item_matches and child_matches:
-                 item.setExpanded(True)
-            elif not search_text:
-                item.setExpanded(False)
-
-            return should_be_visible
-
+        # Iterate through top-level items (Modules and Templates)
         for i in range(root.childCount()):
-            filter_recursive(root.child(i))
+            module_item = root.child(i)
+            module_text = module_item.text(0).lower()
+
+            # If the module name itself matches, show everything inside it
+            if search_text in module_text:
+                module_item.setHidden(False)
+                # Ensure all children are visible and expand the module
+                for j in range(module_item.childCount()):
+                    class_item = module_item.child(j)
+                    class_item.setHidden(False)
+                    for k in range(class_item.childCount()):
+                        class_item.child(k).setHidden(False)
+                module_item.setExpanded(True)
+                continue
+
+            # If the module name doesn't match, check its children (classes)
+            module_has_visible_child = False
+            for j in range(module_item.childCount()):
+                class_item = module_item.child(j)
+                class_text = class_item.text(0).lower()
+
+                # If the class name matches, show the class and all its methods
+                if search_text in class_text:
+                    class_item.setHidden(False)
+                    module_has_visible_child = True
+                    # Make all methods under this class visible
+                    for k in range(class_item.childCount()):
+                        class_item.child(k).setHidden(False)
+                    class_item.setExpanded(True)
+                    continue
+
+                # If the class name doesn't match, check its methods
+                class_has_visible_child = False
+                for k in range(class_item.childCount()):
+                    method_item = class_item.child(k)
+                    method_text = method_item.text(0).lower()
+                    
+                    # Show the method if it matches the search text
+                    if search_text in method_text:
+                        method_item.setHidden(False)
+                        class_has_visible_child = True
+                    else:
+                        method_item.setHidden(True)
+                
+                # If any method was visible, the class and module must also be visible
+                if class_has_visible_child:
+                    class_item.setHidden(False)
+                    class_item.setExpanded(True) # Expand the class to show the matched method
+                    module_has_visible_child = True
+                else:
+                    class_item.setHidden(not class_has_visible_child)
+            
+            # Show or hide the module based on whether it has any visible children
+            module_item.setHidden(not module_has_visible_child)
+            if module_has_visible_child and search_text:
+                module_item.setExpanded(True)
+
+        # If the search box is empty, collapse all items
+        if not search_text:
+            self.module_tree.collapseAll()
+
 
     def saved_step_tree_item_selected(self, item: QTreeWidgetItem, column: int):
         """
@@ -5953,14 +5536,17 @@ class MainWindow(QMainWindow):
         replace_in_list(steps_copy)
         return steps_copy
 
-    def _load_template_by_name(self, template_name: str) -> None:
+    def _load_template_by_name(self, template_relative_path: str) -> None:
         """Loads a template file, handles variable mapping, and inserts it into the execution tree."""
-        file_path = os.path.join(self.steps_template_directory, f"{template_name}.json")
+        # The path is now relative to the steps_template_directory
+        file_path = os.path.join(self.steps_template_directory, template_relative_path)
+        template_name_for_display = os.path.splitext(os.path.basename(template_relative_path))[0]
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 template_steps = json.load(f)
 
+            # ... The rest of the method is identical to your existing code ...
             if not template_steps:
                 QMessageBox.warning(self, "Empty Template", "The selected template is empty.")
                 return
@@ -5969,17 +5555,14 @@ class MainWindow(QMainWindow):
             mapped_steps = template_steps
 
             if template_variables:
-                self._log_to_console(f"Template '{template_name}' contains variables: {template_variables}")
+                self._log_to_console(f"Template '{template_name_for_display}' contains variables: {template_variables}")
                 var_dialog = TemplateVariableMappingDialog(template_variables, list(self.global_variables.keys()), self)
                 if var_dialog.exec() == QDialog.DialogCode.Accepted:
                     mapping_result = var_dialog.get_mapping()
                     if mapping_result is None:
-                        return 
-                
+                        return
                     variable_map, new_vars = mapping_result
-                    
                     mapped_steps = self._apply_variable_mapping(template_steps, variable_map)
-                    
                     if new_vars:
                         self.global_variables.update(new_vars)
                         self._update_variables_list_display()
@@ -5989,17 +5572,15 @@ class MainWindow(QMainWindow):
                     return
 
             re_id_d_steps = self._re_id_template_blocks(mapped_steps)
-
             insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
             if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
                 selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
                 insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
-                
                 self.added_steps_data[insert_data_index:insert_data_index] = re_id_d_steps
-                self._sync_counters_with_loaded_data()  # ADD THIS LINE
+                self._sync_counters_with_loaded_data()
                 self._rebuild_execution_tree(item_to_focus_data=re_id_d_steps[0])
-                self._save_workflow_to_temp_file() # <--- ADD THIS LINE
-                self._log_to_console(f"Loaded template '{template_name}' with {len(re_id_d_steps)} steps.")
+                self._save_workflow_to_temp_file()
+                self._log_to_console(f"Loaded template '{template_name_for_display}' with {len(re_id_d_steps)} steps.")
                 workflow_tab_index = self.main_tab_widget.indexOf(self.workflow_scroll_area.parentWidget())
                 if self.main_tab_widget.currentIndex() != workflow_tab_index:
                     self.main_tab_widget.setCurrentWidget(self.execution_tree.parentWidget())
@@ -6007,9 +5588,10 @@ class MainWindow(QMainWindow):
         except FileNotFoundError:
             QMessageBox.critical(self, "Load Error", f"Template file not found:\n{file_path}")
         except json.JSONDecodeError:
-            QMessageBox.critical(self, "Load Error", f"The template file '{template_name}.json' is corrupted.")
+            QMessageBox.critical(self, "Load Error", f"The template file '{template_name_for_display}.json' is corrupted.")
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading the template:\n{e}")
+
             
     def _re_id_template_blocks(self, template_steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         id_map = {}
@@ -6051,77 +5633,68 @@ class MainWindow(QMainWindow):
         else:
             pass
 
+# In main_app.py
+# Replace the entire add_item_to_execution_tree method
+
+# In MainWindow class
+# REPLACE the entire add_item_to_execution_tree method with this one:
+
     def add_item_to_execution_tree(self, item: QTreeWidgetItem, column: int) -> None:
         item_data = self._get_item_data(item)
 
         # --- Handle Template Loading ---
         if isinstance(item_data, dict) and item_data.get('type') == 'template':
-            template_name = item_data.get('name')
-            if template_name:
-                self._load_template_by_name(template_name)
+            # --- THIS IS THE FIX ---
+            # Get the full relative path (e.g., "Folder/MyTemplate.json") from the item data.
+            # This was the bug: it was previously just getting the name.
+            template_path = item_data.get('path')
+            if template_path:
+                self._load_template_by_name(template_path)
+            # --- END OF FIX ---
             return
 
+        # --- The rest of the method for regular module steps remains the same ---
         if not (item_data and isinstance(item_data, tuple) and len(item_data) == 5):
             return
-            
+
         display_text, class_name, method_name, module_name, params_for_dialog = item_data
-        
-        # =================================================================
-        # --- LOGIC FOR CUSTOM GUI MODULES ---
-        # =================================================================
-        
+
         if method_name == "configure_data_hub":
             try:
-                # 1. Instantiate the module class
                 if self.module_directory not in sys.path:
                     sys.path.insert(0, self.module_directory)
                 module = importlib.import_module(module_name)
-                importlib.reload(module) # Ensure we have the latest version
+                importlib.reload(module)
                 class_obj = getattr(module, class_name)
-                
                 dummy_context = ExecutionContext()
                 dummy_context.set_gui_communicator(self.gui_communicator)
                 instance = class_obj(context=dummy_context)
-
-                # 2. Call the magic method to get the custom dialog
                 dialog = instance.configure_data_hub(
-                    parent_window=self, 
+                    parent_window=self,
                     global_variables=list(self.global_variables.keys())
                 )
-
-                # 3. Run the custom dialog
-                # --- FIX IS HERE: All logic is now INSIDE this "if" block ---
                 if dialog.exec() == QDialog.DialogCode.Accepted:
-                    # 4. Get the config and execution info from the dialog
                     config_data = dialog.get_config_data()
                     executor_method_name = dialog.get_executor_method_name()
                     assign_to_variable_name = dialog.get_assignment_variable()
-
-                    if config_data is None or assign_to_variable_name is None:
+                    if config_data is None:
                         self._log_to_console("Custom configuration was cancelled or invalid.")
                         return
-
-                    # 5. Handle new variable creation
                     if assign_to_variable_name and assign_to_variable_name not in self.global_variables:
                         self.global_variables[assign_to_variable_name] = None
                         self._update_variables_list_display()
-
-                    # 6. Build the final step_data for the *executor* method
                     parameters_config = {
                         "config_data": {"type": "hardcoded", "value": config_data}
                     }
-                    
                     new_step_data_dict: Dict[str, Any] = {
                         "type": "step",
                         "class_name": class_name,
-                        "method_name": executor_method_name, # Use the executor method name
+                        "method_name": executor_method_name,
                         "module_name": module_name,
-                        "parameters_config": parameters_config, # Pass the config dict
+                        "parameters_config": parameters_config,
                         "assign_to_variable_name": assign_to_variable_name,
-                        "custom_config_method": method_name # Add the tag for editing
+                        "custom_config_method": method_name
                     }
-                    
-                    # 7. Add the new step to the execution tree
                     insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
                     if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
                         selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
@@ -6129,11 +5702,8 @@ class MainWindow(QMainWindow):
                         self.added_steps_data.insert(insert_data_index, new_step_data_dict)
                         self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
                         self._save_workflow_to_temp_file()
-                        
                         self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
-                    
                     self._log_to_console(f"Added custom step '{class_name}.{executor_method_name}'")
-
             except Exception as e:
                 QMessageBox.critical(self, "Custom Module Error", f"Could not load custom configuration GUI:\n{e}")
                 self._log_to_console(f"ERROR: {e}")
@@ -6141,14 +5711,7 @@ class MainWindow(QMainWindow):
                 if self.module_directory in sys.path:
                     sys.path.remove(self.module_directory)
             return
-        # --- END OF CUSTOM BLOCK ---
-        
-        # =================================================================
-        # --- END OF NEW LOGIC ---
-        # =================================================================
 
-        # --- This is the ORIGINAL logic for all other "normal" methods ---
-        
         method_docstring = ""
         try:
             if self.module_directory not in sys.path:
@@ -6156,12 +5719,10 @@ class MainWindow(QMainWindow):
             module = importlib.import_module(module_name)
             importlib.reload(module)
             class_obj = getattr(module, class_name)
-            
             init_kwargs_for_inspection: Dict[str, Any] = {}
             if 'context' in inspect.signature(class_obj.__init__).parameters:
                 init_kwargs_for_inspection['context'] = ExecutionContext()
             temp_instance = class_obj(**init_kwargs_for_inspection)
-            
             method_func_obj = getattr(temp_instance, method_name)
             method_docstring = inspect.getdoc(method_func_obj) or ""
         except Exception as e:
@@ -6169,18 +5730,18 @@ class MainWindow(QMainWindow):
         finally:
             if self.module_directory in sys.path:
                 sys.path.remove(self.module_directory)
-        
+
         self.active_param_input_dialog = ParameterInputDialog(
-            f"{class_name}.{method_name}", 
-            params_for_dialog, 
-            list(self.global_variables.keys()), 
-            self._get_image_filenames(), 
-            self.gui_communicator, 
+            f"{class_name}.{method_name}",
+            params_for_dialog,
+            list(self.global_variables.keys()),
+            self._get_image_filenames(),
+            self.gui_communicator,
             parent=self,
             method_docstring=method_docstring
         )
         self.active_param_input_dialog.request_screenshot.connect(self._handle_screenshot_request_from_param_dialog)
-        
+
         if self.active_param_input_dialog.exec() == QDialog.DialogCode.Accepted:
             parameters_config = self.active_param_input_dialog.get_parameters_config()
             if parameters_config is None:
@@ -6190,20 +5751,20 @@ class MainWindow(QMainWindow):
         else:
             self.gui_communicator.update_module_info_signal.emit("")
             return
-        
+
         if assign_to_variable_name and assign_to_variable_name not in self.global_variables:
             self.global_variables[assign_to_variable_name] = None
             self._update_variables_list_display()
 
         new_step_data_dict: Dict[str, Any] = {
-            "type": "step", 
-            "class_name": class_name, 
-            "method_name": method_name, 
-            "module_name": module_name, 
-            "parameters_config": parameters_config, 
+            "type": "step",
+            "class_name": class_name,
+            "method_name": method_name,
+            "module_name": module_name,
+            "parameters_config": parameters_config,
             "assign_to_variable_name": assign_to_variable_name
         }
-        
+
         insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
         if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
             selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
@@ -6211,9 +5772,8 @@ class MainWindow(QMainWindow):
             self.added_steps_data.insert(insert_data_index, new_step_data_dict)
             self._rebuild_execution_tree(item_to_focus_data=new_step_data_dict)
             self._save_workflow_to_temp_file()
-
             self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
-        
+
         self.gui_communicator.update_module_info_signal.emit("")
         self.active_param_input_dialog = None
 
@@ -6393,20 +5953,24 @@ class MainWindow(QMainWindow):
 
                 # 5. Run the dialog and get the *new* data
                 if dialog.exec() == QDialog.DialogCode.Accepted:
+                    # Get the configuration from the dialog
                     new_config_data = dialog.get_config_data()
+                    
+                    # Check if the configuration itself is invalid (e.g., user left a required field blank)
+                    if new_config_data is None:
+                        self._log_to_console("Custom configuration was cancelled or contained invalid data.")
+                        return # Exit if config is bad
+                        
+                    # These can now be safely called, as we know the config is valid
                     new_executor_method_name = dialog.get_executor_method_name()
-                    new_assign_to_variable_name = dialog.get_assignment_variable()
+                    new_assign_to_variable_name = dialog.get_assignment_variable() # This is ALLOWED to be None
 
-                    if new_config_data is None or new_assign_to_variable_name is None:
-                        self._log_to_console("Custom configuration was cancelled.")
-                        return
-
-                    # 6. Handle variable changes
+                    # Handle variable changes (this part is fine)
                     if new_assign_to_variable_name and new_assign_to_variable_name not in self.global_variables:
                         self.global_variables[new_assign_to_variable_name] = None
                         self._update_variables_list_display()
 
-                    # 7. Update the step_data_dict in our main list
+                    # Update the step data in our main list (this part will now be reached)
                     new_parameters_config = {"config_data": {"type": "hardcoded", "value": new_config_data}}
                     self.added_steps_data[current_row].update({
                         "parameters_config": new_parameters_config,
@@ -6415,6 +5979,7 @@ class MainWindow(QMainWindow):
                         "custom_config_method": custom_config_method_name
                     })
                     
+                    # Rebuild the UI to show the changes
                     self._rebuild_execution_tree(item_to_focus_data=self.added_steps_data[current_row])
                     self._save_workflow_to_temp_file()
                 
@@ -6569,6 +6134,7 @@ class MainWindow(QMainWindow):
             self.execution_tree.clear()
             self.added_steps_data.clear()
             self.global_variables.clear()
+            self.group_expansion_states.clear() # <<< ADD THIS LINE
             self._update_variables_list_display()
             self.progress_bar.setValue(0)
             self.progress_bar.hide()
@@ -6581,7 +6147,6 @@ class MainWindow(QMainWindow):
             
             self._log_to_console("Internal clear all steps executed.")
             self._update_workflow_tab(switch_to_tab=False)
-            
 # In MainWindow class
 # In MainWindow class
     def clear_all_steps(self) -> None:
@@ -6764,10 +6329,9 @@ class MainWindow(QMainWindow):
             self._log_to_console(f"Error comparing .csv and .json: {e}")
             # Err on the side of caution: if comparison fails, assume changes exist.
             return True
-    # In MainWindow class
-    def _apply_loaded_data_to_ui(self, variables: Dict[str, Any], steps: List[Dict[str, Any]], bot_name: str = ""):
+    def _apply_loaded_data_to_ui(self, variables: Dict[str, Any], steps: List[Dict[str, Any]], bot_name: str = "", expansion_states: Dict[str, bool] = None):
         """
-        Enhanced version that ensures workflow is immediately available and centered after loading.
+        Enhanced version that also loads group expansion states.
         """
         # 1. Clear the current UI and data
         self._internal_clear_all_steps()
@@ -6775,6 +6339,10 @@ class MainWindow(QMainWindow):
         # 2. Apply the loaded data
         self.global_variables = variables
         self.added_steps_data = steps
+        # --- MODIFICATION STARTS HERE ---
+        # Load expansion states, defaulting to an empty dict if not provided
+        self.group_expansion_states = expansion_states if expansion_states is not None else {}
+        # --- MODIFICATION ENDS HERE ---
         
         # 3. Update UI components
         self._sync_counters_with_loaded_data()
@@ -6833,27 +6401,50 @@ class MainWindow(QMainWindow):
         self._save_workflow_to_temp_file()
         
         self._log_to_console(f"Applied loaded data for '{bot_name or 'untitled'}' to UI with immediate workflow preparation and centering.")
-        
-        
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
     def _handle_execute_pause_resume(self):
         """
-        Handles Start/Pause/Resume. Now correctly builds the focus mode UI
-        including the image preview label.
+        Handles Start/Stop/Pause/Resume logic.
+        - "Execute All" starts the bot.
+        - The "Stop" button immediately halts the bot and restores the UI.
+        - The "Pause" / "Resume" button controls a running bot.
         """
-        if not self.is_bot_running:
-            # --- START Case ---
+        # Determine which button was clicked by checking the sender
+        sender_button = self.sender()
+
+        # --- Case 1: STOP was requested via the Exit/Stop button ---
+        if sender_button is self.exit_button and "Stop" in self.exit_button.text():
+            if self.worker and self.is_bot_running:
+                # Signal the worker thread to stop.
+                self.worker.stop()
+                
+                # Immediately call the cleanup/restore method to reset the UI.
+                self.on_execution_finished(self.worker.context, True, -1)
+            else:
+                # Failsafe in case the state is inconsistent.
+                self.on_execution_finished(ExecutionContext(), True, -1)
+            return
+
+        # --- Case 2: PAUSE / RESUME was requested via the Execute/Pause/Resume button ---
+        if sender_button is self.execute_all_button and self.is_bot_running:
+            if not self.is_paused:
+                # PAUSE the execution
+                if self.worker:
+                    self.worker.pause()
+                    self.is_paused = True
+                    self.execute_all_button.setText("▶️ Resume")
+                    self.execute_all_button.setToolTip("Resume the paused execution")
+            else:
+                # RESUME the execution
+                if self.worker:
+                    self.worker.resume()
+                    self.is_paused = False
+                    self.execute_all_button.setText("⏸️ Pause")
+                    self.execute_all_button.setToolTip("Pause the running execution")
+            return
+
+        # --- Case 3: START a new execution (only triggered by the "Execute All" button) ---
+        if sender_button is self.execute_all_button and not self.is_bot_running:
             if not self.added_steps_data:
                 QMessageBox.information(self, "No Steps", "No steps have been added.")
                 return
@@ -6862,42 +6453,38 @@ class MainWindow(QMainWindow):
 
             self.is_bot_running = True
             self.is_paused = False
+
+            # --- Change Exit button to Stop button ---
+            self.exit_button.setText("🛑 Stop")
+            self.exit_button.setToolTip("Stop the current execution and return to the canvas")
+            self.exit_button.clicked.disconnect()
+            self.exit_button.clicked.connect(self._handle_execute_pause_resume)
+
+            # Change Execute button to Pause
+            self.execute_all_button.setText("⏸️ Pause")
+            self.execute_all_button.setToolTip("Pause the running execution")
+
+            # Focus mode logic (unchanged)
             self.view_workflow_button.click()
-            
             if self.always_on_top_button.isChecked():
-                # --- ENTERING FOCUS MODE ---
                 self.minimized_for_execution = True
                 self.original_geometry = self.geometry()
-                
                 self.workflow_scroll_area.setWidgetResizable(False)
-
-
-                # --- Store the original homes for ALL widgets we are moving ---
                 def store_home(widget):
                     parent_layout = widget.parent().layout()
                     index = parent_layout.indexOf(widget)
                     self.widget_homes[widget] = (parent_layout, index)
-
                 store_home(self.execute_all_button)
                 store_home(self.exit_button)
                 store_home(self.workflow_scroll_area)
-                store_home(self.label_info2) # Store home for image preview label
-                
-                # Hide the main side panels and the normal center content
+                store_home(self.label_info2)
                 self.left_menu.setVisible(False)
                 self.right_panels.setVisible(False)
                 self.normal_mode_widget.setVisible(False)
-
-                # --- Build the Focus Mode UI dynamically ---
-                # 1. Add the workflow canvas
                 self.focus_mode_layout.addWidget(self.workflow_scroll_area)
                 self.workflow_scroll_area.setVisible(True)
-
-                # 2. Add the image preview label
                 self.focus_mode_layout.addWidget(self.label_info2)
                 self.label_info2.setVisible(True)
-
-                # 3. Add the temporary control widget for buttons
                 if not hasattr(self, 'execution_control_widget'):
                     self.execution_control_widget = QWidget()
                     self.execution_control_widget.setLayout(QHBoxLayout())
@@ -6905,49 +6492,32 @@ class MainWindow(QMainWindow):
                 self.focus_mode_layout.addWidget(self.execution_control_widget)
                 self.execution_control_widget.layout().addWidget(self.execute_all_button)
                 self.execution_control_widget.layout().addWidget(self.exit_button)
-                
-                # Make the entire focus mode container visible
                 self.focus_mode_widget.setVisible(True)
-                
-                # Resize window change_size
                 screen = QApplication.primaryScreen().geometry()
                 new_width = int(self.original_geometry.width() * 0.25)
                 new_height = int(self.original_geometry.height() * 0.30)
                 self.resize(new_width, new_height)
                 self.move(screen.width() - new_width - 10, 10)
+            else:
+                self.main_tab_widget.setCurrentIndex(self.workflow_tab_index)
 
-            else: # Normal execution
-                self.main_tab_widget.setCurrentIndex(2)
-
-            # --- Universal Start Logic ---
-            self.execute_all_button.setText("⏸️ Pause")
-            self.execute_all_button.setToolTip("Pause the running execution")
+            # Universal Start Logic (unchanged)
             self.set_ui_enabled_state(False)
             self.right_panels.setEnabled(False)
             self.main_tab_widget.setEnabled(False)
             self.progress_bar.setValue(0)
             self.progress_bar.show()
             self.update_status_column_for_all_items()
-            
-            self.worker = ExecutionWorker(self.added_steps_data, self.module_directory, self.gui_communicator, self.global_variables,self.wait_time_between_steps )
+
+            self.worker = ExecutionWorker(
+                self.added_steps_data, 
+                self.module_directory, 
+                self.gui_communicator, 
+                self.global_variables,
+                self.wait_time_between_steps
+            )
             self._connect_worker_signals()
             self.worker.start()
-
-        elif self.is_bot_running and not self.is_paused:
-            # --- PAUSE Case ---
-            if self.worker:
-                self.worker.pause()
-                self.is_paused = True
-                self.execute_all_button.setText("▶️ Resume")
-                self.execute_all_button.setToolTip("Resume the paused execution")
-                
-        elif self.is_bot_running and self.is_paused:
-            # --- RESUME Case ---
-            if self.worker:
-                self.worker.resume()
-                self.is_paused = False
-                self.execute_all_button.setText("⏸️ Pause")
-                self.execute_all_button.setToolTip("Pause the running execution")
 
 
     def _validate_block_structure_on_execution(self) -> bool:
@@ -7389,57 +6959,66 @@ class MainWindow(QMainWindow):
             self._log_to_console(f"ERROR on {card._get_formatted_title()}: {error_message}")
             self._update_variables_list_display()
 
-# In the MainWindow class
-# In the MainWindow class
-# In MainWindow class
-# REPLACE your existing on_execution_finished method with this one:
+
 
     def on_execution_finished(self, context: ExecutionContext, stopped_by_error: bool, next_step_index_to_select: int) -> None:
         self.is_bot_running = False
         self.is_paused = False
         self.worker = None
 
+        # --- Restore UI buttons ---
         self.execute_all_button.setText("🚀 Execute All")
         self.execute_all_button.setToolTip("Execute all steps from the beginning")
-        
+        try: self.exit_button.clicked.disconnect()
+        except TypeError: pass
+        self.exit_button.setText("🚪 Exit")
+        self.exit_button.setToolTip("Exit the application")
+        self.exit_button.clicked.connect(QApplication.instance().quit)
+
         self.progress_bar.setValue(100)
         self.last_executed_context = context
 
+        is_restoring = False
         if self.minimized_for_execution:
             # --- EXITING FOCUS MODE ---
-            # Hide the focus mode container
             self.focus_mode_widget.setVisible(False)
-            
             self.workflow_scroll_area.setWidgetResizable(True)
-
-            # --- Restore ALL widgets back to their original homes ---
             def restore_home(widget):
                 if widget in self.widget_homes:
                     layout, index = self.widget_homes[widget]
-                    # To be safe, set the widget's parent to None before re-inserting
-                    widget.setParent(None)
-                    layout.insertWidget(index, widget)
-                    widget.setVisible(True) # Ensure it's visible after being moved
-
-            restore_home(self.execute_all_button)
-            restore_home(self.exit_button)
-            restore_home(self.workflow_scroll_area)
-            restore_home(self.label_info2) # Restore the image preview label
-                
-            self.widget_homes.clear()
-
-            # Restore visibility of main UI panels
-            self.left_menu.setVisible(True)
-            self.right_panels.setVisible(True)
-            self.normal_mode_widget.setVisible(True) # Show the normal UI container
-            
-            # Restore window geometry
-            if self.original_geometry:
-                self.setGeometry(self.original_geometry)
-
+                    widget.setParent(None); layout.insertWidget(index, widget); widget.setVisible(True)
+            restore_home(self.execute_all_button); restore_home(self.exit_button)
+            restore_home(self.workflow_scroll_area); restore_home(self.label_info2)
+            self.widget_homes.clear(); self.left_menu.setVisible(True)
+            self.right_panels.setVisible(True); self.normal_mode_widget.setVisible(True)
+            if self.original_geometry: self.setGeometry(self.original_geometry)
             self.minimized_for_execution = False
+            
+            # --- NEW RESTORATION LOGIC ---
+            if os.path.exists(self.scheduled_task_restore_file):
+                is_restoring = True
+                self._log_to_console("Scheduler: Execution finished. Restoring previous workflow.")
+                try:
+                    with open(self.scheduled_task_restore_file, 'r', encoding='utf-8') as f:
+                        restored_data = json.load(f)
+                    
+                    self._apply_loaded_data_to_ui(
+                        restored_data.get("global_variables", {}),
+                        restored_data.get("added_steps_data", [])
+                    )
+                    os.remove(self.scheduled_task_restore_file)
+                except Exception as e:
+                    self._log_to_console(f"CRITICAL: Error restoring workflow: {e}")
+                    QMessageBox.critical(self, "Restore Error", f"Could not restore your previous workflow from the temp file.\n\nError: {e}")
+            # --- END NEW RESTORATION LOGIC ---
         
-        # --- Universal UI Re-enablement ---
+        # Reset flow label text
+        current_bot_name = ""
+        if not is_restoring and self.current_temp_file_path != self.default_temp_file_path:
+            current_bot_name = os.path.splitext(os.path.basename(self.current_temp_file_path))[0]
+        self.execution_flow_label.setText(f"Execution Flow: {current_bot_name}" if current_bot_name else "Execution Flow")
+        
+        # Universal UI Re-enablement
         self.set_ui_enabled_state(True)
         self.right_panels.setEnabled(True)
         self.main_tab_widget.setEnabled(True)
@@ -7449,10 +7028,6 @@ class MainWindow(QMainWindow):
             if item_to_select:
                 self.execution_tree.setCurrentItem(item_to_select)
                 self.execution_tree.scrollToItem(item_to_select, QtWidgets.QAbstractItemView.ScrollHint.PositionAtCenter)
-
-        # Switch to the Execution Flow tab to see the final results
-        #self.main_tab_widget.setCurrentIndex(1)
-# In the MainWindow class, REPLACE the existing update_label_info_from_module method with this one:
     def update_click_signal_from_module(self, message: str) -> None:
         
         self.label_info1.setText(message)
@@ -7750,9 +7325,11 @@ class MainWindow(QMainWindow):
     
 
     # In MainWindow class
+# In MainWindow class
     def load_steps_from_file(self, file_path: str, bot_name: str = "") -> None:
         """
         Enhanced version that immediately shows the workflow when loading a bot.
+        All groups will be loaded in a collapsed state by default.
         """
         if not bot_name:
             bot_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -7785,7 +7362,6 @@ class MainWindow(QMainWindow):
                     self._log_to_console(f"Error loading .json backup: {e}. Defaulting to .csv.")
                     loaded_data = None # Force fallback to .csv
             
-            # If user chose "No", loaded_data remains None, and we proceed to load from .csv
         
         # 3b. Load from .csv (if no unsaved changes, user chose "No", or .json failed)
         if loaded_data is None:
@@ -7797,26 +7373,30 @@ class MainWindow(QMainWindow):
         if loaded_data:
             loaded_vars, loaded_steps = loaded_data
 
-            # 5. Clear the *default* temp file (we are no longer "untitled")
+            # --- START OF SUPPORTING CHANGE ---
+            # 5. When loading a bot, ALWAYS reset the expansion states. Combined with the
+            #    new default in _is_group_expanded, this forces the collapsed state.
+            self.group_expansion_states.clear()
+            # --- END OF SUPPORTING CHANGE ---
+
+            # 6. Clear the *default* temp file (we are no longer "untitled")
             self._clear_default_temp_file()
 
-            # 6. Set the *current* temp file path to this bot's .json
+            # 7. Set the *current* temp file path to this bot's .json
             self.current_temp_file_path = json_path
             
-            # 7. Apply the loaded data to the UI
-            self._apply_loaded_data_to_ui(loaded_vars, loaded_steps, bot_name)
+            # 8. Apply the loaded data. The expansion_states argument is now None.
+            self._apply_loaded_data_to_ui(loaded_vars, loaded_steps, bot_name, None)
             
-            # 8. IMMEDIATELY update and show the workflow
+            # 9. IMMEDIATELY update and show the workflow
             self._update_and_show_workflow_after_load()
             
-            self._log_to_console(data_source_msg)
+            self._log_to_console(data_source_msg + " All groups have been collapsed.")
 
         else:
             # Handle load failure
             QMessageBox.critical(self, "Load Error", f"An unexpected error occurred while loading '{bot_name}'.")
             self._log_to_console(f"Failed to load bot from {os.path.basename(csv_path)}.")
-                
-                
     def _update_and_show_workflow_after_load(self):
         """
         Immediately updates, displays, and centers the workflow after loading a bot.
@@ -7912,6 +7492,11 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             self._log_to_console(f"Error centering workflow on first step: {e}")
+# In the MainWindow class, REPLACE the show_context_menu
+
+# In MainWindow class
+# REPLACE your existing show_context_menu method with this one:
+
     def show_context_menu(self, position: QPoint):
         item = self.module_tree.itemAt(position)
         if not item:
@@ -7920,28 +7505,18 @@ class MainWindow(QMainWindow):
         item_data = self._get_item_data(item)
         context_menu = QMenu(self)
 
-        is_top_level = (
-            item.parent() == self.module_tree.invisibleRootItem() or
-            item.parent() is None
-        )
+        # --- NEW: Logic for "Bot Templates" section ---
+        item_type = item_data.get('type') if isinstance(item_data, dict) else None
 
-        if is_top_level and item.text(0) != "Bot Templates":
-            pass
-
-        elif isinstance(item_data, tuple) and len(item_data) == 5:
-            _, class_name, method_name, module_name, _ = item_data
-            read_doc_action = context_menu.addAction("Read Documentation")
-            modify_action = context_menu.addAction("Modify Method")
-            delete_action = context_menu.addAction("Delete Method")
+        if item_type in ['template_root', 'template_folder']:
+            create_folder_action = context_menu.addAction("Create New Folder")
             action = context_menu.exec(self.module_tree.mapToGlobal(position))
-            if action == read_doc_action:
-                self.read_method_documentation(module_name, class_name, method_name)
-            elif action == modify_action:
-                self.modify_method(module_name, class_name, method_name)
-            elif action == delete_action:
-                self.delete_method(module_name, class_name, method_name)
+            if action == create_folder_action:
+                self._create_template_folder(item)
+            return
 
-        elif isinstance(item_data, dict) and item_data.get('type') == 'template':
+        # --- Logic for individual template files ---
+        elif item_type == 'template':
             template_name = item_data.get('name')
             if not template_name:
                 return
@@ -7953,16 +7528,86 @@ class MainWindow(QMainWindow):
 
             doc_path = os.path.join(self.template_document_directory, f"{template_name}.html")
             doc_action.setEnabled(os.path.exists(doc_path))
-
             action = context_menu.exec(self.module_tree.mapToGlobal(position))
 
             if action == add_action:
-                self._load_template_by_name(template_name)
+                # Use the relative path to load the template now
+                self._load_template_by_name(item_data['path'])
             elif action == doc_action:
                 self.view_template_documentation(template_name)
             elif action == delete_action:
-                self.delete_template(template_name)
+                # Pass the relative path for accurate deletion
+                self.delete_template(item_data['path'])
+            return
 
+        # --- Existing logic for Python Bot Modules (Unchanged) ---
+        module_to_edit = None
+        class_to_edit = ""
+        method_to_edit = ""
+        if isinstance(item_data, tuple) and len(item_data) == 5:
+            _, class_name, method_name, module_name, _ = item_data
+            module_to_edit = module_name
+            class_to_edit = class_name
+            method_to_edit = method_name
+        elif item.childCount() > 0 and item.parent() is not None and item.parent() is not self.module_tree.invisibleRootItem():
+            if item.childCount() > 0:
+                first_method_item = item.child(0)
+                method_data = self._get_item_data(first_method_item)
+                if isinstance(method_data, tuple):
+                    _, _, _, module_name, _ = method_data
+                    module_to_edit = module_name
+                    class_to_edit = item.text(0)
+        elif item.parent() is self.module_tree.invisibleRootItem() and item.text(0) != "Bot Templates":
+            module_to_edit = item.text(0)
+
+        if module_to_edit:
+            edit_action = context_menu.addAction(f"✏️ Edit in Jupyter Notebook")
+            action = context_menu.exec(self.module_tree.mapToGlobal(position))
+            if action == edit_action:
+                self.modify_method(module_to_edit, class_to_edit, method_to_edit)
+            return
+# In MainWindow class
+# ADD this new method
+
+    def _create_template_folder(self, parent_item: QTreeWidgetItem):
+        """
+        Opens a dialog to get a folder name and creates a new directory on the file system
+        within the Bot Templates structure.
+        """
+        parent_data = self._get_item_data(parent_item)
+        if not parent_data:
+            return
+
+        # Determine the base directory for the new folder
+        if parent_data['type'] == 'template_root':
+            base_dir = self.steps_template_directory
+        elif parent_data['type'] == 'template_folder':
+            base_dir = os.path.join(self.steps_template_directory, parent_data['path'])
+        else:
+            return # Cannot create folder here
+
+        folder_name, ok = QInputDialog.getText(self, "Create New Folder", "Enter folder name:")
+
+        if ok and folder_name:
+            # Sanitize folder name
+            sanitized_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '_', '-')).rstrip()
+            if not sanitized_name:
+                QMessageBox.warning(self, "Invalid Name", "Folder name cannot be empty or contain only invalid characters.")
+                return
+
+            new_folder_path = os.path.join(base_dir, sanitized_name)
+
+            if os.path.exists(new_folder_path):
+                QMessageBox.warning(self, "Folder Exists", f"A folder named '{sanitized_name}' already exists in this location.")
+                return
+
+            try:
+                os.makedirs(new_folder_path)
+                self._log_to_console(f"Created template folder: {new_folder_path}")
+                # Refresh the entire tree to show the new folder
+                self.load_all_modules_to_tree()
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not create folder:\n{e}")
     def view_template_documentation(self, template_name: str):
         """Finds and displays the HTML documentation for a given template."""
         os.makedirs(self.template_document_directory, exist_ok=True)
@@ -7976,22 +7621,24 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Documentation Not Found",
                                       f"No documentation file found at:\n{doc_path}")
     
-    def delete_template(self, template_name: str):
-        """Deletes a template file after user confirmation."""
+    def delete_template(self, template_relative_path: str):
+        """Deletes a template file after user confirmation using its relative path."""
+        template_name_for_display = os.path.splitext(os.path.basename(template_relative_path))[0]
         reply = QMessageBox.question(self, "Confirm Delete",
-                                     f"Are you sure you want to permanently delete the template '{template_name}'?",
+                                     f"Are you sure you want to permanently delete the template '{template_name_for_display}'?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                      QMessageBox.StandardButton.No)
-    
+
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                template_path = os.path.join(self.steps_template_directory, f"{template_name}.json")
+                # Use the relative path for accurate deletion
+                template_path = os.path.join(self.steps_template_directory, template_relative_path)
                 if os.path.exists(template_path):
                     os.remove(template_path)
-                    QMessageBox.information(self, "Success", f"Template '{template_name}' has been deleted.")
-                    self.load_all_modules_to_tree()
+                    QMessageBox.information(self, "Success", f"Template '{template_name_for_display}' has been deleted.")
+                    self.load_all_modules_to_tree() # Refresh tree
                 else:
-                    QMessageBox.warning(self, "File Not Found", f"The template file for '{template_name}' could not be found.")
+                    QMessageBox.warning(self, "File Not Found", f"The template file for '{template_name_for_display}' could not be found.")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"An error occurred while deleting the template:\n{e}")
 
@@ -8013,105 +7660,244 @@ class MainWindow(QMainWindow):
             if self.module_directory in sys.path:
                 sys.path.remove(self.module_directory)
 
+# In the MainWindow class, REPLACE the modify_method
+
+# In the MainWindow class, REPLACE the modify_method
+
+# In the MainWindow class, REPLACE the modify_method
+
     def modify_method(self, module_name: str, class_name: str, method_name: str):
+        """
+        Finds the associated module folder and launches Jupyter Notebook to open that folder,
+        allowing the user to see and edit all related bot modules.
+        """
         try:
-            module_path = os.path.join(self.module_directory, f"{module_name}.py")
-            if not os.path.exists(module_path):
-                QMessageBox.critical(self, "File Not Found", f"The source file for module '{module_name}' could not be found.")
+            # 1. Get the path to the Bot_module directory (this is unchanged).
+            # self.module_directory already points to ".../App content/Bot_module/"
+            module_folder_path = self.module_directory
+            if not os.path.exists(module_folder_path):
+                QMessageBox.critical(self, "Folder Not Found", f"The Bot module folder '{module_folder_path}' could not be found.")
                 return
-    
-            editor_dialog = CodeEditorDialog(module_path, class_name, method_name, self.all_parsed_method_data, self)
-            editor_dialog.exec()
+
+            self._log_to_console(f"Attempting to launch Jupyter Notebook in folder: '{module_folder_path}'.")
             
-            self.load_all_modules_to_tree()
-    
+            # 2. Construct the path to the Jupyter executable (this is unchanged).
+            python_env_dir = os.path.join(self.base_directory, 'python-embed')
+            jupyter_executable = os.path.join(python_env_dir, 'Scripts', 'jupyter-notebook.exe')
+
+            # 3. Check if the Jupyter executable exists (this is unchanged).
+            if not os.path.exists(jupyter_executable):
+                QMessageBox.critical(self, "Jupyter Not Found", 
+                                     f"Could not find 'jupyter-notebook.exe' at the expected path:\n"
+                                     f"{jupyter_executable}\n\n"
+                                     "Please ensure your 'python-embed' folder is located inside the 'App content' directory.")
+                return
+
+            # =======================================================================
+            # --- THIS IS THE KEY MODIFICATION ---
+            # Instead of passing the specific .py file, we now launch Jupyter
+            # without a file argument, and set its working directory to the
+            # Bot_module folder. This will cause Jupyter to open its file
+            # browser at that location.
+            # =======================================================================
+            
+            # 4. Launch Jupyter in a new process, setting its starting directory.
+            command = [jupyter_executable]
+            subprocess.Popen(command, cwd=module_folder_path) # <-- THE CHANGE IS HERE
+            
+            QMessageBox.information(self, "Jupyter Launched", 
+                                    "Jupyter Notebook is launching in your web browser, showing the Bot_module folder.\n\n"
+                                    "After saving your changes in Jupyter, you may need to reload the modules "
+                                    "in this app to see the changes.")
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Could not open the code editor: {e}")
-    
-# In main_app.py
-# In the MainWindow class, REPLACE the check_schedules method with this one:
+            QMessageBox.critical(self, "Jupyter Launch Error", f"An unexpected error occurred while trying to start Jupyter Notebook:\n{e}")
+
+
 
     def check_schedules(self):
-        """Timer-triggered function to check for and run scheduled bots."""
-        # --- ADD THIS CHECK AT THE BEGINNING ---
+        """
+        Timer-triggered function to check for and run scheduled bots.
+        This version correctly handles multiple bots and ensures the UI is updated.
+        It now saves the current user workflow before running a scheduled task.
+        The rescheduling logic now intelligently handles time boundaries.
+        """
         if self.is_bot_running:
-            self._log_to_console("Scheduler check skipped: A bot is currently running.")
-            return
-        # --- END ---
+            return  # Main guard: If a bot is already running, do nothing.
 
-        self._log_to_console("Scheduler checking for due bots...")
         now = QDateTime.currentDateTime()
         
-        bot_files = [f for f in os.listdir(self.bot_steps_directory) if f.endswith(".csv")]
+        bot_names = list(self.schedules.keys())
+        
+        due_bots = []
+        for bot_name in bot_names:
+            schedule_data = self.schedules.get(bot_name)
 
-        for bot_file in bot_files:
-            # --- ADD ANOTHER CHECK INSIDE THE LOOP ---
-            if self.is_bot_running:
-                self._log_to_console("Scheduler check halted: A bot started execution during the check.")
-                break # Exit the loop if a bot has started
-            # --- END ---
+            if not (schedule_data and schedule_data.get("enabled")):
+                continue
 
-            bot_name = os.path.splitext(bot_file)[0]
-            file_path = os.path.join(self.bot_steps_directory, bot_file)
-            schedule_data = self._read_schedule_from_csv(file_path)
+            start_datetime = QDateTime.fromString(schedule_data.get("start_datetime"), Qt.DateFormat.ISODate)
 
-            if schedule_data and schedule_data.get("enabled"):
-                start_datetime = QDateTime.fromString(schedule_data.get("start_datetime"), Qt.DateFormat.ISODate)
+            if now >= start_datetime:
+                repeat_mode = schedule_data.get("repeat")
+                current_day_str = now.toString("ddd")
+                current_time = now.time()
 
-                if now >= start_datetime:
-                    
-                    # --- NEW CONSTRAINT LOGIC START ---
-                    repeat_mode = schedule_data.get("repeat")
-                    current_day_str = now.toString("ddd") # e.g., "Mon"
-                    current_time = now.time()
+                if repeat_mode in ["Daily", "Hourly"]:
+                    selected_days = schedule_data.get("selected_days", [])
+                    if selected_days and current_day_str not in selected_days:
+                        continue
 
-                    # 1. Check Day of Week constraint
-                    if repeat_mode in ["Daily", "Hourly"]:
-                        selected_days = schedule_data.get("selected_days", [])
-                        # Only check if the user actually selected specific days
-                        if selected_days and current_day_str not in selected_days:
-                            self._log_to_console(f"Skipping '{bot_name}': Not scheduled for {current_day_str}.")
-                            continue # Skip to the next bot file
+                if schedule_data.get("time_boundary_enabled", False):
+                    start_time = QTime.fromString(schedule_data.get("start_time", "00:00:00"), Qt.DateFormat.ISODate)
+                    end_time = QTime.fromString(schedule_data.get("end_time", "23:59:59"), Qt.DateFormat.ISODate)
+                    if not (start_time <= current_time <= end_time):
+                        self._log_to_console(f"Skipping '{bot_name}': Current time {current_time.toString('HH:mm:ss')} is outside boundary.")
+                        continue
+                
+                due_bots.append({
+                    "name": bot_name,
+                    "schedule": schedule_data,
+                    "start_datetime": start_datetime
+                })
 
-                    # 2. Check Time Boundary constraint
+        if not due_bots:
+            return
+
+        bot_to_run = due_bots[0]
+        bot_name = bot_to_run["name"]
+        schedule_data = bot_to_run["schedule"]
+        start_datetime = bot_to_run["start_datetime"]
+        
+        file_path = os.path.join(self.bot_steps_directory, f"{bot_name}.csv")
+
+        self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
+
+        if self.added_steps_data:
+            self._log_to_console("Scheduler: Current workflow is not empty. Saving to restore file.")
+            self._save_workflow_to_file(self.scheduled_task_restore_file)
+
+        loaded_data = self._load_data_from_csv(file_path)
+        if not loaded_data:
+            self._log_to_console(f"CRITICAL: Could not load data for scheduled bot '{bot_name}'. Skipping.")
+            return
+        
+        loaded_vars, loaded_steps = loaded_data
+        
+        self._apply_loaded_data_to_ui(loaded_vars, loaded_steps, bot_name)
+
+        self.is_bot_running = True
+        self.is_paused = False
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.show()
+        self.exit_button.setText("🛑 Stop")
+        self.exit_button.setToolTip("Stop the current execution and return to the canvas")
+        try: self.exit_button.clicked.disconnect()
+        except TypeError: pass
+        self.exit_button.clicked.connect(self._handle_execute_pause_resume)
+        self.execute_all_button.setText("⏸️ Pause")
+        self.execute_all_button.setToolTip("Pause the running execution")
+        self.minimized_for_execution = True
+        self.original_geometry = self.geometry()
+        
+        self.workflow_scroll_area.setWidgetResizable(False)
+        def store_home(widget):
+            if widget.parent() is not None and widget.parent().layout() is not None:
+                parent_layout = widget.parent().layout()
+                index = parent_layout.indexOf(widget)
+                self.widget_homes[widget] = (parent_layout, index)
+        store_home(self.execute_all_button); store_home(self.exit_button)
+        store_home(self.workflow_scroll_area); store_home(self.label_info2)
+        
+        self.left_menu.setVisible(False); self.right_panels.setVisible(False)
+        self.normal_mode_widget.setVisible(False)
+        self.focus_mode_layout.addWidget(self.workflow_scroll_area); self.workflow_scroll_area.setVisible(True)
+        self.focus_mode_layout.addWidget(self.label_info2); self.label_info2.setVisible(True)
+        if not hasattr(self, 'execution_control_widget'):
+            self.execution_control_widget = QWidget()
+            self.execution_control_widget.setLayout(QHBoxLayout())
+            self.execution_control_widget.layout().setContentsMargins(5, 5, 5, 5)
+        self.focus_mode_layout.addWidget(self.execution_control_widget)
+        self.execution_control_widget.layout().addWidget(self.execute_all_button)
+        self.execution_control_widget.layout().addWidget(self.exit_button)
+        self.focus_mode_widget.setVisible(True)
+        
+        screen = QApplication.primaryScreen().geometry()
+        new_width = int(self.original_geometry.width() * 0.25)
+        new_height = int(self.original_geometry.height() * 0.30)
+        self.resize(new_width, new_height); self.move(screen.width() - new_width - 10, 10)
+
+        self.set_ui_enabled_state(False)
+        self.progress_bar.show()
+        
+        self.worker = ExecutionWorker(
+            steps_to_execute=loaded_steps,
+            module_directory=self.module_directory,
+            gui_communicator=self.gui_communicator,
+            global_variables_ref=loaded_vars,
+            wait_config=self.wait_time_between_steps,
+            bot_name=bot_name,
+            email_config=schedule_data
+        )
+        
+        self._connect_worker_signals()
+        self.worker.start()
+        
+        # --- START: NEW INTELLIGENT RESCHEDULING LOGIC ---
+        repeat_mode = schedule_data.get("repeat")
+        if repeat_mode != "Do not repeat":
+            
+            # Use current time as the base for calculating the next run
+            base_time = QDateTime.currentDateTime()
+            
+            # 1. Calculate the simple next run time
+            if repeat_mode == "Hourly":
+                next_run_time = base_time.addSecs(3600)
+            elif repeat_mode == "Daily":
+                next_run_time = base_time.addDays(1)
+            elif repeat_mode == "Monthly":
+                next_run_time = base_time.addMonths(1)
+            else: # Failsafe
+                next_run_time = base_time.addDays(1)
+
+            # 2. Check if boundaries apply and adjust if necessary
+            if schedule_data.get("time_boundary_enabled", False):
+                start_time = QTime.fromString(schedule_data.get("start_time", "00:00:00"), Qt.DateFormat.ISODate)
+                end_time = QTime.fromString(schedule_data.get("end_time", "23:59:59"), Qt.DateFormat.ISODate)
+                
+                # If the next run time is after today's end time...
+                if next_run_time.time() > end_time:
+                    self._log_to_console(f"Next hourly run at {next_run_time.time().toString('HH:mm')} is after end time {end_time.toString('HH:mm')}. Finding next valid day.")
+                    # ...move to the next day and set the time to the start of the boundary
+                    next_run_time = next_run_time.addDays(1)
+                    next_run_time.setTime(start_time)
+
+            # 3. Find the next valid day of the week if specified
+            selected_days = schedule_data.get("selected_days", [])
+            if selected_days:
+                # Keep adding one day until we land on a selected day
+                while next_run_time.toString("ddd") not in selected_days:
+                    next_run_time = next_run_time.addDays(1)
+                    # When jumping to a new day, always reset to the start time
                     if schedule_data.get("time_boundary_enabled", False):
-                        start_time_str = schedule_data.get("start_time")
-                        end_time_str = schedule_data.get("end_time")
-                        
-                        if start_time_str and end_time_str:
-                            start_time = QTime.fromString(start_time_str, Qt.DateFormat.ISODate)
-                            end_time = QTime.fromString(end_time_str, Qt.DateFormat.ISODate)
-                            
-                            if not (start_time <= current_time <= end_time):
-                                self._log_to_console(f"Skipping '{bot_name}': Current time {current_time.toString()} is outside boundary {start_time.toString()} - {end_time.toString()}.")
-                                continue # Skip to the next bot file
-                    # --- NEW CONSTRAINT LOGIC END ---
+                        next_run_time.setTime(QTime.fromString(schedule_data.get("start_time"), Qt.DateFormat.ISODate))
+            
+            schedule_data["start_datetime"] = next_run_time.toString(Qt.DateFormat.ISODate)
 
-                    self._log_to_console(f"Executing scheduled bot: '{bot_name}'")
-                    
-                    self.load_steps_from_file(file_path)
-                    self._handle_execute_pause_resume() # This will now set the is_bot_running flag
+        else: # "Do not repeat"
+            schedule_data["enabled"] = False
+        # --- END: NEW INTELLIGENT RESCHEDULING LOGIC ---
+        
+        self.schedules[bot_name] = schedule_data
+        self.save_schedules()
+        self._write_schedule_to_csv(file_path, schedule_data)
+        self.load_saved_steps_to_tree()
 
-                    # The rest of the logic for rescheduling remains the same...
-                    repeat_mode = schedule_data.get("repeat") # Get it again in case it was modified
-                    if repeat_mode != "Do not repeat":
-                        new_start_time = start_datetime
-                        if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
-                        elif repeat_mode == "Daily": new_start_time = new_start_time.addDays(1)
-                        elif repeat_mode == "Monthly": new_start_time = new_start_time.addMonths(1)
-                        
-                        while new_start_time < now:
-                            if repeat_mode == "Hourly": new_start_time = new_start_time.addSecs(3600)
-                            elif repeat_mode == "Daily": new_start_time = new_start_time.addDays(1)
-                            elif repeat_mode == "Monthly": new_start_time = new_start_time.addMonths(1)
+        if repeat_mode != "Do not repeat":
+            self._log_to_console(f"Rescheduled '{bot_name}' to run next at {schedule_data['start_datetime']}")
+        else:
+            self._log_to_console(f"Disabled non-repeating schedule for '{bot_name}'.")
 
-                        schedule_data["start_datetime"] = new_start_time.toString(Qt.DateFormat.ISODate)
-                        self._write_schedule_to_csv(file_path, schedule_data)
-                        self._log_to_console(f"Rescheduled '{bot_name}' to run next at {schedule_data['start_datetime']}")
-                    else:
-                        schedule_data["enabled"] = False
-                        self._write_schedule_to_csv(file_path, schedule_data)
-                        self._log_to_console(f"Disabled non-repeating schedule for '{bot_name}'.")
     def _read_schedule_from_csv(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Reads only the schedule info from a bot's CSV file."""
         if not os.path.exists(file_path):
@@ -8163,63 +7949,92 @@ class MainWindow(QMainWindow):
         self.log_console.append(f"[{timestamp}] {message}")
 
     def update_application(self):
-
-        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
+        """
+        Initiates the application update process.
+        It first tries to download the update from GitHub automatically.
+        If the automatic download or file processing fails, it will prompt
+        the user to download the file manually and then select it.
+        """
+        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
-        
         zip_path = os.path.join(self.update_dir, "update.zip")
 
         os.makedirs(self.update_dir, exist_ok=True)
 
         try:
+            # 1. Attempt to download the file automatically
+            self._log_to_console("Attempting to download update automatically...")
             with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-            self._process_zip_file(zip_path)
+            self._log_to_console("Download complete.")
 
-        except urllib.error.URLError:
+            # 2. Process the downloaded zip file
+            if not self._process_zip_file(zip_path):
+                # _process_zip_file returns False if the zip is bad.
+                # This will trigger the manual download flow.
+                raise zipfile.BadZipFile("The automatically downloaded file was invalid.")
+
+        except (urllib.error.URLError, zipfile.BadZipFile) as e:
+            # 3. This block executes if automatic download or zip processing fails
+            self._log_to_console(f"Automatic update failed: {e}. Switching to manual download.")
+
             msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Icon.Critical)
-            msg_box.setWindowTitle("Download Failed")
+            msg_box.setIcon(QMessageBox.Icon.Warning) # Changed to Warning icon
+            msg_box.setWindowTitle("Update Action Required")
             msg_box.setTextFormat(Qt.TextFormat.RichText)
             msg_box.setText(
-                "Could not download the update automatically.<br><br>"
+                "Could not get the update automatically. The file may be blocked by your network or corrupted.<br><br>"
                 "<b>Step 1:</b> Please download the file manually from this link:<br>"
                 f"<a href='{github_zip_url}'>{github_zip_url}</a><br><br>"
-                "<b>Step 2:</b> After the download is complete, click the <b>'Downloaded'</b> button below and select the file you just saved."
+                "<b>Step 2:</b> After the download is complete, click the <b>'Select File...'</b> button below and choose the file you just saved."
             )
-            downloaded_button = msg_box.addButton("Downloaded", QMessageBox.ButtonRole.ActionRole)
+            select_file_button = msg_box.addButton("Select File...", QMessageBox.ButtonRole.ActionRole)
             msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             msg_box.exec()
 
-            if msg_box.clickedButton() == downloaded_button:
-                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded File", "", "Zip Files (*.zip)")
+            # If the user clicked the 'Select File...' button
+            if msg_box.clickedButton() == select_file_button:
+                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded Update File", "", "Zip Files (*.zip)")
                 if file_path:
+                    # Process the user-selected zip file
                     self._process_zip_file(file_path)
 
         except Exception as e:
-            QMessageBox.critical(self, "Update Error", f"An error occurred: {e}")
+            # Catch any other unexpected errors
+            QMessageBox.critical(self, "Update Error", f"An unexpected error occurred: {e}")
 
-    def _process_zip_file(self, zip_path):
+    def _process_zip_file(self, zip_path: str) -> bool:
+        """
+        Extracts the zip file and opens the UpdateDialog to let the user
+        select which files to install.
+
+        Returns:
+            bool: True if the zip was processed successfully, False if it was invalid.
+        """
         try:
+            # Attempt to open and extract the zip file
+            self._log_to_console(f"Processing zip file: {zip_path}")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(self.update_dir)
+            self._log_to_console("Zip file extracted successfully.")
 
-            extracted_folder_name = ""
-            for item in os.listdir(self.update_dir):
-                if os.path.isdir(os.path.join(self.update_dir, item)) and "AutomateTask" in item:
-                    extracted_folder_name = item
-                    break
+            # The UpdateDialog handles finding the correct source folder
+            dialog = UpdateDialog(self.update_dir, self.base_directory, self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                QMessageBox.information(self, "Update Complete", "Update successful. Please restart the application for the changes to take effect.")
+                # You could optionally close the application here
+                # self.close()
+            return True # Indicates success
 
-            if not extracted_folder_name:
-                raise Exception("Could not find the main folder in the downloaded zip.")
+        except zipfile.BadZipFile:
+            # If the zip file is invalid, log it and return False
+            self._log_to_console(f"Error: The provided zip file '{os.path.basename(zip_path)}' is invalid or corrupted.")
+            return False # Indicates failure
 
-            extracted_path = os.path.join(self.update_dir, extracted_folder_name)
-            dialog = UpdateDialog(extracted_path, self.base_directory, self)
-            dialog.exec()
-        
         except Exception as e:
-            QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
-
+            # For any other error, show a critical message and return False
+            QMessageBox.critical(self, "Update Error", f"An error occurred while processing the update file: {e}")
+            return False # Indicates failure
     def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
         """
         Enhanced workflow tab update with better canvas initialization.
@@ -8788,52 +8603,11 @@ class MainWindow(QMainWindow):
 # In MainWindow class
 # In MainWindow class
     def _save_workflow_to_temp_file(self):
-        """Saves the current workflow and global variables to the active temporary file.
-        This version CLEANS the data before saving, just like the main save function.
         """
-        try:
-            os.makedirs(self.bot_steps_directory, exist_ok=True)
-            
-            # --- NEW CLEANING LOGIC ---
-            # 1. Prepare variables to save (handle non-serializable)
-            variables_to_save = {}
-            for var_name, var_value in self.global_variables.items():
-                try:
-                    json.dumps(var_value) # Check if serializable
-                    variables_to_save[var_name] = var_value
-                except (TypeError, OverflowError):
-                    # Save non-serializable objects as None
-                    variables_to_save[var_name] = None
-            
-            # 2. Prepare steps to save (remove runtime keys)
-            steps_to_save = []
-            for step_data_dict in self.added_steps_data:
-                # Create a deep copy to avoid modifying the in-memory data
-                # Using json.loads(json.dumps()) is a reliable way to deep copy
-                step_data_to_save = json.loads(json.dumps(step_data_dict))
-                
-                # Clean runtime keys
-                step_data_to_save.pop("original_listbox_row_index", None)
-                step_data_to_save.pop("execution_status", None)
-                step_data_to_save.pop("execution_result", None)
-                if step_data_to_save.get("type") == "step" and step_data_to_save.get("parameters_config"):
-                    step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
-                steps_to_save.append(step_data_to_save)
-            # --- END NEW CLEANING LOGIC ---
-
-            data_to_save = {
-                "added_steps_data": steps_to_save,
-                "global_variables": variables_to_save
-            }
-            
-            # Save the clean data to the currently active temp file
-            with open(self.current_temp_file_path, 'w', encoding='utf-8') as f:
-                json.dump(data_to_save, f, indent=4)
-                
-            # self._log_to_console(f"Workflow saved to {os.path.basename(self.current_temp_file_path)}")
-                
-        except Exception as e:
-            self._log_to_console(f"Error saving workflow to {self.current_temp_file_path}: {e}")
+        Saves the current workflow to the active temporary file.
+        This now calls the general-purpose save method.
+        """
+        self._save_workflow_to_file(self.current_temp_file_path)
             
             
     # Inside MainWindow class
@@ -8860,6 +8634,9 @@ class MainWindow(QMainWindow):
 
                         self.added_steps_data = temp_data.get("added_steps_data", [])
                         self.global_variables = temp_data.get("global_variables", {})
+                        # --- MODIFICATION STARTS HERE ---
+                        self.group_expansion_states = temp_data.get("group_expansion_states", {})
+                        # --- MODIFICATION ENDS HERE ---
                         self._sync_counters_with_loaded_data()
                         
                         # We are loading into an "untitled" session, so the current temp path
@@ -8870,7 +8647,6 @@ class MainWindow(QMainWindow):
                         self._update_variables_list_display()
                         self._log_to_console("Recovered 'untitled' workflow from temporary file.")
                         
-                        # We don't clear the temp file here, as the user is now working on it.
                         return 
                 
                 # If temp_data was empty or user said No, clear the default temp file
@@ -9031,6 +8807,8 @@ class MainWindow(QMainWindow):
             
 # Add this new method to the MainWindow class:
 
+# In main_app.py, inside the MainWindow class
+
     def _center_workflow_canvas_on_step(self, step_index: int) -> None:
         """
         Robustly centers the workflow canvas on a specific step by index.
@@ -9091,14 +8869,124 @@ class MainWindow(QMainWindow):
             canvas.update()
             scroll_area.update()
             
-            # Log success
+            # --- LOGGING MODIFICATION ---
+            # Get the node's position for logging
+            node_pos = target_rect.topLeft()
             step_name = target_step_data.get("method_name", f"Step {step_index + 1}")
-            self._log_to_console(f"Workflow canvas centered on: {step_name}")
+            
+            if target_step_data.get("type") == 'group_start':
+                group_name = target_step_data.get("group_name", "Unnamed")
+                self._log_to_console(f"Canvas centered on Group '{group_name}' (Step {step_index + 1}) at canvas position ({node_pos.x()}, {node_pos.y()})")
+            else:
+                self._log_to_console(f"Workflow canvas centered on: {step_name} at canvas position ({node_pos.x()}, {node_pos.y()})")
+            # --- END LOGGING MODIFICATION ---
             
         except Exception as e:
-            self._log_to_console(f"Error centering workflow canvas on step {step_index}: {e}")            
+            self._log_to_console(f"Error centering workflow canvas on step {step_index}: {e}")        
             
+    def _handle_view_workflow_click(self):
+        """
+        Handles the 'View Workflow' button click by switching to the workflow tab
+        and centering on step 1 (the first step).
+        """
+        # First, update and switch to the workflow tab
+        self._update_workflow_tab(switch_to_tab=True)
         
+        # Then center on step 1 if there are any steps
+        if self.added_steps_data:
+            def center_on_step_1():
+                """Centers the workflow on step 1 after tab switch is complete."""
+                self._center_workflow_canvas_on_step(0)  # Step 1 is at index 0
+                
+            # Schedule the centering after the tab switch is complete
+            QTimer.singleShot(300, center_on_step_1)
+        else:
+            self._log_to_console("No steps available to center on.")
+            
+            
+    def get_variable_for_dialog(self, variable_name: str) -> Optional[Any]:
+        """
+        A callback function for dialogs to safely retrieve a global variable's object.
+        
+        This acts as a bridge between an isolated dialog (which doesn't have the
+        ExecutionContext) and the main application's live data.
+        
+        Args:
+            variable_name: The name of the variable to retrieve (e.g., "my_db_conn").
+
+        Returns:
+            The actual object (e.g., a pyodbc.Connection, a pd.DataFrame) or None if not found.
+        """
+        # 'self.global_variables' is the dictionary in your MainWindow
+        # that stores the actual variable objects, keyed by their name.
+        self._log_to_console(f"Dialog requested variable: '{variable_name}'")
+        
+        return self.global_variables.get(variable_name)
+        
+        
+    def _save_workflow_to_file(self, file_path: str):
+        """
+        Saves the current workflow and global variables to a specified file.
+        This is the new general-purpose save method.
+        """
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            # Cleaning logic for robust saving
+            variables_to_save = {}
+            for var_name, var_value in self.global_variables.items():
+                try:
+                    json.dumps(var_value)
+                    variables_to_save[var_name] = var_value
+                except (TypeError, OverflowError):
+                    variables_to_save[var_name] = None
+            
+            steps_to_save = []
+            for step_data_dict in self.added_steps_data:
+                step_data_to_save = json.loads(json.dumps(step_data_dict))
+                step_data_to_save.pop("original_listbox_row_index", None)
+                step_data_to_save.pop("execution_status", None)
+                step_data_to_save.pop("execution_result", None)
+                if step_data_to_save.get("type") == "step" and step_data_to_save.get("parameters_config"):
+                    step_data_to_save["parameters_config"].pop("original_listbox_row_index", None)
+                steps_to_save.append(step_data_to_save)
+
+            # --- MODIFICATION STARTS HERE ---
+            data_to_save = {
+                "added_steps_data": steps_to_save,
+                "global_variables": variables_to_save,
+                "group_expansion_states": self.group_expansion_states # Add expansion states to the save data
+            }
+            # --- MODIFICATION ENDS HERE ---
+            
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data_to_save, f, indent=4)
+                
+        except Exception as e:
+            self._log_to_console(f"Error saving workflow to {file_path}: {e}")
+            
+    def _center_canvas_on_group(self, group_id: str):
+        """Finds a group_start step by its ID and centers the canvas on it."""
+        if not group_id:
+            return
+
+        # Find the index of the group_start step in the main data list
+        target_index = -1
+        for i, step_data in enumerate(self.added_steps_data):
+            if step_data.get("type") == "group_start" and step_data.get("group_id") == group_id:
+                target_index = i
+                break
+        
+        if target_index != -1:
+            # Use the existing robust centering method to do the work.
+            # This will calculate the position and scroll the canvas.
+            self._center_workflow_canvas_on_step(target_index)
+            
+            # This log message will now correctly fire after the centering action.
+            self._log_to_console(f"Canvas centered on group '{group_id}'.")
+        else:
+            self._log_to_console(f"Warning: Could not find group_start with ID '{group_id}' to center on.")
+            
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
