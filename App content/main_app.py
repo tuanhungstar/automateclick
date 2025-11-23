@@ -2724,7 +2724,15 @@ class ScheduleTaskDialog(QDialog):
         self.layout.addRow("Start Date and Time:", self.date_edit)
 
         self.repeat_combo = QComboBox()
-        self.repeat_combo.addItems(["Do not repeat", "Hourly", "Daily", "Monthly"])
+        self.repeat_combo.addItems([
+            "Do not repeat", 
+            "Every 5 minutes",
+            "Every 15 minutes",
+            "Every 30 minutes",
+            "Hourly", 
+            "Daily", 
+            "Monthly"
+                    ])
         self.layout.addRow("Repeat:", self.repeat_combo)
 
         # --- Days of Week Group ---
@@ -2794,6 +2802,7 @@ class ScheduleTaskDialog(QDialog):
         # --- Initial visibility update ---
         self._update_widget_visibility()
 
+
     def _update_widget_visibility(self):
         """Shows/hides the groups based on user selection."""
         is_schedule_enabled = self.enable_checkbox.isChecked()
@@ -2803,11 +2812,13 @@ class ScheduleTaskDialog(QDialog):
         self.repeat_combo.setVisible(is_schedule_enabled)
         
         repeat_mode = self.repeat_combo.currentText()
-        is_daily_or_hourly = repeat_mode in ["Daily", "Hourly"] and is_schedule_enabled
-        self.days_of_week_group.setVisible(is_daily_or_hourly)
         
-        is_repeat = repeat_mode != "Do not repeat" and is_schedule_enabled
-        self.time_boundary_group.setVisible(is_repeat)
+        # --- THIS IS THE KEY CHANGE ---
+        # Show day/time controls for all repeating schedules except "Monthly"
+        is_repeating_on_schedule = repeat_mode not in ["Do not repeat", "Monthly"] and is_schedule_enabled
+        self.days_of_week_group.setVisible(is_repeating_on_schedule)
+        self.time_boundary_group.setVisible(is_repeating_on_schedule)
+        # --- END OF KEY CHANGE ---
         
         time_boundary_enabled = self.enable_time_boundary_check.isChecked()
         self.start_time_edit.setEnabled(time_boundary_enabled)
@@ -7715,6 +7726,9 @@ class MainWindow(QMainWindow):
 
 
 
+# In main_app.py
+# In the MainWindow class
+
     def check_schedules(self):
         """
         Timer-triggered function to check for and run scheduled bots.
@@ -7743,7 +7757,8 @@ class MainWindow(QMainWindow):
                 current_day_str = now.toString("ddd")
                 current_time = now.time()
 
-                if repeat_mode in ["Daily", "Hourly"]:
+                # MODIFIED: Condition now includes new minute-based intervals
+                if repeat_mode not in ["Do not repeat", "Monthly"]:
                     selected_days = schedule_data.get("selected_days", [])
                     if selected_days and current_day_str not in selected_days:
                         continue
@@ -7843,23 +7858,27 @@ class MainWindow(QMainWindow):
         self._connect_worker_signals()
         self.worker.start()
         
-        # --- START: NEW INTELLIGENT RESCHEDULING LOGIC ---
+        # --- START: MODIFIED INTELLIGENT RESCHEDULING LOGIC ---
         repeat_mode = schedule_data.get("repeat")
         if repeat_mode != "Do not repeat":
             
-            # Use current time as the base for calculating the next run
             base_time = QDateTime.currentDateTime()
+            next_run_time = base_time # Initialize
             
             # 1. Calculate the simple next run time
-            if repeat_mode == "Hourly":
+            if repeat_mode == "Every 5 minutes":
+                next_run_time = base_time.addSecs(300) # 5 * 60
+            elif repeat_mode == "Every 15 minutes":
+                next_run_time = base_time.addSecs(900) # 15 * 60
+            elif repeat_mode == "Every 30 minutes":
+                next_run_time = base_time.addSecs(1800) # 30 * 60
+            elif repeat_mode == "Hourly":
                 next_run_time = base_time.addSecs(3600)
             elif repeat_mode == "Daily":
                 next_run_time = base_time.addDays(1)
             elif repeat_mode == "Monthly":
                 next_run_time = base_time.addMonths(1)
-            else: # Failsafe
-                next_run_time = base_time.addDays(1)
-
+            
             # 2. Check if boundaries apply and adjust if necessary
             if schedule_data.get("time_boundary_enabled", False):
                 start_time = QTime.fromString(schedule_data.get("start_time", "00:00:00"), Qt.DateFormat.ISODate)
@@ -7867,18 +7886,18 @@ class MainWindow(QMainWindow):
                 
                 # If the next run time is after today's end time...
                 if next_run_time.time() > end_time:
-                    self._log_to_console(f"Next hourly run at {next_run_time.time().toString('HH:mm')} is after end time {end_time.toString('HH:mm')}. Finding next valid day.")
+                    self._log_to_console(f"Next run at {next_run_time.time().toString('HH:mm')} is after end time {end_time.toString('HH:mm')}. Finding next valid day.")
                     # ...move to the next day and set the time to the start of the boundary
                     next_run_time = next_run_time.addDays(1)
                     next_run_time.setTime(start_time)
 
             # 3. Find the next valid day of the week if specified
             selected_days = schedule_data.get("selected_days", [])
-            if selected_days:
+            if selected_days and repeat_mode != "Monthly": # Day of week is less relevant for monthly
                 # Keep adding one day until we land on a selected day
                 while next_run_time.toString("ddd") not in selected_days:
                     next_run_time = next_run_time.addDays(1)
-                    # When jumping to a new day, always reset to the start time
+                    # When jumping to a new day, always reset to the start time if boundary is enabled
                     if schedule_data.get("time_boundary_enabled", False):
                         next_run_time.setTime(QTime.fromString(schedule_data.get("start_time"), Qt.DateFormat.ISODate))
             
@@ -7886,7 +7905,7 @@ class MainWindow(QMainWindow):
 
         else: # "Do not repeat"
             schedule_data["enabled"] = False
-        # --- END: NEW INTELLIGENT RESCHEDULING LOGIC ---
+        # --- END: MODIFIED INTELLIGENT RESCHEDULING LOGIC ---
         
         self.schedules[bot_name] = schedule_data
         self.save_schedules()
@@ -7897,6 +7916,7 @@ class MainWindow(QMainWindow):
             self._log_to_console(f"Rescheduled '{bot_name}' to run next at {schedule_data['start_datetime']}")
         else:
             self._log_to_console(f"Disabled non-repeating schedule for '{bot_name}'.")
+
 
     def _read_schedule_from_csv(self, file_path: str) -> Optional[Dict[str, Any]]:
         """Reads only the schedule info from a bot's CSV file."""
