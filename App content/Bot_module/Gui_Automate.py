@@ -114,6 +114,27 @@ class Bot_utility:
                 return True
         return False
         
+    def check_picture_list(self, picture_list_str: str) -> bool:
+        """
+        Checks if any picture in a comma-separated list of picture names exists on the screen.
+
+        Args:
+            picture_list_str (str): A comma-separated string of picture names (without extensions).
+                                    These names should correspond to files in the 'Click_image/' directory.
+
+        Returns:
+            bool: True if any picture from the list is found on the screen, False otherwise.
+        """
+        picture_names = [name.strip() for name in picture_list_str.split(',')]
+        
+        for picture_name in picture_names:
+            if self._check_item_existing(picture_name):
+                self.context.add_log(f"Found '{picture_name}' from the picture list.")
+                return True  # Break and return True as soon as one picture is found
+        
+        self.context.add_log(f"None of the pictures in the list '{picture_list_str}' were found.")
+        return False
+        
     def left_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92,stop_if_not_found=False):
         """Finds a UI element (as an image) on the screen and performs a left click.
 
@@ -575,7 +596,8 @@ class Bot_utility:
         if self.check_image_exits(check_image,timeout):
             self.left_click(click_image)
             return 'clicked'
-        return 'Not found'        
+        return 'Not found'
+
         
 class Bot_SAP:
     '''
@@ -619,7 +641,7 @@ class Bot_SAP:
                 self.bot_utility.activate_window('SAP Logon')
             time.sleep(2)
             
-            self.bot_utility.check_image_exits('SAP GUI/SAP GUI/SAP_logon_button',timeout=10)
+            self.bot_utility.check_image_exits('SAP GUI/SAP_logon_button',timeout=10)
             if self.bot_utility.check_image_exits('SAP GUI/SAP_Logon_filter_box',timeout=5) ==False:
                 self.bot_utility.left_click('SAP GUI/SAP_Logon_taskbar_incon')
 
