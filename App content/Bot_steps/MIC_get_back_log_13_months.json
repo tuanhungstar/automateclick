@@ -1,0 +1,2249 @@
+{
+    "added_steps_data": [
+        {
+            "assign_to_variable_name": "df_month_list",
+            "class_name": "youmodule2",
+            "method_name": "create_past_months_df",
+            "module_name": "my_modules",
+            "parameters_config": {
+                "date_format": {
+                    "type": "hardcoded",
+                    "value": "%m/%d/%Y"
+                },
+                "number_month": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                50
+            ]
+        },
+        {
+            "assign_to_variable_name": "df_month_list",
+            "class_name": "DataFrame",
+            "method_name": "add_column_with_constant",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "constant_value": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                },
+                "new_column_name": {
+                    "type": "hardcoded",
+                    "value": "Actual_backlog"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                170
+            ]
+        },
+        {
+            "assign_to_variable_name": "Len_month_list",
+            "class_name": "DataFrame",
+            "method_name": "df_len",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                290
+            ]
+        },
+        {
+            "group_id": "group_1",
+            "group_name": "Login_MIC",
+            "type": "group_start",
+            "workflow_pos": [
+                2730,
+                410
+            ]
+        },
+        {
+            "group_id": "group_1",
+            "type": "group_end"
+        },
+        {
+            "assign_to_variable_name": "isMICopen",
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                },
+                "title": {
+                    "type": "hardcoded",
+                    "value": "MIC-GTM"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                530
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMICopen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_1",
+            "type": "IF_START",
+            "workflow_pos": [
+                2730,
+                650
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "activate_window",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "title": {
+                    "type": "hardcoded",
+                    "value": "MIC"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                770
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "close_window",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "title": {
+                    "type": "hardcoded",
+                    "value": "MIC-GTM"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                890
+            ]
+        },
+        {
+            "assign_to_variable_name": "isMicmessage",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_close_message"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                1010
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMicmessage"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_2",
+            "type": "IF_START",
+            "workflow_pos": [
+                2400,
+                1130
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_close_message"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2334,
+                1250
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMicmessage"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_2",
+            "type": "ELSE"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMicmessage"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_2",
+            "type": "IF_END",
+            "workflow_pos": [
+                2400,
+                1410
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMICopen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_1",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_ms",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2994,
+                770
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMICopen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_1",
+            "type": "IF_END",
+            "workflow_pos": [
+                2730,
+                1570
+            ]
+        },
+        {
+            "assign_to_variable_name": "_webdriver",
+            "class_name": "Chrome_selenium",
+            "method_name": "connect_chrome",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "chrome_driver_link": {
+                    "type": "variable",
+                    "value": "link_chrome"
+                },
+                "url": {
+                    "type": "variable",
+                    "value": "url"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                1690
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                1810
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_selenium",
+            "method_name": "find_element_action",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "Actions": {
+                    "type": "hardcoded",
+                    "value": "Send_Key"
+                },
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "xpath"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "//*[@id=\"username\"]"
+                },
+                "text_to_send": {
+                    "type": "hardcoded",
+                    "value": "Hphung@bsh"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                1930
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_selenium",
+            "method_name": "find_element_action",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "Actions": {
+                    "type": "hardcoded",
+                    "value": "Send_Key"
+                },
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "xpath"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "//*[@id=\"password\"]"
+                },
+                "text_to_send": {
+                    "type": "hardcoded",
+                    "value": "Frankfurt-2058"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                2050
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_selenium",
+            "method_name": "find_element_action",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "Actions": {
+                    "type": "hardcoded",
+                    "value": "Click"
+                },
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "xpath"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "//input[@value='Sign in']"
+                },
+                "text_to_send": {
+                    "type": "hardcoded",
+                    "value": ""
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                2170
+            ]
+        },
+        {
+            "assign_to_variable_name": "islognin",
+            "class_name": "Chrome_selenium",
+            "method_name": "check_element_exist",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "xpath"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "/html/body/div/main/div/div[2]/div[2]/div[2]/div/div[1]/div/a/div/div/div[2]/h5"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 10
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                2290
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "islognin"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_3",
+            "type": "IF_START",
+            "workflow_pos": [
+                2730,
+                2410
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_selenium",
+            "method_name": "find_element_action",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "Actions": {
+                    "type": "hardcoded",
+                    "value": "Click"
+                },
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "xpath"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "/html/body/div/main/div/div[2]/div[2]/div[2]/div/div[1]/div/a/div/div/div[2]/h5"
+                },
+                "text_to_send": {
+                    "type": "hardcoded",
+                    "value": ""
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                2530
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "islognin"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_3",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "stop_workflow",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2994,
+                2530
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "islognin"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_3",
+            "type": "IF_END",
+            "workflow_pos": [
+                2730,
+                2690
+            ]
+        },
+        {
+            "assign_to_variable_name": "isMICopen",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_GTM_Suite"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 60
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                2810
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMICopen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_4",
+            "type": "IF_START",
+            "workflow_pos": [
+                2730,
+                2930
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                3050
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMICopen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_4",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "stop_workflow",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2994,
+                3050
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isMICopen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_4",
+            "type": "IF_END",
+            "workflow_pos": [
+                2730,
+                3210
+            ]
+        },
+        {
+            "assign_to_variable_name": "_webdriver",
+            "class_name": "Chrome_MIC",
+            "method_name": "switch_driver_tab",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "tab": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                3330
+            ]
+        },
+        {
+            "group_id": "group_2",
+            "group_name": "Classification Inbox",
+            "type": "group_start",
+            "workflow_pos": [
+                2730,
+                3450
+            ]
+        },
+        {
+            "group_id": "group_2",
+            "type": "group_end"
+        },
+        {
+            "group_id": "group_7",
+            "group_name": "MIC_open_report",
+            "type": "group_start",
+            "workflow_pos": [
+                2730,
+                3570
+            ]
+        },
+        {
+            "group_id": "group_7",
+            "group_name": "MIC_open_report",
+            "type": "group_end"
+        },
+        {
+            "assign_to_variable_name": "_try",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                3690
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": null,
+                "iteration_count_config": {
+                    "type": "variable",
+                    "value": "_try"
+                },
+                "loop_name": "right_click_inbox"
+            },
+            "loop_id": "loop_1",
+            "type": "loop_start",
+            "workflow_pos": [
+                2730,
+                3810
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/Clssification__inbox"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                3930
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "moveMouse",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "x": {
+                    "type": "hardcoded",
+                    "value": 50
+                },
+                "y": {
+                    "type": "hardcoded",
+                    "value": 50
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                4050
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                4170
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "right_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/Clssification__inbox"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                4290
+            ]
+        },
+        {
+            "assign_to_variable_name": "isNew_part_show",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/New_part"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                4410
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isNew_part_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_5",
+            "type": "IF_START",
+            "workflow_pos": [
+                2664,
+                4530
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_back_log_month"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "stop_if_not_found": {
+                    "type": "hardcoded",
+                    "value": false
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2334,
+                4650
+            ]
+        },
+        {
+            "assign_to_variable_name": "_try",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2334,
+                4770
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isNew_part_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_5",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_GTM_Suite"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2928,
+                4650
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2928,
+                4770
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isNew_part_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_5",
+            "type": "IF_END",
+            "workflow_pos": [
+                2664,
+                4930
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": null,
+                "iteration_count_config": {
+                    "type": "variable",
+                    "value": "_try"
+                },
+                "loop_name": "right_click_inbox"
+            },
+            "loop_id": "loop_1",
+            "type": "loop_end",
+            "workflow_pos": [
+                2730,
+                5090
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                5210
+            ]
+        },
+        {
+            "assign_to_variable_name": "isProgressInfo",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_progress_information"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                5330
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isProgressInfo"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_11",
+            "type": "IF_START",
+            "workflow_pos": [
+                2730,
+                5450
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_image_disappear",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_progress_information"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 60
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                5570
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isProgressInfo"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_11",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "do_nothing",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2994,
+                5570
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isProgressInfo"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_11",
+            "type": "IF_END",
+            "workflow_pos": [
+                2730,
+                5730
+            ]
+        },
+        {
+            "type": "step",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/Filter_criteria"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 60
+                }
+            },
+            "assign_to_variable_name": null,
+            "workflow_pos": [
+                2730,
+                5850
+            ]
+        },
+        {
+            "assign_to_variable_name": "isResetButton",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_Reset_button"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                5970
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isResetButton"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_6",
+            "type": "IF_START",
+            "workflow_pos": [
+                2730,
+                6090
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "do_nothing",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                6210
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isResetButton"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_6",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/Filter_criteria"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2994,
+                6210
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isResetButton"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_6",
+            "type": "IF_END",
+            "workflow_pos": [
+                2730,
+                6370
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": "monthlist_iterate",
+                "iteration_count_config": {
+                    "type": "variable",
+                    "value": "Len_month_list"
+                },
+                "loop_name": "Loop-Month-list"
+            },
+            "loop_id": "loop_3",
+            "type": "loop_start",
+            "workflow_pos": [
+                2730,
+                6490
+            ]
+        },
+        {
+            "assign_to_variable_name": "df_month_row",
+            "class_name": "change_variable_value",
+            "method_name": "math_add_variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "var1": {
+                    "type": "hardcoded",
+                    "value": "-1"
+                },
+                "var2": {
+                    "type": "variable",
+                    "value": "monthlist_iterate"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                6610
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                6730
+            ]
+        },
+        {
+            "group_id": "group_4",
+            "group_name": "enter_start_date",
+            "type": "group_start",
+            "workflow_pos": [
+                2664,
+                6850
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_Create_on"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 250
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "stop_if_not_found": {
+                    "type": "hardcoded",
+                    "value": true
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "ctrl+a"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "delete"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "_first_date_month",
+            "class_name": "DataFrame",
+            "method_name": "read_cell",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "col_idx": {
+                    "type": "hardcoded",
+                    "value": 1
+                },
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                },
+                "row_idx": {
+                    "type": "variable",
+                    "value": "df_month_row"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "_first_date_month",
+            "class_name": "change_variable_value",
+            "method_name": "add_space_2_var",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "var1": {
+                    "type": "variable",
+                    "value": "_first_date_month"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "variable",
+                    "value": "_first_date_month"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "hardcoded",
+                    "value": ""
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "hardcoded",
+                    "value": "00:00:00"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "group_id": "group_4",
+            "group_name": "enter_start_date",
+            "type": "group_end"
+        },
+        {
+            "group_id": "group_5",
+            "group_name": "enter_end_date",
+            "type": "group_start",
+            "workflow_pos": [
+                2664,
+                6970
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_Create_on"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 400
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "stop_if_not_found": {
+                    "type": "hardcoded",
+                    "value": true
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "ctrl+a"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isRecords_zero"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_8",
+            "type": "IF_START"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isRecords_zero"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_8",
+            "type": "ELSE"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isRecords_zero"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_8",
+            "type": "IF_END"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "delete"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "last_date_month",
+            "class_name": "DataFrame",
+            "method_name": "read_cell",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "col_idx": {
+                    "type": "hardcoded",
+                    "value": 2
+                },
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                },
+                "row_idx": {
+                    "type": "variable",
+                    "value": "df_month_row"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "_today",
+            "class_name": "DateTimeUtility",
+            "method_name": "get_current_date",
+            "module_name": "Datetime",
+            "parameters_config": {
+                "format_string": {
+                    "type": "hardcoded",
+                    "value": "%m/%d/%Y"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "_today",
+            "class_name": "change_variable_value",
+            "method_name": "add_space_2_var",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "var1": {
+                    "type": "variable",
+                    "value": "last_date_month"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "variable",
+                    "value": "_today"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "_time_var",
+            "class_name": "DateTimeUtility",
+            "method_name": "get_current_time",
+            "module_name": "Datetime",
+            "parameters_config": {
+                "format_string": {
+                    "type": "hardcoded",
+                    "value": "%H:%M:%S"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "hardcoded",
+                    "value": "23:56:00"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "enter"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "group_id": "group_5",
+            "group_name": "enter_start_date",
+            "type": "group_end"
+        },
+        {
+            "assign_to_variable_name": "isResetButton",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "MIC/MIC_Reset_button"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 60
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                7090
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isResetButton"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_7",
+            "type": "IF_START",
+            "workflow_pos": [
+                2664,
+                7210
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "do_nothing",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2334,
+                7330
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isResetButton"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_7",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "stop_workflow",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2928,
+                7330
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isResetButton"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_7",
+            "type": "IF_END",
+            "workflow_pos": [
+                2664,
+                7490
+            ]
+        },
+        {
+            "assign_to_variable_name": "total_records_inbox",
+            "class_name": "Chrome_MIC",
+            "method_name": "get_number_records",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "webdriver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                7610
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "DataFrame",
+            "method_name": "write_cell",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "col_idx": {
+                    "type": "hardcoded",
+                    "value": 5
+                },
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                },
+                "row_idx": {
+                    "type": "variable",
+                    "value": "df_month_row"
+                },
+                "value": {
+                    "type": "variable",
+                    "value": "total_records_inbox"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2664,
+                7730
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": "monthlist_iterate",
+                "iteration_count_config": {
+                    "type": "variable",
+                    "value": "Len_month_list"
+                },
+                "loop_name": "Loop-Month-list"
+            },
+            "loop_id": "loop_3",
+            "type": "loop_end",
+            "workflow_pos": [
+                2730,
+                7890
+            ]
+        },
+        {
+            "assign_to_variable_name": "db_connection",
+            "class_name": "MssqlDatabase",
+            "custom_config_method": "configure_data_hub",
+            "method_name": "_execute_mssql_connection",
+            "module_name": "MS SQL Module",
+            "parameters_config": {
+                "config_data": {
+                    "type": "hardcoded",
+                    "value": {
+                        "auth_mode": "windows",
+                        "database": "DB_FTSC_BOT",
+                        "host": "LDWSWISQLAPP03.bsh.corp.bshg.com"
+                    }
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                8010
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Mssql_Merge",
+            "custom_config_method": "configure_data_hub",
+            "method_name": "_execute_mssql_merge",
+            "module_name": "MS SQL Module",
+            "parameters_config": {
+                "config_data": {
+                    "type": "hardcoded",
+                    "value": {
+                        "connection_var": "db_connection",
+                        "dataframe_var": "df_month_list",
+                        "on_conditions": [
+                            {
+                                "source": "Year-Month",
+                                "target": "Year-Month"
+                            }
+                        ],
+                        "target_schema": "CCS",
+                        "target_table": "KPI_MIC_Backlog",
+                        "update_columns": [
+                            {
+                                "source": "Actual_backlog",
+                                "target": "Actual_backlog"
+                            }
+                        ]
+                    }
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                8130
+            ]
+        },
+        {
+            "assign_to_variable_name": "_today",
+            "class_name": "DateTimeUtility",
+            "method_name": "get_current_date",
+            "module_name": "Datetime",
+            "parameters_config": {
+                "format_string": {
+                    "type": "hardcoded",
+                    "value": "%m/%d/%Y"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                8250
+            ]
+        },
+        {
+            "assign_to_variable_name": "_last_date_current_month",
+            "class_name": "DataFrame",
+            "method_name": "read_cell",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "col_idx": {
+                    "type": "hardcoded",
+                    "value": 2
+                },
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                },
+                "row_idx": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                8370
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "_today"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "variable",
+                        "value": "_last_date_current_month"
+                    }
+                }
+            },
+            "if_id": "if_12",
+            "type": "IF_START",
+            "workflow_pos": [
+                2730,
+                8490
+            ]
+        },
+        {
+            "assign_to_variable_name": "df_inbox",
+            "class_name": "DataFrame",
+            "method_name": "filter_by_value",
+            "module_name": "Pandas Lib",
+            "parameters_config": {
+                "column_name": {
+                    "type": "hardcoded",
+                    "value": "LastDayOfMonth"
+                },
+                "df": {
+                    "type": "variable",
+                    "value": "df_month_list"
+                },
+                "value_to_match": {
+                    "type": "variable",
+                    "value": "_last_date_current_month"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                8610
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Mssql_Merge",
+            "custom_config_method": "configure_data_hub",
+            "method_name": "_execute_mssql_merge",
+            "module_name": "MS SQL Module",
+            "parameters_config": {
+                "config_data": {
+                    "type": "hardcoded",
+                    "value": {
+                        "connection_var": "db_connection",
+                        "dataframe_var": "df_inbox",
+                        "on_conditions": [
+                            {
+                                "source": "Year-Month",
+                                "target": "Year-Month"
+                            }
+                        ],
+                        "target_schema": "CCS",
+                        "target_table": "KPI_MIC_Backlog",
+                        "update_columns": [
+                            {
+                                "source": "Actual_backlog",
+                                "target": "Backlog_by_month_end"
+                            }
+                        ]
+                    }
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2400,
+                8730
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "_today"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "variable",
+                        "value": "_last_date_current_month"
+                    }
+                }
+            },
+            "if_id": "if_12",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "youmodule2",
+            "method_name": "do_nothing",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                2994,
+                8610
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "_today"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "variable",
+                        "value": "_last_date_current_month"
+                    }
+                }
+            },
+            "if_id": "if_12",
+            "type": "IF_END",
+            "workflow_pos": [
+                2730,
+                8890
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Mssql_Close_Connection",
+            "custom_config_method": "configure_data_hub",
+            "method_name": "_execute_mssql_close",
+            "module_name": "MS SQL Module",
+            "parameters_config": {
+                "config_data": {
+                    "type": "hardcoded",
+                    "value": {
+                        "connection_var": "db_connection"
+                    }
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                9010
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_selenium",
+            "method_name": "close_driver",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                2730,
+                9130
+            ]
+        }
+    ],
+    "global_variables": {
+        "link_chrome": "C:/Users/puu1hc/OneDrive - Bosch Group/PersonalDrive/BOT 2023 Version/Auto-classify-new-2023/chromedriver-win64/chromedriver.exe",
+        "url": "https://bshgtm.eu.micgtm.com/portal",
+        "isMICopen": true,
+        "_webdriver": null,
+        "islognin": true,
+        "isMicmessage": true,
+        "_try": 1,
+        "isNew_part_show": true,
+        "isResetButton": true,
+        "_first_date_month": "09/01/2025 ",
+        "_time_var": "08:37:53",
+        "_today": "11/20/2025",
+        "isRecords_zero": false,
+        "_iterate": 1,
+        "isConfirm_message": true,
+        "is_clipboard_win": true,
+        "df_inbox": null,
+        "db_connection": null,
+        "isProgressInfo": false,
+        "excel_link": "C:/Users/puu1hc/OneDrive - Bosch Group/Automationtool/automatetask/App content/mic_inbox.xlsx",
+        "total_records_inbox": 1,
+        "Inbox_status": "",
+        "df_month_list": null,
+        "Len_month_list": 3,
+        "monthlist_iterate": 3,
+        "last_date_month": "09/30/2025",
+        "df_month_row": 2,
+        "_last_date_current_month": "11/30/2025"
+    },
+    "group_expansion_states": {}
+}

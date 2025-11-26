@@ -1,0 +1,312 @@
+{
+    "added_steps_data": [
+        {
+            "assign_to_variable_name": "_workbook",
+            "class_name": "handle_excel",
+            "method_name": "read_excel",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "file_link": {
+                    "type": "hardcoded",
+                    "value": "C:/Users/puu1hc/OneDrive - Bosch Group/Automationtool/automatetask/TGDD/TGGD partlist _ newT.xlsx"
+                },
+                "sheet_name": {
+                    "type": "hardcoded",
+                    "value": null
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                600,
+                50
+            ]
+        },
+        {
+            "assign_to_variable_name": "_total_line",
+            "class_name": "handle_excel",
+            "method_name": "count_non_empty_rows_in_column",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "column_identifier": {
+                    "type": "hardcoded",
+                    "value": "D"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "_workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                600,
+                170
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": "_interate",
+                "iteration_count_config": {
+                    "type": "hardcoded",
+                    "value": 2
+                },
+                "loop_name": null
+            },
+            "loop_id": "loop_1",
+            "type": "loop_start",
+            "workflow_pos": [
+                600,
+                290
+            ]
+        },
+        {
+            "assign_to_variable_name": "_row",
+            "class_name": "change_variable_value",
+            "method_name": "math_add_variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "var1": {
+                    "type": "variable",
+                    "value": "_interate"
+                },
+                "var2": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                410
+            ]
+        },
+        {
+            "assign_to_variable_name": "_product_search",
+            "class_name": "handle_excel",
+            "method_name": "read_excel_cells",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "col": {
+                    "type": "hardcoded",
+                    "value": "E"
+                },
+                "row": {
+                    "type": "variable",
+                    "value": "_row"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "_workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                530
+            ]
+        },
+        {
+            "assign_to_variable_name": "df_search",
+            "class_name": "Google_cloud",
+            "method_name": "search_google",
+            "module_name": "Google_cloud",
+            "parameters_config": {
+                "api_key": {
+                    "type": "hardcoded",
+                    "value": "AIzaSyDcI4Dya15MwEeprPsM28PHbKq_eBZwzB8"
+                },
+                "product_name": {
+                    "type": "variable",
+                    "value": "_product_search"
+                },
+                "proxy_config": {
+                    "type": "hardcoded",
+                    "value": "{'https': 'rb-proxy-de.bosch.com:8080'}"
+                },
+                "search_engine_id": {
+                    "type": "hardcoded",
+                    "value": "024aceea33b694611"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                650
+            ]
+        },
+        {
+            "assign_to_variable_name": "_webdriver",
+            "class_name": "Chrome_selenium",
+            "method_name": "connect_chrome",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "chrome_driver_link": {
+                    "type": "variable",
+                    "value": "Chrome_link"
+                },
+                "url": {
+                    "type": "variable",
+                    "value": "url"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                770
+            ]
+        },
+        {
+            "assign_to_variable_name": "Desc",
+            "class_name": "Chrome_selenium",
+            "method_name": "find_element_action",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "Actions": {
+                    "type": "hardcoded",
+                    "value": ""
+                },
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "class_name"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "product-name"
+                },
+                "text_to_send": {
+                    "type": "hardcoded",
+                    "value": ""
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                890
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_selenium",
+            "method_name": "get_text_from_element",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "element": {
+                    "type": "variable",
+                    "value": "Desc"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                1010
+            ]
+        },
+        {
+            "assign_to_variable_name": "_price",
+            "class_name": "Chrome_selenium",
+            "method_name": "find_element_action",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "Actions": {
+                    "type": "hardcoded",
+                    "value": ""
+                },
+                "by_strategy": {
+                    "type": "hardcoded",
+                    "value": "class_name"
+                },
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "locator_value": {
+                    "type": "hardcoded",
+                    "value": "box-price"
+                },
+                "text_to_send": {
+                    "type": "hardcoded",
+                    "value": ""
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                1130
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_TGDD",
+            "method_name": "get_price",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "store": {
+                    "type": "hardcoded",
+                    "value": "DMX"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                1250
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Chrome_TGDD",
+            "method_name": "get_description",
+            "module_name": "Chrome_selenium",
+            "parameters_config": {
+                "driver": {
+                    "type": "variable",
+                    "value": "_webdriver"
+                },
+                "store": {
+                    "type": "hardcoded",
+                    "value": "DMX"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                534,
+                1370
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": "_interate",
+                "iteration_count_config": {
+                    "type": "hardcoded",
+                    "value": 2
+                },
+                "loop_name": null
+            },
+            "loop_id": "loop_1",
+            "type": "loop_end",
+            "workflow_pos": [
+                600,
+                1530
+            ]
+        }
+    ],
+    "global_variables": {
+        "Chrome_link": "C:/Users/puu1hc/OneDrive - Bosch Group/PersonalDrive/BOT 2023 Version/Auto-classify-new-2023/chromedriver-win64/chromedriver.exe",
+        "url": "https://www.dienmayxanh.com/noi-com-dien/noi-com-nap-roi-sharp-1-8-lit-ksh-f188v-gb?utm_flashsale=1",
+        "_webdriver": null,
+        "Desc": null,
+        "_price": null,
+        "_workbook": null,
+        "_total_line": 999,
+        "_interate": 1,
+        "_row": 2,
+        "_product_search": "Tivi Neo QLED 8K Samsung QA65QN900A",
+        "df_search": null
+    }
+}

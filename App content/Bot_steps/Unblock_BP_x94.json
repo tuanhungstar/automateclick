@@ -1,0 +1,2517 @@
+{
+    "added_steps_data": [
+        {
+            "assign_to_variable_name": "workbook",
+            "class_name": "handle_excel",
+            "method_name": "read_excel",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "file_link": {
+                    "type": "variable",
+                    "value": "excel_link"
+                },
+                "sheet_name": {
+                    "type": "hardcoded",
+                    "value": null
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                240,
+                30
+            ]
+        },
+        {
+            "assign_to_variable_name": "_total_excel_row",
+            "class_name": "handle_excel",
+            "method_name": "count_non_empty_rows_in_column",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "column_identifier": {
+                    "type": "hardcoded",
+                    "value": "A"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                240,
+                150
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": "excel_iterate",
+                "iteration_count_config": {
+                    "type": "hardcoded",
+                    "value": 5
+                },
+                "loop_name": null
+            },
+            "loop_id": "loop_2",
+            "type": "loop_start",
+            "workflow_pos": [
+                240,
+                270
+            ]
+        },
+        {
+            "assign_to_variable_name": "isBotchecked",
+            "class_name": "handle_excel",
+            "method_name": "read_excel_cells",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "col": {
+                    "type": "hardcoded",
+                    "value": "D"
+                },
+                "row": {
+                    "type": "variable",
+                    "value": "excel_iterate"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                240,
+                390
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isBotchecked"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": null
+                    }
+                }
+            },
+            "if_id": "if_11",
+            "type": "IF_START",
+            "workflow_pos": [
+                240,
+                510
+            ]
+        },
+        {
+            "assign_to_variable_name": "current_BP",
+            "class_name": "handle_excel",
+            "method_name": "read_excel_cells",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "col": {
+                    "type": "hardcoded",
+                    "value": "A"
+                },
+                "row": {
+                    "type": "variable",
+                    "value": "excel_iterate"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                20,
+                630
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "current_BP"
+                    },
+                    "operator": "is not",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": null
+                    }
+                }
+            },
+            "if_id": "if_9",
+            "type": "IF_START",
+            "workflow_pos": [
+                20,
+                750
+            ]
+        },
+        {
+            "group_id": "group_1",
+            "group_name": "Template_LoginSAP",
+            "type": "group_start",
+            "workflow_pos": [
+                -200,
+                870
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": "isLogonOpen",
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 1
+                },
+                "title": {
+                    "type": "variable",
+                    "value": "SAP_name"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isLogonOpen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_1",
+            "type": "IF_START"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "activate_window",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "title": {
+                    "type": "variable",
+                    "value": "SAP_name"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isLogonOpen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_1",
+            "type": "ELSE",
+            "workflow_pos": [
+                702,
+                702
+            ]
+        },
+        {
+            "assign_to_variable_name": "isLogonOpen",
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 1
+                },
+                "title": {
+                    "type": "hardcoded",
+                    "value": "SAP Logon"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isLogonOpen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_2",
+            "type": "IF_START"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "activate_window",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "title": {
+                    "type": "hardcoded",
+                    "value": "SAP Logon"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isLogonOpen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_2",
+            "type": "ELSE",
+            "workflow_pos": [
+                789,
+                886
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "win+R"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                },
+                "title": {
+                    "type": "hardcoded",
+                    "value": "Run"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "delete"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 1
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "hardcoded",
+                    "value": "saplogon"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "ENTER"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isLogonOpen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_2",
+            "type": "IF_END"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 20
+                },
+                "title": {
+                    "type": "hardcoded",
+                    "value": "SAP Logon"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_Logon_filter_box"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 60
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "Ctrl+a"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "delete"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "variable",
+                    "value": "SAP_name"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "ENTER"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_check_icone"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isLogonOpen"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_1",
+            "type": "IF_END"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 20
+                },
+                "title": {
+                    "type": "variable",
+                    "value": "SAP_name"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_SAP",
+            "method_name": "enter_tcode",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "tcode": {
+                    "type": "hardcoded",
+                    "value": "/n"
+                }
+            },
+            "type": "step"
+        },
+        {
+            "group_id": "group_1",
+            "type": "group_end"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_SAP",
+            "method_name": "enter_tcode",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "tcode": {
+                    "type": "hardcoded",
+                    "value": "/nbp"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                990
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 4
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                1110
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.7
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_warning"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 100
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                1230
+            ]
+        },
+        {
+            "assign_to_variable_name": "is_BP_label_show",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_open_icon"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 20
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                1350
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "is_BP_label_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_3",
+            "type": "IF_START",
+            "workflow_pos": [
+                -200,
+                1470
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_open_icon"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                1590
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                1710
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_warning"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 100
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                1830
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 20
+                },
+                "title": {
+                    "type": "hardcoded",
+                    "value": "business partner"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                1950
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2070
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_Business_partner_box"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 20
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2190
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "ctrl+a"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2310
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "delete"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2430
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "variable",
+                    "value": "current_BP"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2550
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "enter"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2670
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2790
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_warning"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 100
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                2910
+            ]
+        },
+        {
+            "assign_to_variable_name": "is_BP_not_exist",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_BP_notexist"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                3030
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "is_BP_not_exist"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_4",
+            "type": "IF_START",
+            "workflow_pos": [
+                -420,
+                3150
+            ]
+        },
+        {
+            "assign_to_variable_name": "Bot_status",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": "BP does not exist"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -640,
+                3270
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_x_icon"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -640,
+                3390
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "is_BP_not_exist"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_4",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_GTS_tab"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                3270
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_GTS_tab"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                3390
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                3510
+            ]
+        },
+        {
+            "assign_to_variable_name": "isEditmode",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_edit_mode"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                3630
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isEditmode"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_5",
+            "type": "IF_START",
+            "workflow_pos": [
+                -200,
+                3750
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isEditmode"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_5",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_change_mode"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                3870
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isEditmode"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_5",
+            "type": "IF_END",
+            "workflow_pos": [
+                -200,
+                4030
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4150
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_warning"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 100
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4270
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click_cross_2_images",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click_x": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_posneg_header"
+                },
+                "image_to_click_y": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_Pos_Nag_LReg_Y_SPLH"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4390
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4510
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "delete"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4630
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4750
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click_cross_2_images",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click_x": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_Block_header"
+                },
+                "image_to_click_y": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_Pos_Nag_LReg_Y_SPLH"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 10
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4870
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_hotkey",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "hotkey": {
+                    "type": "hardcoded",
+                    "value": "ctrl+c"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                4990
+            ]
+        },
+        {
+            "assign_to_variable_name": "isblocked",
+            "class_name": "youmodule2",
+            "method_name": "clipboard_value",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                5110
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isblocked"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "variable",
+                        "value": "_blocked_value"
+                    }
+                }
+            },
+            "if_id": "if_8",
+            "type": "IF_START",
+            "workflow_pos": [
+                -200,
+                5230
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isblocked"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "variable",
+                        "value": "_blocked_value"
+                    }
+                }
+            },
+            "if_id": "if_8",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click_cross_2_images",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click_x": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_Block_header"
+                },
+                "image_to_click_y": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_Pos_Nag_LReg_Y_SPLH"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                5350
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isblocked"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "variable",
+                        "value": "_blocked_value"
+                    }
+                }
+            },
+            "if_id": "if_8",
+            "type": "IF_END",
+            "workflow_pos": [
+                -200,
+                5510
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                5630
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_accept_entries"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                5750
+            ]
+        },
+        {
+            "assign_to_variable_name": "isblock_reason_show",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_BP_block_reason_header"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                5870
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isblock_reason_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_10",
+            "type": "IF_START",
+            "workflow_pos": [
+                -200,
+                5990
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_reason"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6110
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6230
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_reason_other"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6350
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_BP_block_reason_header"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 100
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6470
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "send_text",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "text": {
+                    "type": "variable",
+                    "value": "unBlock_reason"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6590
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 2
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6710
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_BP_block_reason_check_icon"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6830
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                6950
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isblock_reason_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_10",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": "Bot_status",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": "BP was not blocked"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                20,
+                6110
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isblock_reason_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_10",
+            "type": "IF_END",
+            "workflow_pos": [
+                -200,
+                7110
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": null,
+                "iteration_count_config": {
+                    "type": "variable",
+                    "value": "loop_save"
+                },
+                "loop_name": null
+            },
+            "loop_id": "loop_1",
+            "type": "loop_start",
+            "workflow_pos": [
+                -200,
+                7230
+            ]
+        },
+        {
+            "assign_to_variable_name": "isWarning_mess",
+            "class_name": "Bot_utility",
+            "method_name": "check_win_title_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                },
+                "title": {
+                    "type": "hardcoded",
+                    "value": "Warning"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                7350
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isWarning_mess"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_7",
+            "type": "IF_START",
+            "workflow_pos": [
+                -200,
+                7470
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "moveMouse",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "x": {
+                    "type": "hardcoded",
+                    "value": 50
+                },
+                "y": {
+                    "type": "hardcoded",
+                    "value": 50
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                7590
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_warning"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 100
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                7710
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isWarning_mess"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_7",
+            "type": "ELSE"
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isWarning_mess"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_7",
+            "type": "IF_END",
+            "workflow_pos": [
+                -200,
+                7870
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_BP_block_save_icon"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 0
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                7990
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "wait_second",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 3
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                8110
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Bot_utility",
+            "method_name": "left_click",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "confidence": {
+                    "type": "hardcoded",
+                    "value": 0.92
+                },
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblock_warning"
+                },
+                "offset_x": {
+                    "type": "hardcoded",
+                    "value": 100
+                },
+                "offset_y": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                8230
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "Keyboard",
+            "method_name": "moveMouse",
+            "module_name": "Mouse_Key_Automate",
+            "parameters_config": {
+                "x": {
+                    "type": "hardcoded",
+                    "value": 50
+                },
+                "y": {
+                    "type": "hardcoded",
+                    "value": 50
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                8350
+            ]
+        },
+        {
+            "assign_to_variable_name": "isSaved_unblock_BP",
+            "class_name": "Bot_utility",
+            "method_name": "check_image_exits",
+            "module_name": "Gui_Automate",
+            "parameters_config": {
+                "image_to_click": {
+                    "type": "hardcoded_file",
+                    "value": "SAP GUI/SAP_unblockBP_saved"
+                },
+                "timeout": {
+                    "type": "hardcoded",
+                    "value": 5
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -200,
+                8470
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isSaved_unblock_BP"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_6",
+            "type": "IF_START",
+            "workflow_pos": [
+                -200,
+                8590
+            ]
+        },
+        {
+            "assign_to_variable_name": "Bot_status",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": "BP is unblock successful"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                8710
+            ]
+        },
+        {
+            "assign_to_variable_name": "loop_save",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": 0
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                -420,
+                8830
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isSaved_unblock_BP"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_6",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": "Bot_status",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": "Bot Error can not unblock the BP"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                20,
+                8710
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isSaved_unblock_BP"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_6",
+            "type": "IF_END",
+            "workflow_pos": [
+                -200,
+                8990
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": null,
+                "iteration_count_config": {
+                    "type": "variable",
+                    "value": "loop_save"
+                },
+                "loop_name": null
+            },
+            "loop_id": "loop_1",
+            "type": "loop_end",
+            "workflow_pos": [
+                -200,
+                9150
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "is_BP_not_exist"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_4",
+            "type": "IF_END",
+            "workflow_pos": [
+                -420,
+                9310
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "is_BP_label_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_3",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": "Bot Error can not open BP"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                20,
+                1590
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "is_BP_label_show"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": true
+                    }
+                }
+            },
+            "if_id": "if_3",
+            "type": "IF_END",
+            "workflow_pos": [
+                -200,
+                9470
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "current_BP"
+                    },
+                    "operator": "is not",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": null
+                    }
+                }
+            },
+            "if_id": "if_9",
+            "type": "ELSE"
+        },
+        {
+            "assign_to_variable_name": "BP_number",
+            "class_name": "change_variable_value",
+            "method_name": "assign_value2variable",
+            "module_name": "Variable_manipulation",
+            "parameters_config": {
+                "value": {
+                    "type": "hardcoded",
+                    "value": "BP is None"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                240,
+                870
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "current_BP"
+                    },
+                    "operator": "is not",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": null
+                    }
+                }
+            },
+            "if_id": "if_9",
+            "type": "IF_END",
+            "workflow_pos": [
+                20,
+                9630
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "handle_excel",
+            "method_name": "write_excel_cells",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "col": {
+                    "type": "hardcoded",
+                    "value": "D"
+                },
+                "row": {
+                    "type": "variable",
+                    "value": "excel_iterate"
+                },
+                "value": {
+                    "type": "variable",
+                    "value": "Bot_status"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                20,
+                9750
+            ]
+        },
+        {
+            "assign_to_variable_name": null,
+            "class_name": "handle_excel",
+            "method_name": "save_excel",
+            "module_name": "File_ReadWrite",
+            "parameters_config": {
+                "file_name": {
+                    "type": "variable",
+                    "value": "excel_link"
+                },
+                "workbook": {
+                    "type": "variable",
+                    "value": "workbook"
+                }
+            },
+            "type": "step",
+            "workflow_pos": [
+                20,
+                9870
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isBotchecked"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": null
+                    }
+                }
+            },
+            "if_id": "if_11",
+            "type": "ELSE"
+        },
+        {
+            "type": "step",
+            "class_name": "youmodule2",
+            "method_name": "do_nothing",
+            "module_name": "my_modules",
+            "parameters_config": {},
+            "assign_to_variable_name": null,
+            "workflow_pos": [
+                460,
+                630
+            ]
+        },
+        {
+            "condition_config": {
+                "block_name": null,
+                "condition": {
+                    "left_operand": {
+                        "type": "variable",
+                        "value": "isBotchecked"
+                    },
+                    "operator": "==",
+                    "right_operand": {
+                        "type": "hardcoded",
+                        "value": null
+                    }
+                }
+            },
+            "if_id": "if_11",
+            "type": "IF_END",
+            "workflow_pos": [
+                240,
+                10030
+            ]
+        },
+        {
+            "loop_config": {
+                "assign_iteration_to_variable": "excel_iterate",
+                "iteration_count_config": {
+                    "type": "hardcoded",
+                    "value": 5
+                },
+                "loop_name": null
+            },
+            "loop_id": "loop_2",
+            "type": "loop_end",
+            "workflow_pos": [
+                240,
+                10190
+            ]
+        }
+    ],
+    "global_variables": {
+        "SAP_name": "X94",
+        "isLogonOpen": true,
+        "is_BP_label_show": true,
+        "Bot_status": "BP does not exist",
+        "BP_number": "37794407",
+        "is_BP_not_exist": true,
+        "isEditmode": true,
+        "unBlock_reason": "Test Bot",
+        "loop_save": 0,
+        "isSaved_unblock_BP": true,
+        "isWarning_mess": false,
+        "isblocked": "0",
+        "_blocked_value": "0",
+        "excel_link": "C:/Users/PUU1HC/OneDrive - Bosch Group/Automationtool/NEG_LIST_X94_231025.xlsx",
+        "workbook": null,
+        "_total_excel_row": 32934,
+        "excel_iterate": 1,
+        "current_BP": "Business Partner",
+        "isblock_reason_show": false,
+        "isBotchecked": "Bot status"
+    }
+}

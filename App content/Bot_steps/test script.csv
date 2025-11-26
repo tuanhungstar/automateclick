@@ -1,0 +1,8 @@
+__SCHEDULE_INFO__
+{}
+__GLOBAL_VARIABLES__
+SAP,"""Q94"""
+sap_logon_link,"""C:/Program Files (x86)/SAP/FrontEnd/SAPGUI/saplogon.exe"""
+__BOT_STEPS__
+StepType,DataJSON
+step,"{""type"": ""step"", ""class_name"": ""Code_Executor"", ""method_name"": ""_execute_python_code"", ""module_name"": ""Script"", ""parameters_config"": {""config_data"": {""type"": ""hardcoded"", ""value"": {""code_string"": ""from Bot_module.Gui_Automate import Bot_utility\nfrom Bot_module.Gui_Automate import Bot_SAP\nbot_utility = Bot_utility(context)\nbot_SAP = Bot_SAP(context)\n\nbot_utility.wait_second(1)\nbot_SAP.log_in(context.get_variable('SAP'), context.get_variable('sap_logon_link'))"", ""imported_module_path"": null}}}, ""assign_to_variable_name"": null, ""custom_config_method"": ""configure_data_hub"", ""workflow_pos"": [600, 50]}"

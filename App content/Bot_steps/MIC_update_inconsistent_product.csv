@@ -1,0 +1,8 @@
+__SCHEDULE_INFO__
+{}
+__GLOBAL_VARIABLES__
+python_exe_link,"""C:/VBA/env64/python.exe"""
+AI_train_py_link,"""C:/Users/puu1hc/OneDrive - Bosch Group/PersonalDrive/BOT 2023 Version/Auto-classify-new-2023/Re_Train_AI_data.py"""
+__BOT_STEPS__
+StepType,DataJSON
+step,"{""type"": ""step"", ""class_name"": ""youmodule2"", ""method_name"": ""create_and_run_subprocess_bat"", ""module_name"": ""my_modules"", ""parameters_config"": {""python_exe_link"": {""type"": ""variable"", ""value"": ""python_exe_link""}, ""py_script_link"": {""type"": ""variable"", ""value"": ""AI_train_py_link""}}, ""assign_to_variable_name"": null, ""workflow_pos"": [600, 50]}"
