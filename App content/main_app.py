@@ -12,7 +12,7 @@ import re
 import ast
 import urllib.request
 import zipfile
-import shutilF
+import shutil
 import subprocess
 from PIL import ImageGrab
 import PIL.Image
@@ -1486,6 +1486,9 @@ class ExecutionWorker(QThread):
                 self.context.add_log(f"CRITICAL: Failed to send notification email. Error: {e}")
 
     # --- MODIFIED RUN METHOD ---
+# In main_app.py, find the ExecutionWorker class
+# REPLACE the entire 'run' method with this one:
+
     def run(self) -> None:
         self.execution_started.emit("Starting execution...")
         if not self.steps_to_execute:
@@ -1514,8 +1517,11 @@ class ExecutionWorker(QThread):
         self.group_stack = []
         step_index = self.selected_start_index
         original_listbox_row_index = 0
+        
+        # Define the jump signal prefix
+        JUMP_PREFIX = "_JUMP_TO_STEP_::"
+
         try:
-            # ... (The entire 'while step_index < actual_end_index:' loop remains IDENTICAL) ...
             while step_index < actual_end_index:
                 while self._is_paused:
                     if self._is_stopped: break
@@ -1608,10 +1614,51 @@ class ExecutionWorker(QThread):
                             self.instantiated_objects[instance_key] = class_obj(**init_kwargs)
                         instance = self.instantiated_objects[instance_key]; method_func = getattr(instance, method_name); method_kwargs = {k:v for k,v in resolved_parameters.items()}
                         if 'context' in inspect.signature(method_func).parameters: method_kwargs['context'] = self.context
+                        
+                        # Execute the method and get the result
                         result = method_func(**method_kwargs)
-                        if assign_to_variable_name: self.global_variables[assign_to_variable_name] = result; result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
-                        else: result_msg = f"Result: {result}"
+                        
+                        # ===============================================
+                        # === NEW JUMP LOGIC STARTS HERE ===
+                        # ===============================================
+                        if isinstance(result, str) and result.startswith(JUMP_PREFIX):
+                            try:
+                                # 1. Parse the target step number from the result string
+                                target_step_1_based = int(result.replace(JUMP_PREFIX, ""))
+                                # 2. Convert to 0-based index for our list
+                                target_index_0_based = target_step_1_based - 1
+
+                                # 3. Validate the target index
+                                if 0 <= target_index_0_based < len(self.steps_to_execute):
+                                    # 4. Set the main step_index to the new target.
+                                    #    We subtract 1 because the loop will auto-increment it.
+                                    step_index = target_index_0_based - 1
+                                    self.context.add_log(f"Jumping to step {target_step_1_based}.")
+                                    self.execution_item_finished.emit(step_data, f"Jumping to step {target_step_1_based}", original_listbox_row_index)
+                                else:
+                                    # The jump target is out of bounds, treat as an error
+                                    raise ValueError(f"Jump target step {target_step_1_based} is out of bounds (1-{len(self.steps_to_execute)}).")
+                            except (ValueError, TypeError) as jump_error:
+                                # Catch errors from parsing or invalid numbers
+                                raise ValueError(f"Invalid JumpTo instruction: {jump_error}")
+                            
+                            # After setting the new index, continue to the next loop iteration
+                            # to immediately process the target step.
+                            step_index += 1
+                            continue 
+                        # ===============================================
+                        # === NEW JUMP LOGIC ENDS HERE ===
+                        # ===============================================
+                        
+                        # --- This is the original logic for normal steps ---
+                        if assign_to_variable_name: 
+                            self.global_variables[assign_to_variable_name] = result
+                            result_msg = f"Result: {result} (Assigned to @{assign_to_variable_name})"
+                        else: 
+                            result_msg = f"Result: {result}"
+                            
                         self.execution_item_finished.emit(step_data, result_msg, original_listbox_row_index)
+                        
                     except Exception as e: raise e
                 elif step_type == "IF_START":
                     condition_config, if_id = step_data["condition_config"], step_data["if_id"]; condition_result = self._evaluate_condition(condition_config["condition"])
@@ -1643,7 +1690,6 @@ class ExecutionWorker(QThread):
                     self.conditional_stack.pop(); self.execution_item_finished.emit(step_data, "End of Conditional", original_listbox_row_index)
                 step_index += 1
         except Exception as e:
-            # --- MODIFICATION: STORE THE ERROR MESSAGE ---
             self.error_message = f"Error at step {original_listbox_row_index+1}: {type(e).__name__}: {e}"
             self.context.add_log(self.error_message)
             self.execution_error.emit(self.steps_to_execute[step_index] if step_index < len(self.steps_to_execute) else {}, self.error_message, original_listbox_row_index)
@@ -1655,12 +1701,11 @@ class ExecutionWorker(QThread):
                 if not self._is_stopped and step_index < len(self.steps_to_execute): next_index = self.steps_to_execute[step_index].get("original_listbox_row_index", -1)
                 self.next_step_index_to_select = next_index
             
-            # --- MODIFICATION: SEND EMAIL AND EMIT FINISH SIGNAL ---
-            # Send email only if this is NOT single-step mode (i.e., a real run)
             if not self.single_step_mode:
                 self._send_notification_email()
             
             self.execution_finished_all.emit(self.context, self._is_stopped, self.next_step_index_to_select)
+
 
     # ... (Keep all existing methods like pause, resume, stop) ...
     def pause(self): self._is_paused = True; self.context.add_log("Execution PAUSED."); self.execution_started.emit("Execution PAUSED.")
@@ -3149,7 +3194,58 @@ class WorkflowCanvas(QWidget):
         self._adjust_canvas_size()
         
         self.update()
-        
+# In main_app.py, inside the WorkflowCanvas class
+
+# In main_app.py, inside the WorkflowCanvas class
+# REPLACE the entire render_to_pixmap method with this one:
+
+    def render_to_pixmap(self) -> QPixmap:
+        """
+        Renders the entire workflow canvas, including off-screen content, to a QPixmap.
+        [CORRECTED VERSION]
+        """
+        if not self.nodes:
+            # If there are no nodes, return an empty pixmap
+            return QPixmap(1, 1)
+
+        # 1. Calculate the bounding box of all nodes to determine the required size
+        min_x = min(r.left() for r, _, _, _ in self.nodes)
+        min_y = min(r.top() for r, _, _, _ in self.nodes)
+        max_x = max(r.right() for r, _, _, _ in self.nodes)
+        max_y = max(r.bottom() for r, _, _, _ in self.nodes)
+
+        # 2. Add padding around the content
+        padding = 50
+        content_width = max_x - min_x + (2 * padding)
+        content_height = max_y - min_y + (2 * padding)
+
+        # 3. Create a QPixmap with the calculated size
+        pixmap = QPixmap(int(content_width), int(content_height))
+        pixmap.fill(Qt.GlobalColor.white) # Set a white background
+
+        # 4. Create a QPainter to draw on the pixmap
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing) # Ensure smooth rendering
+
+        # --- THIS IS THE CRITICAL FIX ---
+        # 5. Store the current canvas offset and temporarily set it to a special value
+        #    that aligns the content within the pixmap.
+        original_offset = self.canvas_offset
+        self.canvas_offset = QPoint(-min_x + padding, -min_y + padding)
+
+        # 6. Use the widget's own `render` method. This is the correct way to
+        #    paint a widget's contents onto a different paint device (our pixmap).
+        #    It correctly uses the widget's paintEvent logic.
+        self.render(painter)
+
+        # 7. Restore the original canvas offset for the on-screen display
+        self.canvas_offset = original_offset
+        # --- END OF CRITICAL FIX ---
+
+        # 8. End painting
+        painter.end()
+
+        return pixmap
     def _clear_all_user_positions(self):
         """Removes all user-defined positions to allow smart auto-layout."""
         def clear_positions_recursive(nodes: List[Dict]):
@@ -4267,12 +4363,13 @@ class MainWindow(QMainWindow):
         # --- Tools & Settings ---
         self.open_screenshot_tool_button = QPushButton("📷 Screenshot Tool")
         self.view_workflow_button = QPushButton("📈 View Workflow")
+        self.export_workflow_button = QPushButton("🖼️ Export to Image") # <<< ADD THIS LINE
         self.set_wait_time_button = QPushButton("⏱️ Wait between Steps")
         self.update_app_btn = QPushButton("🔄 Update App")
         self.always_on_top_button = QPushButton("📌 Always On Top: Off")
         self.toggle_log_checkbox = QCheckBox("📋 Show Log")
         #create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
-        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
+        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button,self.export_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button]) #, self.toggle_log_checkbox]
         
         # Connections
         #self.execute_all_button.clicked.connect(self.execute_all_steps)
@@ -4288,6 +4385,7 @@ class MainWindow(QMainWindow):
         self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
         self.view_workflow_button.clicked.connect(self._handle_view_workflow_click)
+        self.export_workflow_button.clicked.connect(self._handle_export_workflow_to_image) # <<< ADD THIS LINE
         self.update_app_btn.clicked.connect(self.update_application)
         self.always_on_top_button.setCheckable(True)
         self.set_wait_time_button.clicked.connect(self.set_wait_time)
@@ -7969,12 +8067,6 @@ class MainWindow(QMainWindow):
         self.log_console.append(f"[{timestamp}] {message}")
 
     def update_application(self):
-        """
-        Initiates the application update process.
-        It first tries to download the update from GitHub automatically.
-        If the automatic download or file processing fails, it will prompt
-        the user to download the file manually and then select it.
-        """
         github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         zip_path = os.path.join(self.update_dir, "update.zip")
@@ -7982,79 +8074,53 @@ class MainWindow(QMainWindow):
         os.makedirs(self.update_dir, exist_ok=True)
 
         try:
-            # 1. Attempt to download the file automatically
-            self._log_to_console("Attempting to download update automatically...")
             with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-            self._log_to_console("Download complete.")
+            self._process_zip_file(zip_path)
 
-            # 2. Process the downloaded zip file
-            if not self._process_zip_file(zip_path):
-                # _process_zip_file returns False if the zip is bad.
-                # This will trigger the manual download flow.
-                raise zipfile.BadZipFile("The automatically downloaded file was invalid.")
-
-        except (urllib.error.URLError, zipfile.BadZipFile) as e:
-            # 3. This block executes if automatic download or zip processing fails
-            self._log_to_console(f"Automatic update failed: {e}. Switching to manual download.")
-
+        except urllib.error.URLError:
             msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Icon.Warning) # Changed to Warning icon
-            msg_box.setWindowTitle("Update Action Required")
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setWindowTitle("Download Failed")
             msg_box.setTextFormat(Qt.TextFormat.RichText)
             msg_box.setText(
-                "Could not get the update automatically. The file may be blocked by your network or corrupted.<br><br>"
+                "Could not download the update automatically.<br><br>"
                 "<b>Step 1:</b> Please download the file manually from this link:<br>"
                 f"<a href='{github_zip_url}'>{github_zip_url}</a><br><br>"
-                "<b>Step 2:</b> After the download is complete, click the <b>'Select File...'</b> button below and choose the file you just saved."
+                "<b>Step 2:</b> After the download is complete, click the <b>'Downloaded'</b> button below and select the file you just saved."
             )
-            select_file_button = msg_box.addButton("Select File...", QMessageBox.ButtonRole.ActionRole)
+            downloaded_button = msg_box.addButton("Downloaded", QMessageBox.ButtonRole.ActionRole)
             msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             msg_box.exec()
 
-            # If the user clicked the 'Select File...' button
-            if msg_box.clickedButton() == select_file_button:
-                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded Update File", "", "Zip Files (*.zip)")
+            if msg_box.clickedButton() == downloaded_button:
+                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded File", "", "Zip Files (*.zip)")
                 if file_path:
-                    # Process the user-selected zip file
                     self._process_zip_file(file_path)
 
         except Exception as e:
-            # Catch any other unexpected errors
-            QMessageBox.critical(self, "Update Error", f"An unexpected error occurred: {e}")
+            QMessageBox.critical(self, "Update Error", f"An error occurred: {e}")
 
-    def _process_zip_file(self, zip_path: str) -> bool:
-        """
-        Extracts the zip file and opens the UpdateDialog to let the user
-        select which files to install.
-
-        Returns:
-            bool: True if the zip was processed successfully, False if it was invalid.
-        """
+    def _process_zip_file(self, zip_path):
         try:
-            # Attempt to open and extract the zip file
-            self._log_to_console(f"Processing zip file: {zip_path}")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(self.update_dir)
-            self._log_to_console("Zip file extracted successfully.")
 
-            # The UpdateDialog handles finding the correct source folder
-            dialog = UpdateDialog(self.update_dir, self.base_directory, self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                QMessageBox.information(self, "Update Complete", "Update successful. Please restart the application for the changes to take effect.")
-                # You could optionally close the application here
-                # self.close()
-            return True # Indicates success
+            extracted_folder_name = ""
+            for item in os.listdir(self.update_dir):
+                if os.path.isdir(os.path.join(self.update_dir, item)) and "automateclick" in item:
+                    extracted_folder_name = item
+                    break
 
-        except zipfile.BadZipFile:
-            # If the zip file is invalid, log it and return False
-            self._log_to_console(f"Error: The provided zip file '{os.path.basename(zip_path)}' is invalid or corrupted.")
-            return False # Indicates failure
+            if not extracted_folder_name:
+                raise Exception("Could not find the main folder in the downloaded zip.")
 
+            extracted_path = os.path.join(self.update_dir, extracted_folder_name)
+            dialog = UpdateDialog(extracted_path, self.base_directory, self)
+            dialog.exec()
+        
         except Exception as e:
-            # For any other error, show a critical message and return False
-            QMessageBox.critical(self, "Update Error", f"An error occurred while processing the update file: {e}")
-            return False # Indicates failure
+            QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
     def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
         """
         Enhanced workflow tab update with better canvas initialization.
@@ -9007,6 +9073,47 @@ class MainWindow(QMainWindow):
         else:
             self._log_to_console(f"Warning: Could not find group_start with ID '{group_id}' to center on.")
             
+# In main_app.py, add this new method to the MainWindow class
+
+    def _handle_export_workflow_to_image(self):
+        """
+        Handles exporting the current workflow canvas to a PNG image file.
+        """
+        # 1. Check if there is a workflow to export
+        if not hasattr(self, 'workflow_canvas') or not self.workflow_canvas.nodes:
+            QMessageBox.information(self, "Nothing to Export", "The workflow canvas is empty.")
+            return
+
+        # 2. Suggest a default filename based on the current bot name
+        bot_name = "Untitled Bot"
+        if self.current_temp_file_path != self.default_temp_file_path:
+            bot_name = os.path.splitext(os.path.basename(self.current_temp_file_path))[0]
+        default_filename = os.path.join(os.path.expanduser("~"), "Downloads", f"{bot_name}_Workflow.png")
+
+        # 3. Open the "Save File" dialog
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Workflow Image",
+            default_filename,
+            "PNG Image (*.png);;JPEG Image (*.jpg)"
+        )
+
+        # 4. If the user selected a file path, proceed with saving
+        if file_path:
+            try:
+                # 5. Call the new render method on the canvas
+                pixmap = self.workflow_canvas.render_to_pixmap()
+
+                # 6. Save the resulting QPixmap to the chosen file
+                if pixmap.save(file_path):
+                    self._log_to_console(f"Workflow successfully exported to: {file_path}")
+                    QMessageBox.information(self, "Export Successful", f"Workflow image saved to:\n{file_path}")
+                else:
+                    raise IOError("Failed to save the image. Check file permissions or path.")
+
+            except Exception as e:
+                self._log_to_console(f"Error exporting workflow: {e}")
+                QMessageBox.critical(self, "Export Error", f"Could not save the workflow image.\n\nError: {e}")
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
