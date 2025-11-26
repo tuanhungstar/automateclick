@@ -1,5 +1,6 @@
 import time
 from my_lib.shared_context import ExecutionContext
+import socket
 
 class Bot_GUI_Control:
     """
@@ -49,3 +50,44 @@ class Bot_GUI_Control:
         else:
             print("CONTEXT NOT AVAILABLE: Cannot show GUI.")
             return "Error: ExecutionContext not available."
+    def get_computer_name(self):
+      """
+      Gets the computer's network name (hostname).
+      
+      Returns:
+          str: The hostname of the local machine.
+      """
+      try:
+        hostname = socket.gethostname()
+        return hostname
+      except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+        
+# In Bot_GUI_Control.py, inside the Bot_GUI_Control class
+
+    def JumpTo(self, target_step_number: int):
+        """
+        Instructs the bot runner to immediately jump to a specific step number.
+
+        This step does not execute any other action. It provides a special
+        return value that the execution engine intercepts to change the
+        flow of the workflow.
+
+        Args:
+            target_step_number (int): The 1-based step number to jump to. 
+                                      For example, to jump to "Step 5", use the number 5.
+
+        Returns:
+            str: A special formatted string that signals a jump instruction.
+                 Example: "_JUMP_TO_STEP_::10"
+        """
+        if not isinstance(target_step_number, int) or target_step_number < 1:
+            # You can add a log to the context if you want
+            if self.context:
+                self.context.add_log(f"ERROR: Invalid target step for JumpTo: '{target_step_number}'. Must be a positive number.")
+            # We still raise an error to stop execution, as this is a critical logic failure.
+            raise ValueError("Target step number must be a positive integer.")
+
+        # This special string is the "signal" to the main execution worker.
+        return f"_JUMP_TO_STEP_::{target_step_number}"

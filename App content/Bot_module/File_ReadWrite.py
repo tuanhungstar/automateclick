@@ -54,7 +54,7 @@ class handle_excel():
                     sheet = workbook[sheet_name]
                     return [workbook, sheet]
                 else:
-                    print(f"Error: Sheet '{sheet_name}' not found in the workbook.")
+                    #print(f"Error: Sheet '{sheet_name}' not found in the workbook.")
                     sheet = workbook.active
                     return [workbook, sheet]
             else:
@@ -63,10 +63,10 @@ class handle_excel():
     
     
         except FileNotFoundError:
-            print(f"Error: File not found at '{file_link}'")
+            #print(f"Error: File not found at '{file_link}'")
             return None
         except Exception as e:
-            print(f"An error occurred while reading the Excel file: {e}")
+            #print(f"An error occurred while reading the Excel file: {e}")
             return None
             
         return None

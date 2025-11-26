@@ -597,8 +597,139 @@ class Bot_utility:
             self.left_click(click_image)
             return 'clicked'
         return 'Not found'
-
         
+        
+    def check_image_in_cross_2_images(self,image_to_click_x,image_to_click_y,check_image,confidence=0.92,padding=10,timeout=5):
+        """ Find and return image location
+        """
+        location=None
+        x_position=None
+        file_name= image_to_click_x
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click_x)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
+            image_file = json.load(json_file)
+        for key, data in image_file.items():
+            #print (key)
+            image_file = self._base64_pgn(data)
+            try:
+                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                if location!=None:
+                    
+                    self.context.add_log(f"{file_name}")
+                    self.context.send_click_status(f"Image found: {file_name}")
+                    x_position = location.x
+            except:
+                self.context.add_log(f"Image not found: {file_name}")
+                self.context.send_click_status(f"Image not found: {file_name}")
+                pass
+        if location is None:
+            self.context.send_click_status(f"Image not found: {file_name}")
+            self.context.add_log(f"Image not found: {file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+            return False      
+
+
+
+        location=None
+        y_position=None
+        file_name= image_to_click_y
+        full_path_without_ext = os.path.join(self.click_image_folder_path, image_to_click_y)
+        full_path_with_ext = full_path_without_ext + ".txt"
+
+        with open(full_path_with_ext) as json_file:
+            
+            image_file = json.load(json_file)
+        for key, data in image_file.items():
+            #print (key)
+            image_file = self._base64_pgn(data)
+            try:
+                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                if location!=None:
+                    
+                    self.context.add_log(f"{file_name}")
+                    self.context.send_click_status(f"Image found: {file_name}")
+                    y_position = location.y
+            except:
+                self.context.add_log(f"Image not found: {file_name}")
+                self.context.send_click_status(f"Image not found: {file_name}")
+                pass
+        if location is None:
+            self.context.send_click_status(f"Image not found: {file_name}")
+            self.context.add_log(f"Image not found: {file_name}")
+            #print ('left_click_done fail: {}'.format(image_file),str(key))
+            return False      
+
+        if x_position is not None and y_position is not None:        
+            return self._check_image_in_region_of_current_mouse_position(check_image,x_position ,y_position,confidence,padding,timeout)
+        else:
+            return False
+
+    def _check_image_in_region_of_current_mouse_position(self, check_image: str,x_position ,y_position, confidence=0.8,padding=10,timeout=5) -> bool:
+        """
+        Checks if an image exists in a small region around the current mouse cursor position.
+
+        This method is useful for verifying tooltips or context-sensitive icons that appear
+        when the mouse hovers over a specific UI element. It first decodes the provided
+        base64 image, determines a search region based on the image's size plus a small
+        padding, centers this region on the current mouse coordinates, and then searches
+        for the image within that specific area.
+
+        Args:
+            check_image (str): A string containing the base64 encoded content
+                                        of the PNG image to search for.
+            confidence (float, optional): The confidence level for the image recognition,
+                                          ranging from 0.0 to 1.0. Defaults to 0.8.
+
+        Returns:
+            bool: True if the image is found within the calculated region around the mouse
+                  cursor, False otherwise.
+        """
+        loop=0
+        mouse_x, mouse_y = x_position ,y_position
+        file_name= check_image
+        full_path_without_ext = os.path.join(self.click_image_folder_path, file_name)
+        full_path_with_ext = full_path_without_ext + ".txt"    
+        location=None
+        while loop<timeout:
+            loop+=1
+            
+            with open(full_path_with_ext) as json_file:
+                
+                image_file = json.load(json_file)
+            for key, data in image_file.items():
+                #print (key)
+                image_file = self._base64_pgn(data)
+                
+                img_to_find = image_file
+                img_width, img_height = img_to_find.size
+                region_width = img_width + (padding * 2)
+                region_height = img_height + (padding * 2)
+                search_left = mouse_x - (region_width // 2)
+                search_top = mouse_y - (region_height // 2)                
+                search_left = max(0, search_left)
+                search_top = max(0, search_top)    
+                search_region = (search_left, search_top, region_width, region_height)                
+                try:
+
+                    location = pyautogui.locateOnScreen(img_to_find, region=search_region, confidence=float(confidence))
+                    if location!=None:
+                        return True
+                        
+                except:
+                    self.context.add_log(f"Image not found: {file_name}")
+                    self.context.send_click_status(f"Image not found: {file_name}")
+                    pass
+            if location is None:
+                self.context.send_click_status(f"Image not found: {file_name}")
+                self.context.add_log(f"Image not found: {file_name}")
+                #print ('left_click_done fail: {}'.format(image_file),str(key))
+                return False              
+            
+            time.sleep(0.5)
+            
 class Bot_SAP:
     '''
     A class containing methods specifically designed for automating tasks within

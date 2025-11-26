@@ -1648,3 +1648,241 @@ class Mssql_Close_Connection:
             self._log(f"Successfully disposed of the database engine for '@{conn_var}'.")
         except Exception as e:
             self._log(f"ERROR while disposing engine '@{conn_var}': {e}")
+            
+            
+# --- [NEW CLASS 7] HELPER: The GUI Dialog for MS SQL Query & Update ---
+#
+class _MssqlQueryUpdateDialog(QDialog):
+    """GUI Dialog for a SQL operation that both updates and returns data (e.g., UPDATE with OUTPUT)."""
+    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None,
+                 initial_config: Optional[Dict[str, Any]] = None,
+                 initial_variable: Optional[str] = None):
+        super().__init__(parent)
+        self.setWindowTitle("MS SQL Query & Update")
+        self.setMinimumSize(600, 500)
+        self.global_variables = global_variables
+        main_layout = QVBoxLayout(self)
+
+        # 1. Connection Selection
+        conn_group = QGroupBox("Database Connection")
+        conn_layout = QFormLayout(conn_group)
+        self.conn_var_combo = QComboBox()
+        self.conn_var_combo.addItem("-- Select Connection Variable --")
+        self.conn_var_combo.addItems(self.global_variables)
+        conn_layout.addRow("Connection Engine from Variable:", self.conn_var_combo)
+        main_layout.addWidget(conn_group)
+
+        # 2. SQL Statement Source
+        sql_group = QGroupBox("SQL Statement (must include an OUTPUT clause)")
+        sql_layout = QVBoxLayout(sql_group)
+        self.sql_from_text_radio = QRadioButton("Enter SQL Statement directly:")
+        self.sql_statement_edit = QTextEdit()
+        self.sql_statement_edit.setPlaceholderText(
+            "Example:\n"
+            "UPDATE TOP (1) [MyTable]\n"
+            "SET [Status] = 'Processing', [Machine] = 'BOT01'\n"
+            "OUTPUT inserted.[ID], inserted.[Data]\n"
+            "WHERE [Status] IS NULL;"
+        )
+        self.sql_statement_edit.setFontFamily("Courier New")
+
+        self.sql_from_var_radio = QRadioButton("Get SQL Statement from Variable:")
+        self.sql_var_combo = QComboBox()
+        self.sql_var_combo.addItem("-- Select Variable --")
+        self.sql_var_combo.addItems(self.global_variables)
+        
+        sql_layout.addWidget(self.sql_from_text_radio)
+        sql_layout.addWidget(self.sql_statement_edit)
+        sql_layout.addWidget(self.sql_from_var_radio)
+        sql_layout.addWidget(self.sql_var_combo)
+        main_layout.addWidget(sql_group)
+
+        # 3. Result Assignment
+        assignment_group = QGroupBox("Assign OUTPUT Result to Variable")
+        assign_layout = QVBoxLayout(assignment_group)
+        self.assign_checkbox = QCheckBox("Assign results (DataFrame) to a variable")
+        assign_layout.addWidget(self.assign_checkbox)
+        self.new_var_radio = QRadioButton("New Variable Name:")
+        self.new_var_input = QLineEdit("updated_row_data")
+        self.existing_var_radio = QRadioButton("Existing Variable:")
+        self.existing_var_combo = QComboBox()
+        self.existing_var_combo.addItem("-- Select Variable --")
+        self.existing_var_combo.addItems(self.global_variables)
+        
+        assign_form = QFormLayout()
+        assign_form.addRow(self.new_var_radio, self.new_var_input)
+        assign_form.addRow(self.existing_var_radio, self.existing_var_combo)
+        assign_layout.addLayout(assign_form)
+        main_layout.addWidget(assignment_group)
+
+        # 4. Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        main_layout.addWidget(self.button_box)
+        
+        # --- Connections & Initial State ---
+        self.sql_from_text_radio.toggled.connect(self._toggle_sql_input_widgets)
+        self.assign_checkbox.toggled.connect(self._toggle_assignment_widgets)
+        self.new_var_radio.toggled.connect(self._toggle_assignment_widgets)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        
+        # Default states
+        self.sql_from_text_radio.setChecked(True)
+        self.assign_checkbox.setChecked(True)
+        self.new_var_radio.setChecked(True)
+        self._toggle_sql_input_widgets()
+        self._toggle_assignment_widgets()
+
+        if initial_config:
+            self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _toggle_sql_input_widgets(self):
+        self.sql_statement_edit.setEnabled(self.sql_from_text_radio.isChecked())
+        self.sql_var_combo.setEnabled(not self.sql_from_text_radio.isChecked())
+
+    def _toggle_assignment_widgets(self):
+        is_assign_enabled = self.assign_checkbox.isChecked()
+        self.new_var_radio.setVisible(is_assign_enabled)
+        self.new_var_input.setVisible(is_assign_enabled and self.new_var_radio.isChecked())
+        self.existing_var_radio.setVisible(is_assign_enabled)
+        self.existing_var_combo.setVisible(is_assign_enabled and self.existing_var_radio.isChecked())
+
+    def _populate_from_initial_config(self, config: Dict[str, Any], variable: Optional[str]):
+        self.conn_var_combo.setCurrentText(config.get("connection_var", "-- Select Connection Variable --"))
+        
+        if config.get("sql_source", "direct") == "variable":
+            self.sql_from_var_radio.setChecked(True)
+            self.sql_var_combo.setCurrentText(config.get("sql_statement_or_var", "-- Select Variable --"))
+        else:
+            self.sql_from_text_radio.setChecked(True)
+            self.sql_statement_edit.setText(config.get("sql_statement_or_var", ""))
+
+        if variable:
+            self.assign_checkbox.setChecked(True)
+            if variable in self.global_variables:
+                self.existing_var_radio.setChecked(True)
+                self.existing_var_combo.setCurrentText(variable)
+            else:
+                self.new_var_radio.setChecked(True)
+                self.new_var_input.setText(variable)
+        else:
+            self.assign_checkbox.setChecked(False)
+        self._toggle_assignment_widgets()
+
+    def get_executor_method_name(self) -> str:
+        return "_execute_mssql_query_update"
+
+    def get_config_data(self) -> Optional[Dict[str, Any]]:
+        conn_var = self.conn_var_combo.currentText()
+        if conn_var == "-- Select Connection Variable --":
+            QMessageBox.warning(self, "Input Error", "Please select a global variable for the database connection.")
+            return None
+        
+        config = {"connection_var": conn_var}
+
+        if self.sql_from_text_radio.isChecked():
+            sql_statement = self.sql_statement_edit.toPlainText().strip()
+            if not sql_statement:
+                QMessageBox.warning(self, "Input Error", "The SQL statement cannot be empty.")
+                return None
+            if 'output' not in sql_statement.lower():
+                QMessageBox.warning(self, "Validation Error", "The SQL statement must contain an 'OUTPUT' clause to return data.")
+                return None
+            config["sql_source"] = "direct"
+            config["sql_statement_or_var"] = sql_statement
+        else:
+            sql_var = self.sql_var_combo.currentText()
+            if sql_var == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select a variable containing the SQL statement.")
+                return None
+            config["sql_source"] = "variable"
+            config["sql_statement_or_var"] = sql_var
+        
+        return config
+
+    def get_assignment_variable(self) -> Optional[str]:
+        if not self.assign_checkbox.isChecked():
+            return None
+        
+        if self.new_var_radio.isChecked():
+            var_name = self.new_var_input.text().strip()
+            if not var_name:
+                QMessageBox.warning(self, "Input Error", "New variable name cannot be empty.")
+                return None
+            return var_name
+        else:
+            var_name = self.existing_var_combo.currentText()
+            if var_name == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select an existing variable.")
+                return None
+            return var_name
+
+# --- [NEW CLASS 7] The Public-Facing Module Class for Querying & Updating ---
+#
+class Mssql_query_update:
+    """A module to execute a SQL statement that modifies data (e.g., UPDATE) and returns results via an OUTPUT clause."""
+    def __init__(self, context: Optional[ExecutionContext] = None):
+        self.context = context
+
+    def _log(self, message: str):
+        if self.context:
+            self.context.add_log(message)
+        else:
+            print(message)
+
+    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str],
+                           initial_config: Optional[Dict[str, Any]] = None,
+                           initial_variable: Optional[str] = None) -> QDialog:
+        """The entry point to show the configuration GUI."""
+        self._log("Opening MS SQL Query & Update configuration...")
+        return _MssqlQueryUpdateDialog(
+            global_variables=global_variables, 
+            parent=parent_window,
+            initial_config=initial_config, 
+            initial_variable=initial_variable
+        )
+
+    def _execute_mssql_query_update(self, context: ExecutionContext, config_data: dict) -> Optional[pd.DataFrame]:
+        """Executes the SQL and returns the output as a DataFrame."""
+        self.context = context
+        
+        # 1. Get the connection engine from the context
+        conn_var_name = config_data["connection_var"]
+        db_engine = self.context.get_variable(conn_var_name)
+        if not hasattr(db_engine, 'connect'):
+            raise TypeError(f"Variable '@{conn_var_name}' does not contain a valid database engine.")
+        
+        # 2. Get the SQL statement
+        sql_statement = ""
+        sql_source = config_data.get("sql_source")
+        if sql_source == "direct":
+            sql_statement = config_data.get("sql_statement_or_var")
+        elif sql_source == "variable":
+            sql_statement = self.context.get_variable(config_data.get("sql_statement_or_var"))
+        
+        if not isinstance(sql_statement, str) or not sql_statement.strip():
+            raise ValueError("SQL statement is empty or not a valid string.")
+        
+        self._log(f"Executing Query & Update: {sql_statement[:200]}...")
+
+        # 3. Execute the statement and fetch results
+        # A statement with OUTPUT must be executed within a transaction that is committed.
+        try:
+            with db_engine.connect() as connection:
+                with connection.begin() as transaction:  # Starts a transaction
+                    # Execute the statement and immediately fetch results
+                    result_proxy = connection.execute(text(sql_statement))
+                    
+                    # Convert the result proxy to a list of dictionaries
+                    results = [dict(row._mapping) for row in result_proxy]
+                    
+                    # Commit the transaction to make the UPDATE permanent
+                    transaction.commit() 
+                    
+            df = pd.DataFrame(results)
+            self._log(f"Execution successful. {len(df)} row(s) returned from OUTPUT clause.")
+            return df
+        
+        except Exception as e:
+            self._log(f"FATAL ERROR during SQL query & update execution: {e}")
+            raise  # Re-raise the exception to fail the bot step

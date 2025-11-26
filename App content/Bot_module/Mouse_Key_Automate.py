@@ -8,8 +8,8 @@ class Keyboard:
     def __init__(self,context: Context):
         self.context = Context
         pass
-    def send_text(self,text):
-        keyboard.write(str(text))
+    def send_text(self,text,delay=0):
+        keyboard.write(str(text),delay)
         return f"Bot write this text: {text}"
 
     def send_hotkey(self,hotkey):
