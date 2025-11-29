@@ -14,6 +14,7 @@ import urllib.request
 import zipfile
 import shutil
 import subprocess
+import webbrowser # <<< ADD THIS LINE
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
@@ -4367,9 +4368,10 @@ class MainWindow(QMainWindow):
         self.set_wait_time_button = QPushButton("⏱️ Wait between Steps")
         self.update_app_btn = QPushButton("🔄 Update App")
         self.always_on_top_button = QPushButton("📌 Always On Top: Off")
+        self.user_manual_button = QPushButton("📘 User Manual") # <<< NEW LINE
         self.toggle_log_checkbox = QCheckBox("📋 Show Log")
         #create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
-        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button,self.export_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button]) #, self.toggle_log_checkbox]
+        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button,self.export_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button,self.user_manual_button]) #, self.toggle_log_checkbox]
         
         # Connections
         #self.execute_all_button.clicked.connect(self.execute_all_steps)
@@ -4390,6 +4392,7 @@ class MainWindow(QMainWindow):
         self.always_on_top_button.setCheckable(True)
         self.set_wait_time_button.clicked.connect(self.set_wait_time)
         self.always_on_top_button.clicked.connect(self.toggle_always_on_top)
+        self.user_manual_button.clicked.connect(self.open_user_manual) # <<< NEW LINE
 
         menu_layout.addStretch()
 
@@ -8067,39 +8070,59 @@ class MainWindow(QMainWindow):
         self.log_console.append(f"[{timestamp}] {message}")
 
     def update_application(self):
-        github_zip_url = "https://github.com/tuanhungstar/automateclick/archive/refs/heads/main.zip"
+        """
+        Initiates the application update process.
+        It first tries to download the update from GitHub automatically.
+        If the automatic download or file processing fails, it will prompt
+        the user to download the file manually and then select it.
+        """
+        github_zip_url = "https://github.boschdevcloud.com/PUU1HC/AutomateTask/archive/refs/heads/main.zip"
         self.update_dir = os.path.join(self.base_directory, "update")
         zip_path = os.path.join(self.update_dir, "update.zip")
 
         os.makedirs(self.update_dir, exist_ok=True)
 
         try:
+            # 1. Attempt to download the file automatically
+            self._log_to_console("Attempting to download update automatically...")
             with urllib.request.urlopen(github_zip_url) as response, open(zip_path, 'wb') as out_file:
                 shutil.copyfileobj(response, out_file)
-            self._process_zip_file(zip_path)
+            self._log_to_console("Download complete.")
 
-        except urllib.error.URLError:
+            # 2. Process the downloaded zip file
+            if not self._process_zip_file(zip_path):
+                # _process_zip_file returns False if the zip is bad.
+                # This will trigger the manual download flow.
+                raise zipfile.BadZipFile("The automatically downloaded file was invalid.")
+
+        except (urllib.error.URLError, zipfile.BadZipFile) as e:
+            # 3. This block executes if automatic download or zip processing fails
+            self._log_to_console(f"Automatic update failed: {e}. Switching to manual download.")
+
             msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Icon.Critical)
-            msg_box.setWindowTitle("Download Failed")
+            msg_box.setIcon(QMessageBox.Icon.Warning) # Changed to Warning icon
+            msg_box.setWindowTitle("Update Action Required")
             msg_box.setTextFormat(Qt.TextFormat.RichText)
             msg_box.setText(
-                "Could not download the update automatically.<br><br>"
+                "Could not get the update automatically. The file may be blocked by your network or corrupted.<br><br>"
                 "<b>Step 1:</b> Please download the file manually from this link:<br>"
                 f"<a href='{github_zip_url}'>{github_zip_url}</a><br><br>"
-                "<b>Step 2:</b> After the download is complete, click the <b>'Downloaded'</b> button below and select the file you just saved."
+                "<b>Step 2:</b> After the download is complete, click the <b>'Select File...'</b> button below and choose the file you just saved."
             )
-            downloaded_button = msg_box.addButton("Downloaded", QMessageBox.ButtonRole.ActionRole)
+            select_file_button = msg_box.addButton("Select File...", QMessageBox.ButtonRole.ActionRole)
             msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
             msg_box.exec()
 
-            if msg_box.clickedButton() == downloaded_button:
-                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded File", "", "Zip Files (*.zip)")
+            # If the user clicked the 'Select File...' button
+            if msg_box.clickedButton() == select_file_button:
+                file_path, _ = QFileDialog.getOpenFileName(self, "Select Downloaded Update File", "", "Zip Files (*.zip)")
                 if file_path:
+                    # Process the user-selected zip file
                     self._process_zip_file(file_path)
 
         except Exception as e:
-            QMessageBox.critical(self, "Update Error", f"An error occurred: {e}")
+            # Catch any other unexpected errors
+            QMessageBox.critical(self, "Update Error", f"An unexpected error occurred: {e}")
 
     def _process_zip_file(self, zip_path):
         try:
@@ -8108,7 +8131,7 @@ class MainWindow(QMainWindow):
 
             extracted_folder_name = ""
             for item in os.listdir(self.update_dir):
-                if os.path.isdir(os.path.join(self.update_dir, item)) and "automateclick" in item:
+                if os.path.isdir(os.path.join(self.update_dir, item)) and "utomate" in item:
                     extracted_folder_name = item
                     break
 
@@ -9114,6 +9137,25 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self._log_to_console(f"Error exporting workflow: {e}")
                 QMessageBox.critical(self, "Export Error", f"Could not save the workflow image.\n\nError: {e}")
+                
+    def open_user_manual(self):
+        """Constructs the path to the user manual and opens it in the default web browser."""
+        try:
+            # self.base_directory is already defined in your __init__ method
+            manual_path = os.path.join(self.base_directory, "Help document", "index.html")
+
+            if os.path.exists(manual_path):
+                # The 'file://' prefix is important for ensuring it opens correctly as a local file
+                webbrowser.open(f'file://{os.path.realpath(manual_path)}')
+                self._log_to_console("Opening user manual...")
+            else:
+                error_message = f"User manual not found at the expected path: {manual_path}"
+                self._log_to_console(f"ERROR: {error_message}")
+                QMessageBox.warning(self, "File Not Found", error_message)
+        except Exception as e:
+            error_message = f"An unexpected error occurred while trying to open the user manual: {e}"
+            self._log_to_console(f"CRITICAL: {error_message}")
+            QMessageBox.critical(self, "Error", error_message)
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     
