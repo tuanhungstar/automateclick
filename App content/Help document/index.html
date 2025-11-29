@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutomateTask - Complete Work Instructions</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            border-bottom: 3px solid #007bff;
+            padding-bottom: 20px;
+            margin-bottom: 40px;
+        }
+        h1 {
+            color: #007bff;
+            margin: 0;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            color: #6c757d;
+            margin: 10px 0 0 0;
+            font-size: 1.1em;
+        }
+        .nav-menu {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 30px;
+        }
+        .nav-menu h3 {
+            margin: 0 0 10px 0;
+            color: #495057;
+        }
+        .nav-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .nav-links a {
+            color: #007bff;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+        .nav-links a:hover {
+            background: #dee2e6;
+        }
+        .section {
+            margin-bottom: 40px;
+            border-left: 4px solid #007bff;
+            padding-left: 20px;
+        }
+        h2 {
+            color: #007bff;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+        h3 {
+            color: #495057;
+            margin-top: 25px;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .feature-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            border: 1px solid #e9ecef;
+        }
+        .feature-card h4 {
+            color: #007bff;
+            margin-top: 0;
+        }
+        .screenshot-placeholder {
+            background: #e9ecef;
+            border: 2px dashed #ced4da;
+            padding: 40px;
+            text-align: center;
+            margin: 15px 0;
+            border-radius: 5px;
+            color: #6c757d;
+        }
+        /* Style for embedded images to fit their container */
+        .screenshot-placeholder img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 5px;
+        }
+        .step-list {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .step-list ol {
+            margin: 0;
+            padding-left: 20px;
+        }
+        .step-list li {
+            margin: 10px 0;
+        }
+        .button-ref {
+            background: #007bff;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        .tab-ref {
+            background: #28a745;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.9em;
+        }
+        .warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .tip {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .workflow-example {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AutomateTask</h1>
+            <p class="subtitle">Complete Work Instructions - Automate Your Tasks by Simple Bot</p>
+            <p><em>Developed by Phung Tuan Hung (C/TXE-COE)</em></p>
+        </div>
+
+        <div class="nav-menu">
+            <h3>📋 Quick Navigation</h3>
+            <div class="nav-links">
+                <a href="#getting-started">Getting Started</a>
+                <a href="#screenshot-tool">Screenshot Tool</a>
+                <a href="#execution-functions">Execution Functions</a>
+                <a href="#bot-templates">Bot Templates</a>
+                <a href="#add-loop">Add Loop</a>
+                <a href="#add-conditional">Add Conditional</a>
+                <a href="#rearrange-steps">Rearrange Steps</a>
+                <a href="#update-app">Update App</a>
+            </div>
+        </div>
+
+        <section id="getting-started" class="section">
+            <h2>🚀 Getting Started</h2>
+            
+            <div class="screenshot-placeholder">
+                <img src="image/main_app.gif" alt="Main Application Interface">
+            </div>
+
+            <h3>What is AutomateTask?</h3>
+            <p>AutomateTask is a powerful visual automation platform designed to empower users to create, manage, and execute automated workflows (referred to as "bots") with minimal to no programming. By using a graphical, drag-and-drop style interface, you can build complex sequences of actions to automate repetitive tasks, data processing, application interactions, and much more.</p>
+
+            <h3>Main Interface Layout</h3>
+            <p>The application is logically divided into three primary areas to provide an intuitive and efficient user experience:</p>
+            <ul>
+                <li><strong>Left Panel:</strong> This is your main command center. It houses global action buttons for executing your bot, saving your work, managing steps, and accessing advanced tools.</li>
+                <li><strong>Center Area:</strong> This is your primary workspace. It uses a tabbed layout to switch between different views of your project, such as the list of saved bots, the step-by-step execution flow, and the visual workflow diagram.</li>
+                <li><strong>Right Panel:</strong> This is your resource panel. It contains the Module Browser for adding new functions to your bot and the Global Variable manager for handling data across your workflow.</li>
+            </ul>
+        </section>
+
+
+        <section id="screenshot-tool" class="section">
+            <h2>📷 Screenshot Tool</h2>
+            <p>This tool is essential for creating and managing the image assets your bot will use for visual automation (e.g., clicking buttons, finding elements on screen).</p>
+
+            <h3><span class="button-ref">📷 New Screenshot</span></h3>
+            <p><strong>Function:</strong> This button initiates the screen capture process. It allows you to select a specific region of your screen to save as an image reference.</p>
+            <ul>
+                <li><strong>How it works:</strong> After clicking, a 5-second countdown begins. The main application window will minimize, and a fullscreen overlay will appear. Click and drag to select the desired area. Releasing the mouse button captures the selection.</li>
+                <li><strong>Usage Scenario:</strong> Use this to capture an image of a button, icon, or text field that your bot needs to find and interact with. For example, capture the "Login" button on a webpage.</li>
+                <li><strong>Tip:</strong> Press the <span class="key-ref">ESC</span> key at any time during the capture process to cancel.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/screenshot_tool.gif" alt="New Screenshot Button">
+            </div>
+
+            <h3>Image File Management</h3>
+            <p>Once a screenshot is taken or a file is selected, you can manage it using the following controls.</p>
+            <ul>
+                <li><span class="dropdown-ref">Folder</span>: Organizes your images into subfolders. Select a folder to filter the image list. Use the <span class="button-ref">New Folder</span> button to create new categories.</li>
+                <li><span class="dropdown-ref">Image File</span>: A list of all saved image files. Selecting an item loads its variations into the list below it and shows a preview in the <span class="ui-ref">Image</span> area.</li>
+                <li><span class="ui-ref">Image File Name</span>: The name for the image file you are about to save. This field is automatically populated when you select an existing image.</li>
+                <li><span class="button-ref">💾 Save Image</span>: Saves the current screenshot (taken with <span class="button-ref">📷 New Screenshot</span>) to the selected file name. If the file already exists, you can choose to <strong>overwrite</strong> it or <strong>add</strong> the new screenshot as a variation.</li>
+                <li><span class="button-ref">🗑️ Delete Image</span>: Deletes the currently selected screenshot variation from the file. If it's the last variation, the entire image file is removed.</li>
+            </ul>
+
+            <h3><span class="button-ref">🔬 Test Image</span></h3>
+            <p><strong>Function:</strong> This button checks if the currently previewed image can be found on the screen at this exact moment.</p>
+            <ul>
+                <li><strong>How it works:</strong> The tool will scan the screen for a match to the image shown in the <span class="ui-ref">Image</span> preview. The result ("Image Found" or "Image NOT Found") is displayed next to the button. If found, the mouse cursor will move to the location of the match.</li>
+                <li><strong>Usage Scenario:</strong> This is a crucial debugging tool to verify that your bot can reliably see the elements you want it to interact with before adding the step to your workflow.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/test_image_button.gif" alt="Test Image Button">
+            </div>
+        </section>
+		
+		
+        <section id="execution-functions" class="section">
+            <h2>▶️ Execution Functions</h2>
+            <p>These are the core controls for running your automation. You can run the entire bot or test specific parts of it.</p>
+
+            <h3><span class="button-ref">🚀 Execute All</span></h3>
+            <p><strong>Function:</strong> This button initiates the execution of the entire workflow from the very first step to the last. It is the primary way to run your completed bot.</p>
+            <ul>
+                <li><strong>How it works:</strong> The application will start at the top of the <span class="tab-ref">📋 Execution Flow</span> and execute each step in sequence, respecting any loops or conditional logic you have defined.</li>
+                <li><strong>Usage Scenario:</strong> Use this after you have built and tested your bot, and you are ready to run it on real data or in a production environment.</li>
+                <li><strong>During Execution:</strong> You gain access to <span class="button-ref">⏸️ Pause</span>, <span class="button-ref">▶️ Resume</span>, and <span class="button-ref">🛑 Stop</span> controls to manage the live process. The application window may shrink to a mini-monitor if "Always On Top" is enabled.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/Execute_all_button.gif" alt="Execute All Button">
+            </div>
+
+            <h3><span class="button-ref">▶️ Execute Selected</span></h3>
+            <p><strong>Function:</strong> This button executes only the step or block of steps (like a Group, Loop, or If/Else block) that you have currently selected in the <span class="tab-ref">📋 Execution Flow</span>.</p>
+            <ul>
+                <li><strong>How it works:</strong> Instead of starting from the beginning, the executor targets only the highlighted part of your workflow. It will execute that step and its children if it's a block.</li>
+                <li><strong>Usage Scenario:</strong> This is an essential tool for debugging and development. If a part of your workflow is failing or you want to test a newly added step without running everything before it, use this button. For example, you can test a single "Read Excel" step to ensure it's loading data correctly.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/execute_one_step_button.gif" alt="Execute Selected Step Button">
+            </div>
+            
+            <h3>Execution Control Buttons (Available during run)</h3>
+            <ul>
+                <li><span class="button-ref">⏸️ Pause</span> / <span class="button-ref">▶️ Resume</span>: Temporarily halt the execution to inspect an application's state, and then continue from where it left off.</li>
+                <li><span class="button-ref">🛑 Stop</span>: Immediately and forcefully terminates the entire workflow execution. This cannot be undone. Use this if the bot is behaving unexpectedly or you need to end the process early.</li>
+            </ul>
+        </section>
+
+        <section id="bot-templates" class="section">
+            <h2>🧩 Bot Templates</h2>
+            <p>Bot Templates are reusable blocks of steps that you can save and easily insert into any workflow. They are perfect for standardizing common procedures like logging in, exporting a report, or filling out a form.</p>
+
+            <h3>Creating a Template</h3>
+            <p><strong>Function:</strong> You can turn any block of steps (a Group, Loop, or If/Else block) into a template directly from the <span class="tab-ref">📋 Execution Flow</span> or <span class="tab-ref">📈 Workflow</span> view.</p>
+            <ul>
+                <li><strong>How it works:</strong> In the <span class="tab-ref">📋 Execution Flow</span>, click the <span class="button-ref">Save Template</span> button on the block's card. In the <span class="tab-ref">📈 Workflow</span> view, right-click on a block node and select "Save As Template".</li>
+                <li><strong>Naming:</strong> You will be prompted to give your template a name. You can either create a new name or choose an existing template to overwrite.</li>
+                <li><strong>Usage Scenario:</strong> If you have a sequence of 5 steps for logging into a web application, group them together and save the group as a "WebApp Login" template.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/Bot_Template_create.gif" alt="Saving a block of steps as a template.">
+            </div>
+
+            <h3>Using a Template</h3>
+            <p><strong>Function:</strong> Once saved, templates appear in the <span class="ui-ref">🔧 Module Browser</span> on the right-hand panel, under the "Bot Templates" section. You can add them to your workflow just like any other step.</p>
+            <ul>
+                <li><strong>How it works:</strong> Double-click a template in the browser. You will be prompted to choose where to insert it in your current <span class="tab-ref">📋 Execution Flow</span>.</li>
+                <li><strong>Variable Mapping:</strong> If the template uses variables (e.g., `@username`, `@password`), a dialog will appear allowing you to map them. You can map a template variable to one of your existing global variables or create a new global variable on the fly.</li>
+                <li><strong>Organization:</strong> You can right-click on "Bot Templates" or any subfolder to create new folders, allowing you to organize your templates by function or application. Templates can be dragged and dropped between folders.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/Bot_Template.gif" alt="Adding a saved template to the execution flow.">
+            </div>
+            
+            <h3>Managing Templates</h3>
+            <p>You can manage your templates directly from the <span class="ui-ref">🔧 Module Browser</span>.</p>
+            <ul>
+                <li><span class="context-menu-ref">View Documentation</span>: Right-click a template to see if it has associated documentation. This is useful for complex templates shared among a team.</li>
+                <li><span class="context-menu-ref">Delete Template</span>: Right-click a template and select "Delete Template" to permanently remove it.</li>
+                <li><span class="context-menu-ref">Drag & Drop</span>: Click and drag a template from one folder to another to reorganize your library.</li>
+            </ul>
+        </section>
+
+        <section id="add-loop" class="section">
+            <h2>🔄 Add Loop</h2>
+            <p>Loops allow you to repeat a set of actions multiple times. This is fundamental for processing lists of data, waiting for a condition, or performing a task a specific number of times.</p>
+
+            <h3><span class="button-ref">🔄 Add Loop</span></h3>
+            <p><strong>Function:</strong> This button opens the "Configure Loop Group" dialog, allowing you to define the parameters for a new loop block. When confirmed, it inserts a `Loop Start` and `Loop End` block into the <span class="tab-ref">📋 Execution Flow</span>.</p>
+            <ul>
+                <li><strong>How it works:</strong> After clicking the button, you first configure the loop's behavior in a dialog. Then, you select where in the execution flow you want to place the new loop block. Any steps you place between the `Loop Start` and `Loop End` markers will be repeated.</li>
+                <li><strong>Usage Scenario:</strong> You need to process every row in an Excel file. You can create a loop that runs for the total number of rows, and inside the loop, you place steps to read data from a row, process it, and write it somewhere else.</li>
+            </ul>
+
+            <h3>Loop Configuration Dialog</h3>
+            <p>When you add a loop, you will be presented with the following options:</p>
+            <ul>
+                <li><strong>Loop Name:</strong> An optional, descriptive name for your loop (e.g., "Process Excel Rows"). This name will appear in the workflow view for clarity.</li>
+                <li><strong>Loop Count:</strong> You can define how many times the loop should run in two ways:
+                    <ul>
+                        <li><strong>Fixed Number:</strong> Enter a specific number (e.g., `10`) for a fixed number of iterations.</li>
+                        <li><strong>Global Variable:</strong> Use a global variable (e.g., `@RowCount`) to control the loop dynamically. This is powerful for adapting to data of varying sizes.</li>
+                    </ul>
+                </li>
+                <li><strong>Assign Current Iteration to Variable:</strong> This is an optional but highly useful feature. You can assign the current loop number (starting from 1) to a new or existing global variable. This is essential for tasks like accessing data from a specific row number in each iteration (e.g., read from `C@{CurrentRow}`).</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/add_loop.gif" alt="Configuring and adding a new loop block.">
+            </div>
+
+            <h3>Editing a Loop</h3>
+            <p>You can change a loop's configuration at any time. Simply click the <span class="button-ref">Edit</span> button on the `Loop Start` card in the <span class="tab-ref">📋 Execution Flow</span> or right-click the "Loop" node in the <span class="tab-ref">📈 Workflow</span> view and select "Configure Parameters". The changes will automatically apply to the entire block.</p>
+        </section>
+		
+        <section id="add-conditional" class="section">
+            <h2>❓ Add Conditional</h2>
+            <p>Conditional blocks (also known as If/Else blocks) allow your bot to make decisions. Based on whether a condition is true or false, the bot can execute different sets of steps, making your automation dynamic and intelligent.</p>
+
+            <h3><span class="button-ref">❓ Add Conditional</span></h3>
+            <p><strong>Function:</strong> This button opens the "Configure Conditional Block" dialog. When confirmed, it inserts an `If Start`, `Else`, and `If End` block into the <span class="tab-ref">📋 Execution Flow</span>, creating two distinct branches for your logic.</p>
+            <ul>
+                <li><strong>How it works:</strong> You define a condition (e.g., `@Amount > 100`). Steps placed between `If Start` and `Else` will run only if the condition is <strong>true</strong>. Steps placed between `Else` and `If End` will run only if the condition is <strong>false</strong>.</li>
+                <li><strong>Usage Scenario:</strong> An automation processes invoices. You can use a conditional block to check if an invoice amount is over a certain threshold. If true, it follows steps to get manager approval. If false, it proceeds with standard payment processing.</li>
+            </ul>
+
+            <h3>Conditional Configuration Dialog</h3>
+            <p>When you add a conditional block, you will define the decision-making logic:</p>
+            <ul>
+                <li><strong>Block Name:</strong> An optional, descriptive name for your block (e.g., "Check Invoice Amount"). This name will appear in the workflow view for clarity.</li>
+                <li><strong>Condition:</strong> This is the core of the block, consisting of three parts:
+                    <ul>
+                        <li><strong>Left Operand:</strong> The first value in your comparison. This can be a hardcoded value (like `100`, `"Approved"`, `True`) or a dynamic value from a <span class="variable-ref">@Global Variable</span>.</li>
+                        <li><strong>Operator:</strong> The comparison to perform, such as `==` (equals), `!=` (not equals), `>` (greater than), `in`, `is`, etc.</li>
+                        <li><strong>Right Operand:</strong> The second value in your comparison, which can also be a hardcoded value or a <span class="variable-ref">@Global Variable</span>.</li>
+                    </ul>
+                </li>
+                <li><strong>Example Condition:</strong> Check if a variable named `@Status` contains the word "Error".
+                    <ul>
+                        <li>Left Operand: `Error` (Hardcoded Value)</li>
+                        <li>Operator: `in`</li>
+                        <li>Right Operand: `@Status` (Global Variable)</li>
+                    </ul>
+                </li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/conditional.gif" alt="Configuring and adding a new If/Else block.">
+            </div>
+
+            <h3>Editing a Conditional Block</h3>
+            <p>To change the condition, click the <span class="button-ref">Edit</span> button on the `If Start` card in the <span class="tab-ref">📋 Execution Flow</span> or right-click the "IF" node in the <span class="tab-ref">📈 Workflow</span> view and select "Configure Parameters".</p>
+        </section>		
+
+        <section id="rearrange-steps" class="section">
+            <h2>↕️ Rearrange Steps</h2>
+            <p>This powerful tool provides a dedicated interface for organizing, grouping, and deleting steps in your workflow. It is especially useful for managing large and complex bots where simple up/down movements are inefficient.</p>
+
+            <h3><span class="button-ref">↕️ Rearrange Steps</span></h3>
+            <p><strong>Function:</strong> This button opens the "Rearrange Bot Steps" dialog, which presents your entire workflow as a flat, re-orderable list.</p>
+            <ul>
+                <li><strong>How it works:</strong> The dialog displays each step with its number and a summary of its action. From here, you can perform large-scale changes to your bot's structure. When you click "OK", the main <span class="tab-ref">📋 Execution Flow</span> is updated to reflect your changes.</li>
+                <li><strong>Usage Scenario:</strong> You've built a 50-step bot and realize a block of 10 steps from the end needs to be moved near the beginning. Instead of clicking the "up" arrow dozens of times, you can use this dialog to select and move the entire block in one action.</li>
+            </ul>
+
+            <h3>Rearrangement Methods</h3>
+            <p>The dialog offers multiple ways to manipulate your workflow:</p>
+            <ul>
+                <li><strong>Drag & Drop:</strong> The most intuitive method. Simply click and drag a step (or a selection of steps) to a new position in the list. A line indicator will show you exactly where the steps will be dropped.</li>
+                <li><strong>Multi-Select:</strong> You can select multiple steps at once using standard keyboard shortcuts:
+                    <ul>
+                        <li><span class="key-ref">Ctrl + Click</span> to select individual, non-consecutive steps.</li>
+                        <li><span class="key-ref">Shift + Click</span> to select a continuous range of steps.</li>
+                    </ul>
+                </li>
+                <li><strong>Precise Move Controls:</strong> For exact placement, select one or more steps and use the "Move Selected Steps" controls at the bottom. You can choose to move your selection "Before Step #" or "After Step #" and specify the target step number.</li>
+            </ul>
+            <div class="screenshot-placeholder">
+                <img src="image/rearrange_steps.gif" alt="Using the Rearrange Steps dialog to reorder the bot.">
+            </div>
+
+            <h3>Other Actions in the Dialog</h3>
+            <p>Beyond reordering, you can perform other critical edits:</p>
+            <ul>
+                <li><span class="button-ref">📦 Group Selected</span>: Select multiple steps and click this button to wrap them in a new `Group` block. You will be prompted to enter a name for the group.</li>
+                <li><span class="button-ref">🗑️ Delete Selected</span>: Select one or more steps and click this button to permanently remove them from the workflow after confirmation. This is much faster than deleting steps one by one.</li>
+            </ul>
+        </section>
+
+
+        <section id="update-app" class="section">
+            <h2>🔄 Update App</h2>
+            <p>This function allows you to update the application to the latest version directly from the source repository. It provides a guided process to ensure new features and bug fixes are applied correctly.</p>
+
+            <h3><span class="button-ref">🔄 Update App</span></h3>
+            <p><strong>Function:</strong> Initiates the application update process. The tool will first attempt to download the update automatically. If that fails (due to network restrictions, for example), it will guide you through a manual download and update procedure.</p>
+            
+            <h4>Automatic Update Process</h4>
+            <ol>
+                <li>Click the <span class="button-ref">🔄 Update App</span> button. The application will attempt to download the latest version as a ZIP file.</li>
+                <li>Once downloaded, the "Update Application" dialog will appear, showing a tree view of all new and changed files.</li>
+                <li>By default, all files are selected. You can uncheck any files you do not wish to update.</li>
+                <li>Click the <span class="button-ref">Update Selected Files</span> button to copy the new files into your application directory, overwriting the old ones.</li>
+            </ol>
+
+            <h4>Manual Update Process</h4>
+            <p>If the automatic download fails, you will be prompted to perform a manual update:</p>
+            <ol>
+                <li>A dialog will appear with a direct link to the update file. Click the link to download the ZIP file in your web browser.</li>
+                <li>Once the download is complete, return to the application and click the <span class="button-ref">Select File...</span> button in the dialog.</li>
+                <li>Navigate to your "Downloads" folder (or wherever you saved the file) and select the ZIP file you just downloaded.</li>
+                <li>The application will then proceed to the "Update Application" dialog (step 2 of the automatic process), allowing you to select and apply the updates.</li>
+            </ol>
+            <div class="screenshot-placeholder">
+                <img src="image/update_app_dialog.gif" alt="The Update Application dialog showing a list of files to be updated.">
+            </div>
+
+            <h3>Important Notes</h3>
+            <ul>
+                <li><strong>Restart Required:</strong> After the update is complete, you must close and restart the application for the changes to take effect.</li>
+                <li><strong>User Data is Safe:</strong> The update process only affects the application's core files. Your saved bots, templates, images, and global variables will not be affected.</li>
+                <li><strong>Permissions:</strong> Ensure you have write permissions for the application's installation folder, or the update will fail.</li>
+            </ul>
+        </section>
+
+
+        <!-- Other sections remain as they were, as they don't contain button descriptions -->
+
+        <footer style="text-align: center; margin-top: 50px; padding-top: 20px; border-top: 2px solid #e9ecef; color: #6c757d;">
+            <p><strong>AutomateTask</strong> - Developed by Phung Tuan Hung</p>
+            <p>For support and updates, refer to the application's built-in update feature.</p>
+        </footer>
+    </div>
+</body>
+</html>
