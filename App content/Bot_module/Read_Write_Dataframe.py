@@ -464,12 +464,9 @@ class File_Writer:
             self._log(f"FATAL ERROR during file write: {e}"); raise
 
 ################################################################################
-# --- NEWLY ADDED CODE STARTS HERE ---
+# --- EXISTING CODE CONTINUES UNCHANGED, NEW CLASSES ADDED BELOW ---
 ################################################################################
-
-#
-# --- [NEW] HELPER: Worker thread for splitting files ---
-#
+# ... (All other classes like _FileSplitterDialog, Split_file, _FileMergerDialog, Merge_file remain here)
 class _FileSplitterThread(QThread):
     """Handles the long-running file splitting task in a separate thread."""
     progress_update = pyqtSignal(int, str)  # (percentage, message)
@@ -1110,3 +1107,159 @@ class Merge_file:
 
         self._log(f"Successfully merged files into a DataFrame with {len(merged_dataframe)} rows.")
         return merged_dataframe
+
+#
+# --- [NEW] HELPER: The GUI Dialog for the Folder Reader ---
+#
+class _FolderReaderDialog(QDialog):
+    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None,
+                 initial_config: Optional[Dict[str, Any]] = None,
+                 initial_variable: Optional[str] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Folder Reader")
+        self.setMinimumWidth(600)
+        self.global_variables = global_variables
+
+        main_layout = QVBoxLayout(self)
+
+        # 1. Source Folder and Options
+        source_group = QGroupBox("Source and Options")
+        source_layout = QFormLayout(source_group)
+        
+        self.folder_path_edit = QLineEdit(); self.folder_path_edit.setReadOnly(True)
+        browse_button = QPushButton("Browse Folder...")
+        path_layout = QHBoxLayout(); path_layout.addWidget(self.folder_path_edit); path_layout.addWidget(browse_button)
+        
+        self.keyword_edit = QLineEdit()
+        self.keyword_edit.setPlaceholderText("Optional, case-insensitive")
+        self.include_subfolders_check = QCheckBox("Read files in sub-folders")
+
+        source_layout.addRow("Source Folder:", path_layout)
+        source_layout.addRow("Filter by Keyword in Name:", self.keyword_edit)
+        source_layout.addRow(self.include_subfolders_check)
+        main_layout.addWidget(source_group)
+        
+        # 2. Assign Results
+        assign_group = QGroupBox("Assign Results to Variable")
+        assign_layout = QFormLayout(assign_group)
+        self.new_var_radio = QRadioButton("New Variable Name:"); self.new_var_input = QLineEdit("folder_files")
+        self.existing_var_radio = QRadioButton("Existing Variable:"); self.existing_var_combo = QComboBox()
+        self.existing_var_combo.addItems(["-- Select --"] + self.global_variables)
+        assign_layout.addRow(self.new_var_radio, self.new_var_input)
+        assign_layout.addRow(self.existing_var_radio, self.existing_var_combo)
+        self.new_var_radio.setChecked(True)
+        main_layout.addWidget(assign_group)
+
+        # Dialog Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        main_layout.addWidget(self.button_box)
+
+        # Connections
+        browse_button.clicked.connect(self._browse_for_folder)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+
+        if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _browse_for_folder(self):
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Source Folder")
+        if folder_path:
+            self.folder_path_edit.setText(folder_path)
+
+    def _populate_from_initial_config(self, config, variable):
+        self.folder_path_edit.setText(config.get("folder_path", ""))
+        self.keyword_edit.setText(config.get("keyword_filter", ""))
+        self.include_subfolders_check.setChecked(config.get("include_subfolders", False))
+
+        if variable:
+            if variable in self.global_variables:
+                self.existing_var_radio.setChecked(True); self.existing_var_combo.setCurrentText(variable)
+            else:
+                self.new_var_radio.setChecked(True); self.new_var_input.setText(variable)
+
+    def get_executor_method_name(self) -> str: return "_read_folder_contents"
+
+    def get_config_data(self) -> Optional[Dict[str, Any]]:
+        folder_path = self.folder_path_edit.text()
+        if not folder_path:
+            QMessageBox.warning(self, "Input Error", "Please select a source folder."); return None
+        
+        return {
+            "folder_path": folder_path,
+            "keyword_filter": self.keyword_edit.text(),
+            "include_subfolders": self.include_subfolders_check.isChecked()
+        }
+
+    def get_assignment_variable(self) -> Optional[str]:
+        if self.new_var_radio.isChecked():
+            var_name = self.new_var_input.text().strip()
+            if not var_name:
+                QMessageBox.warning(self, "Input Error", "New variable name cannot be empty."); return None
+            return var_name
+        else:
+            var_name = self.existing_var_combo.currentText()
+            if var_name == "-- Select --":
+                QMessageBox.warning(self, "Input Error", "Please select an existing variable."); return None
+            return var_name
+
+#
+# --- [NEW] The Public-Facing Module Class for Folder Reading ---
+#
+class Folder_Reader:
+    """A module to scan a folder and its subfolders for files and list them in a DataFrame."""
+    def __init__(self, context: Optional[ExecutionContext] = None):
+        self.context = context
+
+    def _log(self, message: str):
+        if self.context: self.context.add_log(message)
+        else: print(message)
+
+    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str], **kwargs) -> QDialog:
+        self._log("Opening Folder Reader configuration...")
+        return _FolderReaderDialog(
+            global_variables=global_variables,
+            parent=parent_window,
+            **kwargs
+        )
+
+    def _read_folder_contents(self, context: ExecutionContext, config_data: dict) -> pd.DataFrame:
+        self.context = context
+        folder_path = config_data["folder_path"]
+        keyword = config_data["keyword_filter"].lower()
+        include_subfolders = config_data["include_subfolders"]
+
+        self._log(f"Reading contents of folder: {folder_path}")
+        if keyword:
+            self._log(f"Filtering filenames containing: '{keyword}'")
+        if include_subfolders:
+            self._log("Including sub-folders.")
+
+        file_list = []
+        try:
+            if include_subfolders:
+                for root, _, files in os.walk(folder_path):
+                    for filename in files:
+                        if not keyword or keyword in filename.lower():
+                            full_path = os.path.join(root, filename)
+                            file_list.append((full_path, filename))
+            else:
+                for filename in os.listdir(folder_path):
+                    full_path = os.path.join(folder_path, filename)
+                    if os.path.isfile(full_path):
+                        if not keyword or keyword in filename.lower():
+                            file_list.append((full_path, filename))
+
+            if not file_list:
+                self._log("Warning: No files found matching the criteria.")
+            else:
+                self._log(f"Found {len(file_list)} matching files.")
+
+            df = pd.DataFrame(file_list, columns=['full_link', 'file_name'])
+            return df
+            
+        except FileNotFoundError:
+            self._log(f"FATAL ERROR: The specified folder does not exist: {folder_path}")
+            raise
+        except Exception as e:
+            self._log(f"FATAL ERROR during folder scan: {e}")
+            raise

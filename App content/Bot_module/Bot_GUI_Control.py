@@ -1,6 +1,7 @@
 import time
 from my_lib.shared_context import ExecutionContext
 import socket
+import getpass
 
 class Bot_GUI_Control:
     """
@@ -64,6 +65,53 @@ class Bot_GUI_Control:
         print(f"An error occurred: {e}")
         return None
         
+    def get_login_user(self):
+        """
+        Gets the current login user ID.
+        
+        Returns:
+            str: The username of the currently logged-in user.
+        """
+        try:
+            # Primary method: using getpass module
+            username = getpass.getuser()
+            
+            if self.context:
+                self.context.add_log(f"Current login user: {username}")
+            
+            return username
+        except Exception as e:
+            # Fallback method: using environment variables
+            try:
+                username = os.environ.get('USERNAME') or os.environ.get('USER')
+                if username:
+                    if self.context:
+                        self.context.add_log(f"Current login user (from env): {username}")
+                    return username
+                else:
+                    raise Exception("Could not determine username from environment variables")
+            except Exception as fallback_error:
+                error_msg = f"Error getting login user: {e}, Fallback error: {fallback_error}"
+                if self.context:
+                    self.context.add_log(error_msg)
+                print(error_msg)
+                return None
+        
+class Bot_Flow_Control:
+    """
+    A collection of methods to control the main application's graphical user interface (GUI).
+    Allows the bot to hide, show, or check the state of the main window.
+    """
+    def __init__(self, context: ExecutionContext = None):
+        """
+        Initializes the Bot GUI Control module.
+
+        Args:
+            context (ExecutionContext): The execution context provided by the application,
+                                        used to communicate with the main GUI.
+        """
+        self.context = context
+        
 # In Bot_GUI_Control.py, inside the Bot_GUI_Control class
 
     def JumpTo(self, target_step_number: int):
@@ -91,3 +139,10 @@ class Bot_GUI_Control:
 
         # This special string is the "signal" to the main execution worker.
         return f"_JUMP_TO_STEP_::{target_step_number}"
+        
+    def stop_workflow(self):
+        raise Exception("User Reqeust stop workflow")
+        return 
+    
+    def do_nothing(self):
+        return 'do nothing'

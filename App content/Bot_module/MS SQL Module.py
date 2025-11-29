@@ -1677,13 +1677,7 @@ class _MssqlQueryUpdateDialog(QDialog):
         sql_layout = QVBoxLayout(sql_group)
         self.sql_from_text_radio = QRadioButton("Enter SQL Statement directly:")
         self.sql_statement_edit = QTextEdit()
-        self.sql_statement_edit.setPlaceholderText(
-            "Example:\n"
-            "UPDATE TOP (1) [MyTable]\n"
-            "SET [Status] = 'Processing', [Machine] = 'BOT01'\n"
-            "OUTPUT inserted.[ID], inserted.[Data]\n"
-            "WHERE [Status] IS NULL;"
-        )
+        self.sql_statement_edit.setPlaceholderText("Example: UPDATE TOP (1) [MyTable] SET [Status] = 'Processing', [Machine] = 'BOT01'  OUTPUT inserted.[ID], inserted.[Data] WHERE [Status] IS NULL;")
         self.sql_statement_edit.setFontFamily("Courier New")
 
         self.sql_from_var_radio = QRadioButton("Get SQL Statement from Variable:")
