@@ -396,7 +396,7 @@ class Chrome_TGDD:
             if element is not None:
                 price = element.text
                 if price !='':
-                    return price 
+                    return self.gia_dien_may_xanh(price) 
         return None
         
         
@@ -434,4 +434,18 @@ class Chrome_TGDD:
         return None
         
         
-        return       
+        return    
+    def gia_dien_may_xanh(self,x):
+        x=x.replace("Online Giá Rẻ Quá\n","")
+        x=x.replace("Xả kho giảm hết - Vui hơn Tết\n","")
+        x=x.replace(".","")
+        x=x.split('₫')[0]
+        return x     
+    
+    def take_screenshot(self,driver,file_link):
+        try:
+            driver.save_screenshot(file_link)
+            return True
+        except:
+            return False
+        return
