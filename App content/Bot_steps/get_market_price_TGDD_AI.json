@@ -205,7 +205,7 @@
             "parameters_config": {
                 "api_key": {
                     "type": "hardcoded",
-                    "value": "AIzaSyDcI4Dya15MwEeprPsM28PHbKq_eBZwzB8"
+                    "value": "putYourKeyHere"
                 },
                 "product_name": {
                     "type": "variable",
