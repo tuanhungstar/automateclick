@@ -310,12 +310,13 @@ class File_Reader:
             self._log(f"FATAL ERROR during file loading: {e}"); raise
             
 class _FileWriterDialog(QDialog):
-    def __init__(self, df_variables: List[str], parent: Optional[QWidget] = None,
+    def __init__(self, df_variables: List[str], global_variables: List[str], parent: Optional[QWidget] = None,
                  initial_config: Optional[Dict[str, Any]] = None):
         super().__init__(parent)
         self.setWindowTitle("File Writer")
         self.setMinimumWidth(500)
         self.df_variables = df_variables
+        self.global_variables = global_variables
         
         main_layout = QVBoxLayout(self)
 
@@ -325,13 +326,27 @@ class _FileWriterDialog(QDialog):
         
         self.df_var_combo = QComboBox(); self.df_var_combo.addItems(["-- Select DataFrame --"] + self.df_variables)
         self.file_type_combo = QComboBox(); self.file_type_combo.addItems(['Excel', 'CSV', 'TXT'])
-        self.file_path_edit = QLineEdit(); self.file_path_edit.setPlaceholderText("e.g., C:\\data\\output.xlsx")
-        browse_button = QPushButton("Browse...")
-        path_layout = QHBoxLayout(); path_layout.addWidget(self.file_path_edit); path_layout.addWidget(browse_button)
         
+        self.path_type_layout = QHBoxLayout()
+        self.static_path_radio = QRadioButton("Static File Path")
+        self.var_path_radio = QRadioButton("Path from Variable")
+        self.path_type_layout.addWidget(self.static_path_radio)
+        self.path_type_layout.addWidget(self.var_path_radio)
+        self.static_path_radio.setChecked(True)
+
+        self.file_path_edit = QLineEdit(); self.file_path_edit.setPlaceholderText("e.g., C:\\data\\output.xlsx")
+        self.browse_button = QPushButton("Browse...")
+        path_layout = QHBoxLayout(); path_layout.addWidget(self.file_path_edit); path_layout.addWidget(self.browse_button)
+        
+        self.path_var_combo = QComboBox()
+        self.path_var_combo.addItems(["-- Select Variable --"] + self.global_variables)
+        self.path_var_combo.setEnabled(False)
+
         source_layout.addRow("DataFrame to Save:", self.df_var_combo)
         source_layout.addRow("Save as File Type:", self.file_type_combo)
+        source_layout.addRow("Path Source:", self.path_type_layout)
         source_layout.addRow("Save to File Path:", path_layout)
+        source_layout.addRow("Path Variable:", self.path_var_combo)
         main_layout.addWidget(source_group)
 
         # 2. File Options
@@ -349,12 +364,19 @@ class _FileWriterDialog(QDialog):
         main_layout.addWidget(self.button_box)
 
         # Connections
-        browse_button.clicked.connect(self._browse_for_save_path)
+        self.browse_button.clicked.connect(self._browse_for_save_path)
         self.file_type_combo.currentTextChanged.connect(self._on_file_type_changed)
+        self.static_path_radio.toggled.connect(self._toggle_path_source)
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
 
         self._on_file_type_changed(self.file_type_combo.currentText())
         if initial_config: self._populate_from_initial_config(initial_config)
+
+    def _toggle_path_source(self):
+        is_static = self.static_path_radio.isChecked()
+        self.file_path_edit.setEnabled(is_static)
+        self.browse_button.setEnabled(is_static)
+        self.path_var_combo.setEnabled(not is_static)
 
     def _browse_for_save_path(self):
         file_type = self.file_type_combo.currentText()
@@ -375,7 +397,15 @@ class _FileWriterDialog(QDialog):
     def _populate_from_initial_config(self, config):
         self.df_var_combo.setCurrentText(config.get("dataframe_var", "-- Select DataFrame --"))
         self.file_type_combo.setCurrentText(config.get("file_type", "Excel"))
-        self.file_path_edit.setText(config.get("file_path", ""))
+        
+        use_var_path = config.get("use_var_path", False)
+        if use_var_path:
+            self.var_path_radio.setChecked(True)
+            self.path_var_combo.setCurrentText(config.get("path_variable_name", "-- Select Variable --"))
+        else:
+            self.static_path_radio.setChecked(True)
+            self.file_path_edit.setText(config.get("file_path", ""))
+            
         self.sheet_name_edit.setText(config.get("sheet_name", "Sheet1"))
         self.include_index_check.setChecked(config.get("include_index", False))
 
@@ -387,13 +417,24 @@ class _FileWriterDialog(QDialog):
         if df_var == "-- Select DataFrame --":
             QMessageBox.warning(self, "Input Error", "Please select a DataFrame to save."); return None
             
-        file_path = self.file_path_edit.text().strip()
-        if not file_path:
-            QMessageBox.warning(self, "Input Error", "Please specify a file path to save to."); return None
+        use_var_path = self.var_path_radio.isChecked()
+        file_path = ""
+        path_variable_name = ""
+        
+        if use_var_path:
+            path_variable_name = self.path_var_combo.currentText()
+            if path_variable_name == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select a variable for the file path."); return None
+        else:
+            file_path = self.file_path_edit.text().strip()
+            if not file_path:
+                QMessageBox.warning(self, "Input Error", "Please specify a file path to save to."); return None
 
         return {
             "dataframe_var": df_var,
+            "use_var_path": use_var_path,
             "file_path": file_path,
+            "path_variable_name": path_variable_name,
             "file_type": self.file_type_combo.currentText(),
             "sheet_name": self.sheet_name_edit.text(),
             "include_index": self.include_index_check.isChecked()
@@ -418,7 +459,8 @@ class File_Writer:
         initial_config = kwargs.get("initial_config")
 
         return _FileWriterDialog(
-            df_variables=df_variables, 
+            df_variables=df_variables,
+            global_variables=global_variables,
             parent=parent_window, 
             initial_config=initial_config
         )
@@ -426,7 +468,17 @@ class File_Writer:
 
     def _save_file_data(self, context: ExecutionContext, config_data: dict):
         self.context = context
-        df_var, file_path, file_type = config_data["dataframe_var"], config_data["file_path"], config_data["file_type"]
+        df_var = config_data.get("dataframe_var")
+        file_type = config_data.get("file_type")
+        
+        use_var_path = config_data.get("use_var_path", False)
+        if use_var_path:
+            path_var = config_data.get("path_variable_name")
+            file_path = self.context.get_variable(path_var)
+            if not file_path or not isinstance(file_path, str):
+                raise ValueError(f"Variable '{path_var}' does not contain a valid file path string.")
+        else:
+            file_path = config_data.get("file_path")
         
         df_to_save = self.context.get_variable(df_var)
         if not isinstance(df_to_save, pd.DataFrame):
@@ -1123,21 +1175,36 @@ class _FolderReaderDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         # 1. Source Folder and Options
+        # 1. Source Folder Options
         source_group = QGroupBox("Source and Options")
         source_layout = QFormLayout(source_group)
         
+        self.path_source_combo = QComboBox()
+        self.path_source_combo.addItems(["Static Path", "From Variable"])
+        
+        # Static path widgets
         self.folder_path_edit = QLineEdit(); self.folder_path_edit.setReadOnly(True)
-        browse_button = QPushButton("Browse Folder...")
-        path_layout = QHBoxLayout(); path_layout.addWidget(self.folder_path_edit); path_layout.addWidget(browse_button)
+        self.browse_button = QPushButton("Browse Folder...")
+        self.path_layout = QHBoxLayout(); self.path_layout.addWidget(self.folder_path_edit); self.path_layout.addWidget(self.browse_button)
+        
+        # Variable path widget
+        self.folder_var_combo = QComboBox()
+        self.folder_var_combo.addItems(["-- Select --"] + self.global_variables)
         
         self.keyword_edit = QLineEdit()
         self.keyword_edit.setPlaceholderText("Optional, case-insensitive")
         self.include_subfolders_check = QCheckBox("Read files in sub-folders")
 
-        source_layout.addRow("Source Folder:", path_layout)
+        source_layout.addRow("Path Source:", self.path_source_combo)
+        source_layout.addRow("Source Folder:", self.path_layout)
+        source_layout.addRow("Folder Variable:", self.folder_var_combo)
         source_layout.addRow("Filter by Keyword in Name:", self.keyword_edit)
         source_layout.addRow(self.include_subfolders_check)
         main_layout.addWidget(source_group)
+        
+        # Setup initial UI state
+        self.folder_var_combo.setVisible(False)
+        self.path_source_combo.currentTextChanged.connect(self._toggle_path_source)
         
         # 2. Assign Results
         assign_group = QGroupBox("Assign Results to Variable")
@@ -1155,11 +1222,17 @@ class _FolderReaderDialog(QDialog):
         main_layout.addWidget(self.button_box)
 
         # Connections
-        browse_button.clicked.connect(self._browse_for_folder)
+        self.browse_button.clicked.connect(self._browse_for_folder)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
 
         if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _toggle_path_source(self, source: str):
+        is_variable = (source == "From Variable")
+        self.folder_var_combo.setVisible(is_variable)
+        self.folder_path_edit.setVisible(not is_variable)
+        self.browse_button.setVisible(not is_variable)
 
     def _browse_for_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Select Source Folder")
@@ -1167,7 +1240,11 @@ class _FolderReaderDialog(QDialog):
             self.folder_path_edit.setText(folder_path)
 
     def _populate_from_initial_config(self, config, variable):
+        path_source = config.get("path_source", "Static Path")
+        self.path_source_combo.setCurrentText(path_source)
         self.folder_path_edit.setText(config.get("folder_path", ""))
+        self.folder_var_combo.setCurrentText(config.get("folder_var", "-- Select --"))
+        
         self.keyword_edit.setText(config.get("keyword_filter", ""))
         self.include_subfolders_check.setChecked(config.get("include_subfolders", False))
 
@@ -1180,12 +1257,18 @@ class _FolderReaderDialog(QDialog):
     def get_executor_method_name(self) -> str: return "_read_folder_contents"
 
     def get_config_data(self) -> Optional[Dict[str, Any]]:
-        folder_path = self.folder_path_edit.text()
-        if not folder_path:
-            QMessageBox.warning(self, "Input Error", "Please select a source folder."); return None
+        path_source = self.path_source_combo.currentText()
+        if path_source == "Static Path":
+            if not self.folder_path_edit.text():
+                QMessageBox.warning(self, "Input Error", "Please select a source folder."); return None
+        else:
+            if self.folder_var_combo.currentText() == "-- Select --":
+                QMessageBox.warning(self, "Input Error", "Please select a variable for the source folder."); return None
         
         return {
-            "folder_path": folder_path,
+            "path_source": path_source,
+            "folder_path": self.folder_path_edit.text(),
+            "folder_var": self.folder_var_combo.currentText(),
             "keyword_filter": self.keyword_edit.text(),
             "include_subfolders": self.include_subfolders_check.isChecked()
         }
@@ -1224,7 +1307,17 @@ class Folder_Reader:
 
     def _read_folder_contents(self, context: ExecutionContext, config_data: dict) -> pd.DataFrame:
         self.context = context
-        folder_path = config_data["folder_path"]
+        
+        path_source = config_data.get("path_source", "Static Path")
+        if path_source == "From Variable":
+            folder_var = config_data.get("folder_var", "")
+            folder_path = self.context.get_variable(folder_var)
+            if not folder_path:
+                self._log(f"FATAL ERROR: The variable '{folder_var}' is empty or does not exist.")
+                raise ValueError(f"The variable '{folder_var}' is empty or does not exist.")
+        else:
+            folder_path = config_data["folder_path"]
+            
         keyword = config_data["keyword_filter"].lower()
         include_subfolders = config_data["include_subfolders"]
 
