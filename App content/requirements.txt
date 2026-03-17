@@ -19,3 +19,4 @@ pytesseract
 sqlalchemy
 pyperclipimg
 cryptography
+webdriver-manager
