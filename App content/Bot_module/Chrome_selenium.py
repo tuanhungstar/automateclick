@@ -449,3 +449,38 @@ class Chrome_TGDD:
         except:
             return False
         return
+
+class Download_Chromedriver:
+    def __init__(self, context: Context):
+        self.context = context # Store the shared context
+        self.log_prefix = f"[{self.__class__.__name__}]"
+        self.context.add_log(f"{self.log_prefix} Initialized with context.")
+        
+    def download_and_check(self, path_to_save: str):
+        from webdriver_manager.chrome import ChromeDriverManager
+        import shutil
+        import os
+        
+        try:
+            self.context.add_log(f"{self.log_prefix} Checking/Downloading ChromeDriver...")
+            # Download or check cache for chromedriver
+            driver_path = ChromeDriverManager().install()
+            
+            # Ensure the target directory exists
+            if not os.path.exists(path_to_save):
+                os.makedirs(path_to_save)
+                
+            # Copy to the assigned path (usually driver_path is an exe on Windows)
+            filename = os.path.basename(driver_path) # usually chromedriver.exe
+            target_path = os.path.join(path_to_save, filename)
+            
+            # Only copy if source and destination are different
+            if os.path.abspath(driver_path) != os.path.abspath(target_path):
+                shutil.copy2(driver_path, target_path)
+                
+            self.context.add_log(f"{self.log_prefix} Successfully provided chromedriver at {target_path}")
+            return target_path
+            
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Failed to download/check chromedriver: {e}")
+            return None
