@@ -8093,10 +8093,11 @@ class MainWindow(QMainWindow):
             if not self._process_zip_file(zip_path):
                 # _process_zip_file returns False if the zip is bad.
                 # This will trigger the manual download flow.
-                raise zipfile.BadZipFile("The automatically downloaded file was invalid.")
+                self._log_to_console("Automatically downloaded file was invalid - processing returned False.")
+                raise urllib.error.URLError("The zip file could not be parsed.")
 
-        except (urllib.error.URLError, zipfile.BadZipFile) as e:
-            # 3. This block executes if automatic download or zip processing fails
+        except urllib.error.URLError as e:
+            # 3. This block executes if automatic download fails
             self._log_to_console(f"Automatic update failed: {e}. Switching to manual download.")
 
             msg_box = QMessageBox(self)
@@ -8141,9 +8142,12 @@ class MainWindow(QMainWindow):
             extracted_path = os.path.join(self.update_dir, extracted_folder_name)
             dialog = UpdateDialog(extracted_path, self.base_directory, self)
             dialog.exec()
+            
+            return True
         
         except Exception as e:
             QMessageBox.critical(self, "Update Error", f"An error occurred while processing the file: {e}")
+            return False
     def _update_workflow_tab(self, switch_to_tab: bool = False) -> None:
         """
         Enhanced workflow tab update with better canvas initialization.
