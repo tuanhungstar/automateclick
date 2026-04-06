@@ -81,26 +81,45 @@ class DataFrame:
             except Exception as e:
                 print(f"An error occurred while copying to clipboard: {e}")
 
-    def read_cell(self,df, row_idx: int, col_idx: int) -> any:
+    def read_cell(self,df, row_idx: int, col_idx: int, row_offset: int = 0, col_offset: int = 0) -> any:
         """
-        Reads the value of a single cell by its integer index.
+        Reads the value of a single cell by its integer index, with an optional offset.
 
         Args:
+            df: The pandas DataFrame.
             row_idx: The row index (0-based).
             col_idx: The column index (0-based).
+            row_offset: Displace row index by this amount. Defaults to 0.
+            col_offset: Displace column index by this amount. Defaults to 0.
 
         Returns:
             The value of the cell, or None if an error occurs.
         """
         if not self._check_df(df):
             return None
+            
+        try:
+            row_idx = int(row_idx) if row_idx not in ("", None) else 0
+            col_idx = int(col_idx) if col_idx not in ("", None) else 0
+            row_offset = int(row_offset) if row_offset not in ("", None) else 0
+            col_offset = int(col_offset) if col_offset not in ("", None) else 0
+        except ValueError:
+            print("Error: Invalid integer provided for row/column index or offset.")
+            return None
+            
+        target_row = row_idx + row_offset
+        target_col = col_idx + col_offset
+        
+        if target_row < 0 or target_col < 0:
+            print(f"Error: Cell at ({target_row}, {target_col}) is out of bounds (negative index).")
+            return None
         
         try:
             # .iat is the fastest way to access a single cell by integer location
-            value = df.iat[row_idx, col_idx]
+            value = df.iat[target_row, target_col]
             return value
         except IndexError:
-            print(f"Error: Cell at ({row_idx}, {col_idx}) is out of bounds.")
+            print(f"Error: Cell at ({target_row}, {target_col}) is out of bounds.")
             return None
 
     def write_cell(self,df, row_idx: int, col_idx: int, value: any):
@@ -113,6 +132,13 @@ class DataFrame:
             value: The value to write to the cell.
         """
         if not self._check_df(df):
+            return
+            
+        try:
+            row_idx = int(row_idx) if row_idx not in ("", None) else 0
+            col_idx = int(col_idx) if col_idx not in ("", None) else 0
+        except ValueError:
+            print("Error: Invalid integer provided for row or column index.")
             return
             
         try:
@@ -328,4 +354,55 @@ class DataFrame:
         except Exception as e:
             print(f"An error occurred while adding the column: {e}")
             return df
+
+    def filter_by_keywords(self, df: pd.DataFrame, column_name: str, keywords_str: str, exact_match: bool = True) -> pd.DataFrame:
+        """
+        Filters the DataFrame by a list of keywords provided in a semicolon-separated string.
+        
+        Args:
+            df (pd.DataFrame): The DataFrame to process.
+            column_name (str): The name of the column to filter.
+            keywords_str (str): A semicolon-separated string of keywords.
+            exact_match (bool): If True, does an exact match. 
+                                If False, checks if the column contains any of the keywords (substring match).
+        
+        Returns:
+            pd.DataFrame: A new DataFrame containing only the matching rows.
+        """
+        if not self._check_df(df):
+            return pd.DataFrame()
+            
+        try:
+            if not keywords_str:
+                return pd.DataFrame()
+                
+            # Split the string by semicolon and strip whitespace from each keyword
+            keywords = [kw.strip() for kw in str(keywords_str).split(';') if kw.strip()]
+            
+            if not keywords:
+                return pd.DataFrame()
+                
+            if exact_match:
+                # Exact match: isin list
+                filtered_df = df[df[column_name].isin(keywords)].copy()
+            else:
+                # Substring match: check if column contains any of the keywords
+                # Convert column to string for contains checking, handle NaNs
+                import re
+                escaped_keywords = [re.escape(kw) for kw in keywords]
+                pattern = '|'.join(escaped_keywords)
+                filtered_df = df[df[column_name].astype(str).str.contains(pattern, case=False, na=False, regex=True)].copy()
+            
+            if filtered_df.empty:
+                print(f"Warning: No rows found where '{column_name}' matches any of {keywords}")
+                
+            return filtered_df.reset_index(drop=True)
+            
+        except KeyError:
+            print(f"Error: Column '{column_name}' not found in the DataFrame.")
+            return pd.DataFrame()
+        except Exception as e:
+            print(f"An error occurred while filtering by keywords: {e}")
+            return pd.DataFrame()
+
     # --- END NEW METHOD ---

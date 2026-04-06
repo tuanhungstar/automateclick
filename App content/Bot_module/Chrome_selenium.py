@@ -48,12 +48,16 @@ class Chrome_selenium():
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--disable-popup-blocking")
         
-        #webdriver1 = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options) 
-        driver = webdriver.Chrome(service=service, options=chrome_options) 
-        #url = 'https://portal.eu.micgtm.com/#'
-        driver.get(url)
-        self.context.add_log(f"{self.log_prefix} Chrome is connected to url{url}")
-        return driver
+        try:
+            #webdriver1 = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options) 
+            driver = webdriver.Chrome(service=service, options=chrome_options) 
+            #url = 'https://portal.eu.micgtm.com/#'
+            driver.get(url)
+            self.context.add_log(f"{self.log_prefix} Chrome is connected to url{url}")
+            return driver
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Error connecting chrome or navigating to url '{url}': {e}")
+            return None
         
     def find_and_send_text(self,driver, 
                        by_strategy: By, 
