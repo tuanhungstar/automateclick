@@ -807,13 +807,13 @@ class GlobalVariableDialog(QDialog):
             self.value_input.setPlaceholderText("")
         else:
             self.value_input.setEnabled(True)
-            # Show browse button ONLY if type is String and name contains "link"
-            is_file_link = (selected_type == "String" and "link" in var_name)
-            self.browse_button.setVisible(is_file_link)
+            # Show browse button ONLY if type is String and name contains "link" or "folder"
+            is_file_or_folder_link = (selected_type == "String" and ("link" in var_name or "folder" in var_name))
+            self.browse_button.setVisible(is_file_or_folder_link)
             
             # Set placeholder text
             if selected_type == "String":
-                self.value_input.setPlaceholderText("Enter text value (or use Browse if name has 'link')")
+                self.value_input.setPlaceholderText("Enter text value (or use Browse if name has 'link' or 'folder')")
             elif selected_type == "Number":
                 self.value_input.setPlaceholderText("Enter a number (e.g., 123 or 45.6)")
             elif selected_type == "List":
@@ -824,9 +824,15 @@ class GlobalVariableDialog(QDialog):
                 self.value_input.setPlaceholderText("Enter True or False")
 
     def _open_file_dialog(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
-        if file_path:
-            self.value_input.setText(file_path)
+        var_name = self.name_input.text().lower()
+        if "folder" in var_name:
+            folder_path = QFileDialog.getExistingDirectory(self, "Select Folder")
+            if folder_path:
+                self.value_input.setText(folder_path)
+        else:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*)")
+            if file_path:
+                self.value_input.setText(file_path)
 
     def get_variable_data(self) -> Optional[Tuple[str, Any]]:
         """Parses the value input based on the selected type."""
@@ -888,6 +894,97 @@ class GlobalVariableDialog(QDialog):
             return None
 
 # In main_app.py, REPLACE the entire ParameterInputDialog class with this one:
+
+class DuckTypedComboBox(QComboBox):
+    def text(self): return self.currentText()
+    def setText(self, text): self.setCurrentText(str(text))
+    def setPlaceholderText(self, text): pass
+
+class DynamicVariablesWidget(QWidget):
+    def __init__(self, global_var_names: List[str], initial_config: Dict[str, Any] = None, parent=None):
+        super().__init__(parent)
+        self.global_var_names = global_var_names
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout = QVBoxLayout()
+        self.layout.addLayout(self.rows_layout)
+        self.add_btn = QPushButton("➕ Add Variable")
+        self.add_btn.clicked.connect(self.add_row)
+        self.layout.addWidget(self.add_btn)
+        self.rows = []
+        if initial_config and initial_config.get('type') == 'hardcoded':
+            val = initial_config.get('value', [])
+            if isinstance(val, dict):
+                for k, v in val.items():
+                    self.add_row(var_name=k, val_text=str(v))
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and "var" in item and "val" in item:
+                        self.add_row(var_name=item["var"], val_text=str(item["val"]))
+        if not self.rows:
+            self.add_row()
+
+    def add_row(self, var_name="", val_text=""):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout(row_widget)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        combo = QComboBox()
+        combo.addItem("-- Select Variable --")
+        combo.addItems(self.global_var_names)
+        if var_name:
+            idx = combo.findText(var_name)
+            if idx != -1: combo.setCurrentIndex(idx)
+        val_input = QLineEdit(val_text)
+        browse_btn = QPushButton("Browse...")
+        browse_btn.setVisible(False)
+        remove_btn = QPushButton("❌")
+        remove_btn.setFixedWidth(30)
+        row_layout.addWidget(combo, 1)
+        row_layout.addWidget(val_input, 2)
+        row_layout.addWidget(browse_btn)
+        row_layout.addWidget(remove_btn)
+        self.rows_layout.addWidget(row_widget)
+        row_data = {"combo": combo, "val_input": val_input, "widget": row_widget, "browse_btn": browse_btn}
+        self.rows.append(row_data)
+        remove_btn.clicked.connect(lambda: self.remove_row(row_data))
+        combo.currentTextChanged.connect(lambda txt: self._on_combo_changed(txt, browse_btn, val_input))
+        browse_btn.clicked.connect(lambda: self._on_browse_clicked(combo.currentText(), val_input))
+        if var_name:
+            self._on_combo_changed(var_name, browse_btn, val_input)
+
+    def remove_row(self, row_data):
+        if row_data in self.rows:
+            self.rows.remove(row_data)
+        row_data["widget"].deleteLater()
+
+    def _on_combo_changed(self, text, browse_btn, val_input):
+        text_lower = text.lower()
+        if "folder" in text_lower or "file" in text_lower or "link" in text_lower:
+            browse_btn.setVisible(True)
+        else:
+            browse_btn.setVisible(False)
+
+    def _on_browse_clicked(self, text, val_input):
+        text_lower = text.lower()
+        if "folder" in text_lower:
+            path = QFileDialog.getExistingDirectory(self, "Select Folder")
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Select File/Link", "", "All Files (*)")
+        if path:
+            val_input.setText(path)
+
+    def text(self):
+        import json
+        data = []
+        for r in self.rows:
+            key = r["combo"].currentText()
+            val = r["val_input"].text().strip()
+            if key and key != "-- Select Variable --":
+                data.append({"var": key, "val": val})
+        return json.dumps(data)
+    
+    def setText(self, text): pass
+    def setPlaceholderText(self, text): pass
 
 class ParameterInputDialog(QDialog):
     request_screenshot = pyqtSignal()
@@ -1041,6 +1138,22 @@ class ParameterInputDialog(QDialog):
                         value_source_combo.setCurrentIndex(1)
                         idx = variable_select_combo.findText(config.get('value'))
                         if idx != -1: variable_select_combo.setCurrentIndex(idx)
+
+            elif "dynamic_variables_list" in param_name: # Handle dynamic list of variables parameters separately
+                hardcoded_editor = DynamicVariablesWidget(
+                    global_var_names=current_global_var_names,
+                    initial_config=initial_parameters_config.get(param_name) if initial_parameters_config else None
+                )
+                self.param_editors[param_name] = hardcoded_editor
+
+                # Hide the generic mapping combos as this widget manages its own mapping
+                value_source_combo.setVisible(False)
+                variable_select_combo.setVisible(False)
+                
+                # Default strictly to Hardcoded source to ensure serialization works correctly
+                value_source_combo.setCurrentIndex(0)
+
+                param_h_layout.addWidget(hardcoded_editor)
 
             else: # Logic for all other non-image, non-file_link parameters
                 if param_name in initial_parameters_config:
