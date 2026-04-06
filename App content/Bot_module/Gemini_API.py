@@ -12,7 +12,7 @@ import mimetypes
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QDialogButtonBox,
     QComboBox, QWidget, QGroupBox, QMessageBox, QLabel,
-    QHBoxLayout, QRadioButton, QFileDialog
+    QHBoxLayout, QRadioButton, QFileDialog, QTextEdit # <- ADDED QTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -59,8 +59,10 @@ class _GeminiAPIDialog(QDialog):
         # 2. Prompt Configuration
         prompt_group = QGroupBox("Prompt Input")
         prompt_layout = QFormLayout(prompt_group)
-        self.prompt_hardcode_radio = QRadioButton("Enter Prompt Directly:")
-        self.prompt_hardcode_input = QLineEdit()
+        # MODIFIED: Changed QLineEdit to QTextEdit for multiline input
+        self.prompt_hardcode_radio = QRadioButton("Enter Prompt Directly (Multi-line):")
+        self.prompt_hardcode_input = QTextEdit() 
+        self.prompt_hardcode_input.setFixedHeight(100) # Set height for multiline
         self.prompt_variable_radio = QRadioButton("Select Global Variable:")
         self.prompt_variable_combo = QComboBox()
         self.prompt_variable_combo.addItems(["-- Select --"] + self.global_variables)
@@ -70,9 +72,17 @@ class _GeminiAPIDialog(QDialog):
         self.prompt_hardcode_radio.setChecked(True)
         main_layout.addWidget(prompt_group)
 
-        # 3. File Input (New)
+        # 3. File Input (New & MODIFIED)
         file_group = QGroupBox("Optional File Attachment (Image/PDF)")
         file_layout = QFormLayout(file_group)
+        
+        # NEW: Variable radio button and combo box
+        self.file_variable_radio = QRadioButton("Select Global Variable:")
+        self.file_variable_combo = QComboBox()
+        self.file_variable_combo.addItems(["-- Select --"] + self.global_variables)
+        
+        # Existing: Hardcode radio button and input
+        self.file_hardcode_radio = QRadioButton("Enter File Path Directly:")
         self.file_path_edit = QLineEdit()
         self.file_path_edit.setReadOnly(True)
         self.browse_file_button = QPushButton("Browse File...")
@@ -81,7 +91,10 @@ class _GeminiAPIDialog(QDialog):
         file_path_layout.addWidget(self.file_path_edit)
         file_path_layout.addWidget(self.browse_file_button)
         
-        file_layout.addRow("File Path (Image/PDF):", file_path_layout)
+        file_layout.addRow(self.file_variable_radio, self.file_variable_combo)
+        file_layout.addRow(self.file_hardcode_radio, file_path_layout)
+        
+        self.file_hardcode_radio.setChecked(True) # Set default
         main_layout.addWidget(file_group)
 
         # 4. Assign Results
@@ -111,6 +124,8 @@ class _GeminiAPIDialog(QDialog):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Image or PDF File", "", filters)
         if file_path:
             self.file_path_edit.setText(file_path)
+            # Auto-select the hardcode radio when a file is browsed
+            self.file_hardcode_radio.setChecked(True)
 
     def _populate_from_initial_config(self, config, variable):
         # API Key Config
@@ -127,10 +142,16 @@ class _GeminiAPIDialog(QDialog):
             self.prompt_variable_combo.setCurrentText(config.get("prompt_value", ""))
         else:
             self.prompt_hardcode_radio.setChecked(True)
-            self.prompt_hardcode_input.setText(config.get("prompt_value", ""))
+            # MODIFIED: Use setText/setPlainText for QTextEdit
+            self.prompt_hardcode_input.setPlainText(config.get("prompt_value", ""))
 
-        # File Config
-        self.file_path_edit.setText(config.get("file_path", ""))
+        # File Config (MODIFIED)
+        if config.get("file_source") == "variable":
+            self.file_variable_radio.setChecked(True)
+            self.file_variable_combo.setCurrentText(config.get("file_path_value", ""))
+        else:
+            self.file_hardcode_radio.setChecked(True)
+            self.file_path_edit.setText(config.get("file_path_value", ""))
 
         # Assignment Config
         if variable:
@@ -162,12 +183,17 @@ class _GeminiAPIDialog(QDialog):
 
         # Prompt validation
         prompt_source = "hardcode" if self.prompt_hardcode_radio.isChecked() else "variable"
-        prompt_value = self.prompt_hardcode_input.text().strip() if prompt_source == "hardcode" else self.prompt_variable_combo.currentText()
+        # MODIFIED: Use toPlainText() for QTextEdit
+        prompt_value = self.prompt_hardcode_input.toPlainText().strip() if prompt_source == "hardcode" else self.prompt_variable_combo.currentText()
         
-        # File Path (Optional, no validation needed yet)
-        file_path = self.file_path_edit.text().strip()
+        # File Path Validation (MODIFIED)
+        file_source = "hardcode" if self.file_hardcode_radio.isChecked() else "variable"
+        file_path_value = self.file_path_edit.text().strip() if file_source == "hardcode" else self.file_variable_combo.currentText()
+        
+        if file_source == "variable" and file_path_value == "-- Select --":
+             file_path_value = "" # Treat as empty if strictly default
 
-        if not prompt_value and not file_path:
+        if not prompt_value and not file_path_value:
             QMessageBox.warning(self, "Input Error", "You must provide either a Prompt or a File to analyze."); return None
 
         return {
@@ -175,7 +201,8 @@ class _GeminiAPIDialog(QDialog):
             "api_key_value": api_key_value,
             "prompt_source": prompt_source,
             "prompt_value": prompt_value,
-            "file_path": file_path
+            "file_source": file_source, # New field
+            "file_path_value": file_path_value # New field
         }
 
 #
@@ -229,19 +256,30 @@ class Gemini_API:
             prompt = prompt_value
             self._log("Using hardcoded Prompt input.")
             
-        # 3. Initialize client (needed for file upload too)
+        # 3. Resolve File Path (MODIFIED)
+        file_path_value = config_data.get("file_path_value")
+        file_path = None
+        
+        if file_path_value:
+            if config_data.get("file_source") == "variable":
+                file_path = self.context.get_variable(file_path_value)
+                self._log(f"Fetching File Path from variable: '{file_path_value}'")
+            else:
+                file_path = file_path_value
+                self._log("Using hardcoded File Path input.")
+
+        # 4. Initialize client (needed for file upload too)
         try:
             client = google.genai.Client(api_key=str(api_key))
         except Exception as e:
             self._log(f"FATAL ERROR: Failed to initialize Gemini Client: {e}")
             raise
 
-        # 4. Construct contents for multimodal prompt
-        file_path = config_data.get("file_path")
+        # 5. Construct contents for multimodal prompt
         contents = []
 
         try:
-            # Handle file upload if path is provided
+            # Handle file upload if path is provided and exists
             if file_path and os.path.exists(file_path):
                 self._log(f"Attempting to upload file: {os.path.basename(file_path)}")
                 
@@ -251,6 +289,8 @@ class Gemini_API:
                 
                 contents.append(uploaded_file)
                 self._log(f"File uploaded successfully to: {uploaded_file.uri}")
+            elif file_path:
+                 self._log(f"Warning: File path provided but file not found: {file_path}")
 
             # Add the user's text prompt (can be empty if file is provided)
             if prompt:
@@ -286,6 +326,6 @@ class Gemini_API:
                     # Log a warning if cleanup fails, but don't halt execution
                     self._log(f"Warning: Failed to delete uploaded file {uploaded_file.name}. Error: {cleanup_e}")
 
-        # 5. Return result as a DataFrame
+        # 6. Return result as a DataFrame
         df = pd.DataFrame([generated_text], columns=['Response'])
         return df
