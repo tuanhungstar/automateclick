@@ -134,6 +134,35 @@ class Chrome_selenium():
 
             self.context.add_log(f"{self.log_prefix} An error occurred: {e}")
             return None
+
+    def click_multiple_elements(self, driver, by_strategy, locator_values_str: str):
+        """
+        Finds multiple web elements based on semi-colon separated locator values and clicks them sequentially.
+        locator_values_str: A string of locators separated by ';' (e.g., 'id1; id2; id3')
+        """
+        success_count = 0
+        try:
+            find_strategy_object = self.strategy_map[by_strategy]
+            # Split the string by semi-colon and remove any extra whitespace around each locator
+            locators = [loc.strip() for loc in locator_values_str.split(';') if loc.strip()]
+            
+            for locator in locators:
+                try:
+                    element = driver.find_element(find_strategy_object, locator)
+                    if element is not None:
+                        element.click()
+                        self.context.add_log(f"{self.log_prefix} successfully clicked {by_strategy}: {locator}")
+                        success_count += 1
+                except NoSuchElementException:
+                    self.context.add_log(f"{self.log_prefix} Error: Could not find element with {by_strategy}: {locator}")
+                except Exception as e:
+                    self.context.add_log(f"{self.log_prefix} Error clicking element {locator}: {e}")
+            
+            # Returns True if at least one click was successful
+            return success_count > 0
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} A general error occurred in click_multiple_elements: {e}")
+            return False
             
     def get_text_from_element(self,element):
         
@@ -218,6 +247,112 @@ class Chrome_selenium():
             
         driver.quit()
         return 
+
+    def save_website_html(self, driver, file_path: str):
+        """Saves the current page HTML source to the specified file path."""
+        try:
+            import os
+            # Ensure directory exists
+            directory = os.path.dirname(file_path)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory)
+                
+            page_source = driver.page_source
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(page_source)
+            self.context.add_log(f"{self.log_prefix} Successfully saved HTML to {file_path}")
+            return True
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Failed to save HTML: {e}")
+            return False
+
+    def clean_html_for_llm(self, driver, assign_to_variable: str = ""):
+        """Cleans the HTML of the current page for LLM processing.
+        Provide a variable name in 'assign_to_variable' to save it without printing to the log."""
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            self.context.add_log(f"{self.log_prefix} Error: beautifulsoup4 is not installed. Please run 'pip install beautifulsoup4'.")
+            return None
+            
+        try:
+            raw_html = driver.page_source
+            soup = BeautifulSoup(raw_html, "html.parser")
+            
+            # Remove all script and style elements
+            for script_or_style in soup(["script", "style", "noscript", "svg"]):
+                script_or_style.extract()
+                
+            # Get the text or a simplified HTML
+            clean_html = str(soup.body) if soup.body else str(soup)
+            self.context.add_log(f"{self.log_prefix} Successfully cleaned HTML.")
+            
+            if assign_to_variable and assign_to_variable.strip() != "":
+                self.context.set_variable(assign_to_variable.strip(), clean_html)
+                self.context.add_log(f"{self.log_prefix} HTML saved securely to variable '{assign_to_variable}' (hidden from log).")
+                return f"Success - Saved to {assign_to_variable}"
+            else:
+                return clean_html
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Failed to clean HTML: {e}")
+            return None
+
+    def close_popup(self, driver, popup_selector: str = ".close-popup-class, .modal-close, button[aria-label='Close'], .close", popup_container_id: str = None):
+        """Attempts to close a popup using clicking and JavaScript removal."""
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            
+            self.context.add_log(f"{self.log_prefix} Attempting to close popup...")
+            success = False
+            
+            # Option A: Try clicking the close button
+            try:
+                close_btn = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, popup_selector))
+                )
+                close_btn.click()
+                self.context.add_log(f"{self.log_prefix} Successfully clicked popup close button.")
+                success = True
+            except Exception:
+                self.context.add_log(f"{self.log_prefix} Popup close button not found or click failed.")
+                
+            # Option B: Try using JavaScript to remove the popup container if ID is provided
+            # Even if Option A succeeded, sometimes the overlay persists, so we can try Option B if specified
+            if popup_container_id:
+                try:
+                    popup = driver.find_element(By.ID, popup_container_id) 
+                    driver.execute_script("arguments[0].remove();", popup)
+                    self.context.add_log(f"{self.log_prefix} Successfully removed popup container via JS.")
+                    success = True
+                except Exception:
+                    self.context.add_log(f"{self.log_prefix} Popup container not found via JS.")
+            
+            return success
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Error handling popup: {e}")
+            return False
+
+    def check_popup_exists(self, driver, popup_selector: str = ".close-popup-class, .modal-close, button[aria-label='Close'], .close", timeout: int = 3):
+        """Checks if a popup exists on the current page."""
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            
+            self.context.add_log(f"{self.log_prefix} Checking if popup exists (timeout: {timeout}s)...")
+            
+            # Use WebDriverWait to see if element matches the selector
+            WebDriverWait(driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, popup_selector))
+            )
+            self.context.add_log(f"{self.log_prefix} Popup found.")
+            return True
+        except Exception:
+            self.context.add_log(f"{self.log_prefix} Popup not found within timeout.")
+            return False
+
 
 class Chrome_MIC():
     
@@ -488,3 +623,34 @@ class Download_Chromedriver:
         except Exception as e:
             self.context.add_log(f"{self.log_prefix} Failed to download/check chromedriver: {e}")
             return None
+
+class HTML_Extractor:
+    def __init__(self, context: Context):
+        self.context = context
+        self.log_prefix = f"[{self.__class__.__name__}]"
+        self.context.add_log(f"{self.log_prefix} Initialized with context.")
+        
+    def get_html_to_variable(self, driver, variable_name: str, clean_html: bool = True):
+        """
+        Extracts the HTML from the current driver and assigns it to a context variable.
+        If clean_html is True, it removes scripts, styles, and SVG data to save tokens for Gemini.
+        """
+        try:
+            html = driver.page_source
+            if clean_html:
+                try:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(html, "html.parser")
+                    # Remove tokens that are usually useless for finding buttons but take many tokens
+                    for tag in soup(["script", "style", "noscript", "svg", "path"]):
+                        tag.decompose()
+                    html = str(soup.body) if soup.body else str(soup)
+                except ImportError:
+                    self.context.add_log(f"{self.log_prefix} BeautifulSoup4 not found, returning raw HTML.")
+            
+            self.context.set_variable(variable_name, html)
+            self.context.add_log(f"{self.log_prefix} Successfully assigned HTML to variable '{variable_name}'.")
+            return True
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Error extracting HTML: {e}")
+            return False

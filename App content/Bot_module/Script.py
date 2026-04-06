@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QWidget, QMessageBox, QLabel,
     QPlainTextEdit, QHBoxLayout, QSplitter,
-    QDialogButtonBox, QTextEdit, QPushButton, QFileDialog,
+    QDialogButtonBox, QTextEdit, QPushButton, QFileDialog, QComboBox,
     QTreeWidget, QTreeWidgetItem, QListWidget, QListWidgetItem
 )
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextDocument, QPainter
@@ -160,6 +160,7 @@ class _CodeEditor(QPlainTextEdit):
 # --- DIALOG WITH ALL ENHANCEMENTS ---
 class _CodeExecutorDialog(QDialog):
     def __init__(self, executor_instance: 'Code_Executor', global_variables: List[str], py_file_dir: str, parent: Optional[QWidget] = None, initial_config: Optional[Dict[str, Any]] = None, **kwargs):
+        initial_variable = kwargs.get('initial_variable')
         super().__init__(parent)
         self.setWindowTitle("Python Code Executor")
         self.setMinimumSize(1200, 800)
@@ -251,7 +252,8 @@ class _CodeExecutorDialog(QDialog):
         # NEW: Help button
         self.help_button = QPushButton("Help"); self.help_button.clicked.connect(self._show_help)
         self.button_box.addButton(self.help_button, QDialogButtonBox.ButtonRole.HelpRole)
-        
+        # --- Assignment Section Removed ---
+
         main_layout.addWidget(self.button_box)
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
 
@@ -299,6 +301,7 @@ class _CodeExecutorDialog(QDialog):
         str_variables = sorted([v for v in self.global_variables if isinstance(v, str)])
         self.input_vars_list.addItems(str_variables); self.output_vars_list.addItems(str_variables)
 
+
     def _load_py_templates(self):
         self.py_template_list.clear()
         if not os.path.isdir(self.py_file_dir): return
@@ -337,8 +340,7 @@ class _CodeExecutorDialog(QDialog):
             self.executor_instance._add_log("--- Running Code Test ---")
             result = self.executor_instance._execute_python_code(test_context, config_data)
             self.executor_instance._add_log("--- Code Test Finished ---")
-            result_message = f"Execution successful.\n\nFinal expression result: {result} (Type: {type(result).__name__})"
-            QMessageBox.information(self, "Execution Result", result_message)
+            QMessageBox.information(self, "Execution Result", "Execution successful.")
         except Exception as e:
             error_message = f"An error occurred during execution:\n\n{type(e).__name__}: {e}"
             QMessageBox.critical(self, "Execution Error", error_message)
@@ -404,7 +406,8 @@ class _CodeExecutorDialog(QDialog):
             return None
         return {"code_string": code_string, "imported_module_path": self.imported_module_path}
 
-    def get_assignment_variable(self) -> Optional[str]: return None
+    def get_assignment_variable(self) -> Optional[str]: 
+        return None
 
 # --- Public-Facing Module Class for the Code Executor ---
 class Code_Executor:
@@ -441,22 +444,20 @@ class Code_Executor:
                     if obj.__module__ == module_name: local_scope[name] = obj
                 self._add_log(f"Made classes from '{module_name}' available to script.")
             if hasattr(context, 'global_variables_ref') and isinstance(context.global_variables_ref, dict): local_scope.update(context.global_variables_ref)
-            exec(code_to_run, globals(), local_scope)
+            
+            original_local_scope = dict(local_scope)
+            
+            if code_to_run.strip():
+                exec(code_to_run, globals(), local_scope)
+                    
             if hasattr(context, 'global_variables_ref'):
                 for var_name, value in local_scope.items():
-                    if var_name not in ['__builtins__', 'context'] and var_name in context.global_variables_ref: context.set_variable(var_name, value)
-            lines = [line for line in code_to_run.strip().split('\n') if line.strip()]
-            final_result = None
-            if lines:
-                last_line = lines[-1].strip()
-                try:
-                    import ast
-                    parsed_code = ast.parse(last_line)
-                    is_simple_expression = (isinstance(parsed_code, ast.Module) and len(parsed_code.body) == 1 and isinstance(parsed_code.body[0], ast.Expr))
-                    if is_simple_expression: final_result = eval(last_line, globals(), local_scope)
-                except (SyntaxError, NameError, TypeError): final_result = None
-            self._add_log(f"Code execution finished. Final expression result: {type(final_result).__name__}")
-            return final_result
+                    if var_name not in ['__builtins__', 'context'] and var_name in context.global_variables_ref:
+                        if value is not original_local_scope.get(var_name):
+                            context.set_variable(var_name, value)
+                    
+            self._add_log(f"Code execution finished.")
+            return None
         except Exception as e:
             error_message = f"Error during Python code execution: {type(e).__name__}: {e}"
             self._add_log(f"FATAL ERROR: {error_message}"); raise
