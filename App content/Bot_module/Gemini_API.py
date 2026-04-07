@@ -97,6 +97,16 @@ class _GeminiAPIDialog(QDialog):
         self.file_hardcode_radio.setChecked(True) # Set default
         main_layout.addWidget(file_group)
 
+        # 3.5 Optional Additional Text / HTML Content
+        html_text_group = QGroupBox("Optional Additional Text / HTML (Variable)")
+        html_text_layout = QFormLayout(html_text_group)
+        self.html_variable_radio = QRadioButton("Select Global Variable:")
+        self.html_variable_combo = QComboBox()
+        self.html_variable_combo.addItems(["-- None --"] + self.global_variables)
+        self.html_variable_radio.setChecked(True)
+        html_text_layout.addRow(self.html_variable_radio, self.html_variable_combo)
+        main_layout.addWidget(html_text_group)
+
         # 4. Assign Results
         assign_group = QGroupBox("Assign Results to Variable")
         assign_layout = QFormLayout(assign_group)
@@ -153,6 +163,11 @@ class _GeminiAPIDialog(QDialog):
             self.file_hardcode_radio.setChecked(True)
             self.file_path_edit.setText(config.get("file_path_value", ""))
 
+        # HTML Content Config
+        if config.get("html_source") == "variable" and config.get("html_value"):
+            self.html_variable_radio.setChecked(True)
+            self.html_variable_combo.setCurrentText(config.get("html_value", ""))
+
         # Assignment Config
         if variable:
             if variable in self.global_variables:
@@ -193,8 +208,13 @@ class _GeminiAPIDialog(QDialog):
         if file_source == "variable" and file_path_value == "-- Select --":
              file_path_value = "" # Treat as empty if strictly default
 
-        if not prompt_value and not file_path_value:
-            QMessageBox.warning(self, "Input Error", "You must provide either a Prompt or a File to analyze."); return None
+        html_source = "variable"
+        html_value = self.html_variable_combo.currentText()
+        if html_value == "-- None --":
+             html_value = ""
+
+        if not prompt_value and not file_path_value and not html_value:
+            QMessageBox.warning(self, "Input Error", "You must provide either a Prompt, a File, or HTML Text to analyze."); return None
 
         return {
             "api_key_source": api_key_source,
@@ -202,7 +222,9 @@ class _GeminiAPIDialog(QDialog):
             "prompt_source": prompt_source,
             "prompt_value": prompt_value,
             "file_source": file_source, # New field
-            "file_path_value": file_path_value # New field
+            "file_path_value": file_path_value, # New field
+            "html_source": html_source,
+            "html_value": html_value
         }
 
 #
@@ -267,6 +289,13 @@ class Gemini_API:
             else:
                 file_path = file_path_value
                 self._log("Using hardcoded File Path input.")
+                
+        # 3.5. Resolve HTML text
+        html_value = config_data.get("html_value")
+        html_text = None
+        if html_value:
+            html_text = self.context.get_variable(html_value)
+            self._log(f"Fetching additional HTML text from variable: '{html_value}'")
 
         # 4. Initialize client (needed for file upload too)
         try:
@@ -295,9 +324,13 @@ class Gemini_API:
             # Add the user's text prompt (can be empty if file is provided)
             if prompt:
                 contents.append(str(prompt))
+                
+            # Add HTML text if provided
+            if html_text:
+                contents.append(f"\n\n--- Start of Provided Data (HTML) ---\n{str(html_text)}\n--- End of Provided Data ---")
 
             if not contents:
-                raise ValueError("No content (prompt or file) was provided for the API call.")
+                raise ValueError("No content (prompt, file, or HTML) was provided for the API call.")
 
             self._log(f"Sending request to Gemini API with {len(contents)} parts.")
 
