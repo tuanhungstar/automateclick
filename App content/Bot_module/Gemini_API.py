@@ -56,6 +56,22 @@ class _GeminiAPIDialog(QDialog):
         self.api_key_variable_radio.setChecked(True)
         main_layout.addWidget(api_key_group)
 
+        # 1.5 Model Configuration
+        model_group = QGroupBox("Gemini Model")
+        model_layout = QVBoxLayout(model_group)
+        self.model_combo = QComboBox()
+        self.model_combo.addItems([
+            "gemini-2.5-flash",
+            "gemini-2.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-pro-exp",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash-8b"
+        ])
+        model_layout.addWidget(self.model_combo)
+        main_layout.addWidget(model_group)
+
         # 2. Prompt Configuration
         prompt_group = QGroupBox("Prompt Input")
         prompt_layout = QFormLayout(prompt_group)
@@ -138,6 +154,10 @@ class _GeminiAPIDialog(QDialog):
             self.file_hardcode_radio.setChecked(True)
 
     def _populate_from_initial_config(self, config, variable):
+        # Model Config
+        if config.get("model_value"):
+            self.model_combo.setCurrentText(config.get("model_value"))
+
         # API Key Config
         if config.get("api_key_source") == "variable":
             self.api_key_variable_radio.setChecked(True)
@@ -217,6 +237,7 @@ class _GeminiAPIDialog(QDialog):
             QMessageBox.warning(self, "Input Error", "You must provide either a Prompt, a File, or HTML Text to analyze."); return None
 
         return {
+            "model_value": self.model_combo.currentText(),
             "api_key_source": api_key_source,
             "api_key_value": api_key_value,
             "prompt_source": prompt_source,
@@ -332,11 +353,14 @@ class Gemini_API:
             if not contents:
                 raise ValueError("No content (prompt, file, or HTML) was provided for the API call.")
 
-            self._log(f"Sending request to Gemini API with {len(contents)} parts.")
+            # Get the selected model
+            model_name = config_data.get("model_value", "gemini-2.5-flash")
+
+            self._log(f"Sending request to Gemini API with {len(contents)} parts using model: {model_name}.")
 
             # Make the API call
             response = client.models.generate_content(
-                model="gemini-2.5-flash", 
+                model=model_name, 
                 contents=contents,
             )
             
