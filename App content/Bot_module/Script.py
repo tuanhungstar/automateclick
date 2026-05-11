@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QWidget, QMessageBox, QLabel,
     QPlainTextEdit, QHBoxLayout, QSplitter,
     QDialogButtonBox, QTextEdit, QPushButton, QFileDialog, QComboBox,
-    QTreeWidget, QTreeWidgetItem, QListWidget, QListWidgetItem
+    QTreeWidget, QTreeWidgetItem, QListWidget, QListWidgetItem, QLineEdit
 )
 from PyQt6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont, QTextDocument, QPainter
 from PyQt6.QtCore import Qt, QRect, QSize, QVariant
@@ -25,14 +25,15 @@ except ImportError:
     class ExecutionContext:
         def __init__(self):
             self._log_messages = []
+            self.global_variables_ref = {}
         def add_log(self, message: str):
             print(f"LOG: {message}")
             self._log_messages.append(message)
         def get_variable(self, name: str, default: Any = None) -> Any:
-            print(f"Fallback: Getting variable '{name}'")
-            return default
+            return self.global_variables_ref.get(name, default)
         def set_variable(self, name: str, value: Any):
-            print(f"Fallback: Setting variable '{name}' to {value}")
+            self.global_variables_ref[name] = value
+            self.add_log(f"Fallback: Setting variable '@{name}' to {value}")
 
 class _PythonHighlighter(QSyntaxHighlighter):
     """Syntax highlighter for Python code."""
@@ -178,6 +179,15 @@ class _CodeExecutorDialog(QDialog):
         main_layout.addWidget(info_label)
 
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        
+        # --- NEW: Script Name Row ---
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("<b>Script Name:</b>"))
+        self.script_name_input = QLineEdit()
+        self.script_name_input.setPlaceholderText("Enter a descriptive name for this script (optional)...")
+        name_row.addWidget(self.script_name_input)
+        main_layout.addLayout(name_row)
+        
         main_layout.addWidget(main_splitter, 1)
 
         left_panel = QSplitter(Qt.Orientation.Vertical)
@@ -396,6 +406,7 @@ class _CodeExecutorDialog(QDialog):
 
     def _populate_from_initial_config(self, config: Dict[str, Any]):
         self.code_editor.setPlainText(config.get("code_string", "")); self.imported_module_path = config.get("imported_module_path")
+        self.script_name_input.setText(config.get("script_name", ""))
         
     def get_executor_method_name(self) -> str: return "_execute_python_code"
 
@@ -404,7 +415,11 @@ class _CodeExecutorDialog(QDialog):
         if not code_string.strip():
             if not for_run_test: QMessageBox.warning(self, "Input Error", "Code cannot be empty.")
             return None
-        return {"code_string": code_string, "imported_module_path": self.imported_module_path}
+        return {
+            "code_string": code_string, 
+            "imported_module_path": self.imported_module_path,
+            "script_name": self.script_name_input.text().strip()
+        }
 
     def get_assignment_variable(self) -> Optional[str]: 
         return None
@@ -450,11 +465,25 @@ class Code_Executor:
             if code_to_run.strip():
                 exec(code_to_run, globals(), local_scope)
                     
-            if hasattr(context, 'global_variables_ref'):
+            if hasattr(context, 'global_variables_ref') and isinstance(context.global_variables_ref, dict):
                 for var_name, value in local_scope.items():
-                    if var_name not in ['__builtins__', 'context'] and var_name in context.global_variables_ref:
-                        if value is not original_local_scope.get(var_name):
-                            context.set_variable(var_name, value)
+                    # Skip internal/special variables
+                    if var_name in ['__builtins__', 'context', 'original_local_scope', 'original_sys_path', 'code_to_run', 'imported_module_path']:
+                        continue
+                    
+                    # Sync back to global variables if the variable existed globally before OR if it was newly created in local scope
+                    # and the user might expect it to persist (common in simple scripts).
+                    # However, to avoid overwriting explicit context.set_variable calls, we check if the value in local_scope
+                    # is different from both the original and the current global value.
+                    
+                    is_new_var = var_name not in original_local_scope
+                    is_changed = value is not original_local_scope.get(var_name)
+                    
+                    if is_new_var or is_changed:
+                        # If the user ALREADY called context.set_variable, the current global value 
+                        # might be different from the local value. We prioritize the local value 
+                        # if it was also changed in the script, assuming the script's local state is the "latest".
+                        context.set_variable(var_name, value)
                     
             self._add_log(f"Code execution finished.")
             return None

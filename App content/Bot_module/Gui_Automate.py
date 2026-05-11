@@ -47,6 +47,96 @@ class Bot_utility:
         self.click_image_folder_path = context.get_click_image_base_dir()
         pass
         
+    def click_ai_element(self, ai_response_json, label_to_click):
+        """Clicks an element identified by AI coordinates in a JSON response.
+        
+        Args:
+            ai_response_json (str or dict): The JSON response from the AI server.
+            label_to_click (str): The label of the element to click.
+        """
+        try:
+            data = None
+            # 1. Handle DataFrame (common output from bot modules)
+            if isinstance(ai_response_json, pd.DataFrame):
+                if not ai_response_json.empty:
+                    val = ai_response_json.iloc[0, 0]
+                    if isinstance(val, str):
+                        try: data = json.loads(val)
+                        except: data = val # Might be raw string
+                    else: data = val
+            
+            # 2. Handle string
+            elif isinstance(ai_response_json, str):
+                try: data = json.loads(ai_response_json)
+                except: pass
+            
+            # 3. Handle dict
+            elif isinstance(ai_response_json, dict):
+                data = ai_response_json
+
+            if data is None:
+                self.context.add_log(f"{self.log_prefix} Could not parse AI response (type: {type(ai_response_json)})")
+                return False
+
+            # Sometimes the response is a string inside a dict, or nested
+            if isinstance(data, str):
+                try: data = json.loads(data)
+                except: pass
+
+            def find_key_recursive(obj, target_key):
+                if isinstance(obj, dict):
+                    if target_key in obj: return obj[target_key]
+                    for v in obj.values():
+                        res = find_key_recursive(v, target_key)
+                        if res: return res
+                elif isinstance(obj, list):
+                    for item in obj:
+                        res = find_key_recursive(item, target_key)
+                        if res: return res
+                return None
+
+            elements = find_key_recursive(data, "elements") or find_key_recursive(data, "objects")
+            
+            if not elements or not isinstance(elements, list):
+                self.context.add_log(f"{self.log_prefix} No 'elements' or 'objects' list found in AI response: {data}")
+                return False
+                
+            # 1:1 Mapping (No scaling as user specified 100% scale)
+            scale_x, scale_y = 1.0, 1.0
+            
+            for el in elements:
+                if el.get("label", "").lower() == label_to_click.lower():
+                    # Check for bbox_pixels first
+                    pix = el.get("bbox_pixels")
+                    if pix:
+                        xmin = pix.get("xmin", 0)
+                        ymin = pix.get("ymin", 0)
+                        xmax = pix.get("xmax", xmin)
+                        ymax = pix.get("ymax", ymin)
+                        click_x = (xmin + xmax) / 2
+                        click_y = (ymin + ymax) / 2
+                    else:
+                        # Fallback to direct bbox or coordinator
+                        bbox = el.get("bbox") or el.get("box") or el.get("coordinator")
+                        if isinstance(bbox, list):
+                            if len(bbox) == 4:
+                                click_x = (bbox[1] + bbox[3]) / 2 # Assuming [ymin, xmin, ymax, xmax] standard
+                                click_y = (bbox[0] + bbox[2]) / 2
+                            elif len(bbox) == 2:
+                                click_x, click_y = bbox[0], bbox[1]
+                            else: continue
+                        else: continue
+                    
+                    self.context.add_log(f"{self.log_prefix} Clicking AI element '{label_to_click}' at ({click_x:.1f}, {click_y:.1f}) [1:1 Scale]")
+                    pyautogui.click(click_x, click_y)
+                    return True
+            
+            self.context.add_log(f"{self.log_prefix} Label '{label_to_click}' not found in AI response.")
+            return False
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Error clicking AI element: {str(e)}")
+            return False
+        
     def _base64_pgn(self,text):
         """Decodes a base64 encoded string into a PIL Image object.
 
@@ -104,10 +194,10 @@ class Bot_utility:
         with open(full_path_with_ext) as json_file:
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             location=None
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=0.98)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=0.98)
             except:
                 pass
             if location!=None:
@@ -160,23 +250,20 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
                     pyautogui.click(location.x + int(offset_x), location.y + int(offset_y))
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     return 'left_click_done'
             except:
-                self.context.add_log(f"Image not found: {file_name}")
-                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
+        
         if location is None:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
 
         if stop_if_not_found:
             raise Exception ("Image not found")
@@ -207,19 +294,17 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
                     pyautogui.rightClick(location.x + int(offset_x), location.y + int(offset_y))
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     return 'right_click_done'
             except:
                 pass
         if location is None:
-            self.context.add_log(f"{file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
+            self.context.add_log(f"Image not found: {file_name}")
         return 'right_click_done fail: {}'.format(file_name)
         
     def double_click(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
@@ -247,19 +332,17 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
                     pyautogui.doubleClick(location.x + int(offset_x), location.y + int(offset_y))
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     return 'double_click_done'
             except:
                 pass
         if location is None:
-            self.context.add_log(f"{file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
+            self.context.add_log(f"Image not found: {file_name}")
         return 'double_click fail: {}'.format(file_name)      
     def get_image_location(self,image_to_click,offset_x=0,offset_y=0,confidence=0.92):
         """ Find and return image location
@@ -273,24 +356,58 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
-                    
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     return location
             except:
-                self.context.add_log(f"Image not found: {file_name}")
-                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
         if location is None:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
         return None
+
+    def image_action_advanced(self, window_title, image_to_click, action_type="Left Click", waiting_time=0.5, timeout=10, exit_if_found=True):
+        """
+        Unified Advanced Action:
+        1. Activate window (if title provided)
+        2. Wait 500ms stabilization
+        3. Perform specified action (Click, Wait, etc.)
+        """
+        if window_title:
+            self.activate_window(window_title)
+            time.sleep(0.5)
+            
+        all_image_files = [img.strip() for img in image_to_click.split(',') if img.strip()]
+        found_any = False
+        
+        for img_name in all_image_files:
+            res = 'fail'
+            if action_type == "Left Click":
+                res = self.left_click(img_name, confidence=0.92)
+            elif action_type == "Right Click":
+                res = self.right_click(img_name, confidence=0.92)
+            elif action_type == "Double Click":
+                res = self.double_click(img_name, confidence=0.92)
+            elif action_type == "Wait Appear":
+                exists = self.check_image_exits(img_name, timeout=timeout)
+                res = 'done' if exists else 'fail'
+            elif action_type == "Wait Disappear":
+                disappeared = self.wait_image_disappear(img_name, timeout=timeout)
+                res = 'done' if disappeared else 'fail'
+            
+            # Check for various success strings
+            if res in ['left_click_done', 'right_click_done', 'double_click_done', 'done']:
+                found_any = True
+                if exit_if_found:
+                    return 'done'
+                if action_type in ["Left Click", "Right Click", "Double Click"]:
+                    time.sleep(float(waiting_time))
+        
+        return 'done' if found_any else 'fail'
         
     def left_click_cross_2_images(self,image_to_click_x,image_to_click_y,offset_x=0,offset_y=0,confidence=0.92):
         """ Find and return image location
@@ -305,23 +422,19 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
-                    
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     x_position = location.x
+                    break
             except:
-                self.context.add_log(f"Image not found: {file_name}")
-                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
-        if location is None:
+        if x_position is None:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
             return None      
 
 
@@ -336,23 +449,19 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
-                    
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     y_position = location.y
+                    break
             except:
-                self.context.add_log(f"Image not found: {file_name}")
-                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
-        if location is None:
+        if y_position is None:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
             return None      
 
         if x_position is not None and y_position is not None:
@@ -612,23 +721,19 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
-                    
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     x_position = location.x
+                    break
             except:
-                self.context.add_log(f"Image not found: {file_name}")
-                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
-        if location is None:
+        if x_position is None:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
             return False      
 
 
@@ -643,23 +748,19 @@ class Bot_utility:
             
             image_file = json.load(json_file)
         for key, data in image_file.items():
-            #print (key)
-            image_file = self._base64_pgn(data)
+            img_obj = self._base64_pgn(data)
             try:
-                location= pyautogui.locateCenterOnScreen(image_file,grayscale=True, confidence=confidence)
+                location= pyautogui.locateCenterOnScreen(img_obj,grayscale=True, confidence=confidence)
                 if location!=None:
-                    
-                    self.context.add_log(f"{file_name}")
+                    self.context.add_log(f"Image found: {file_name}")
                     self.context.send_click_status(f"Image found: {file_name}")
                     y_position = location.y
+                    break
             except:
-                self.context.add_log(f"Image not found: {file_name}")
-                self.context.send_click_status(f"Image not found: {file_name}")
                 pass
-        if location is None:
+        if y_position is None:
             self.context.send_click_status(f"Image not found: {file_name}")
             self.context.add_log(f"Image not found: {file_name}")
-            #print ('left_click_done fail: {}'.format(image_file),str(key))
             return False      
 
         if x_position is not None and y_position is not None:        
@@ -697,14 +798,13 @@ class Bot_utility:
             loop+=1
             
             with open(full_path_with_ext) as json_file:
+                image_file_dict = json.load(json_file)
+            
+            found_in_loop = False
+            for key, data in image_file_dict.items():
+                img_obj = self._base64_pgn(data)
                 
-                image_file = json.load(json_file)
-            for key, data in image_file.items():
-                #print (key)
-                image_file = self._base64_pgn(data)
-                
-                img_to_find = image_file
-                img_width, img_height = img_to_find.size
+                img_width, img_height = img_obj.size
                 region_width = img_width + (padding * 2)
                 region_height = img_height + (padding * 2)
                 search_left = mouse_x - (region_width // 2)
@@ -713,22 +813,18 @@ class Bot_utility:
                 search_top = max(0, search_top)    
                 search_region = (search_left, search_top, region_width, region_height)                
                 try:
-
-                    location = pyautogui.locateOnScreen(img_to_find, region=search_region, confidence=float(confidence))
+                    location = pyautogui.locateOnScreen(img_obj, region=search_region, confidence=float(confidence))
                     if location!=None:
+                        self.context.add_log(f"Image found in region: {file_name}")
                         return True
-                        
                 except:
-                    self.context.add_log(f"Image not found: {file_name}")
-                    self.context.send_click_status(f"Image not found: {file_name}")
                     pass
-            if location is None:
-                self.context.send_click_status(f"Image not found: {file_name}")
-                self.context.add_log(f"Image not found: {file_name}")
-                #print ('left_click_done fail: {}'.format(image_file),str(key))
-                return False              
             
             time.sleep(0.5)
+            
+        self.context.send_click_status(f"Image not found after timeout: {file_name}")
+        self.context.add_log(f"Image not found after timeout: {file_name}")
+        return False
             
 class Bot_SAP:
     '''

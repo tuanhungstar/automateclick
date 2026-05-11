@@ -125,7 +125,7 @@ class _DataHubConfigDialog(QDialog):
         self.existing_var_radio = QRadioButton("Existing Variable:")
         self.existing_var_combo = QComboBox()
         self.existing_var_combo.addItem("-- Select Variable --")
-        self.existing_var_combo.addItems(self.global_variables)
+        self.existing_var_combo.addItems([str(v) for v in self.global_variables])
         
         # --- MODIFIED: Set defaults for new step ---
         self.assign_checkbox.setChecked(True)
@@ -479,7 +479,7 @@ class _DataHubConfigDialog(QDialog):
             self.assign_checkbox.setChecked(True)
             if variable in self.global_variables:
                 self.existing_var_radio.setChecked(True)
-                self.existing_var_combo.setCurrentText(variable)
+                self.existing_var_combo.setCurrentText(str(variable))
             else:
                 self.new_var_radio.setChecked(True)
                 self.new_var_input.setText(variable)

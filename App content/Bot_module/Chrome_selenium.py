@@ -14,6 +14,7 @@ import time
 import pandas as pd
 import numpy as np
 import ast
+from typing import Optional, List, Dict, Any, Union
 
 from my_lib.shared_context import ExecutionContext as Context
 
@@ -39,7 +40,7 @@ class Chrome_selenium():
                             }
         return
         
-    def connect_chrome(self,chrome_driver_link:str,url):
+    def connect_chrome(self, chrome_driver_link: str, url: str, use_current_profile: bool = False):
 
         #chrome_driver_path = r'chromedriver.exe'
         chrome_driver_path = chrome_driver_link
@@ -48,6 +49,16 @@ class Chrome_selenium():
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--disable-popup-blocking")
         
+        if use_current_profile:
+            import os
+            # Default Chrome User Data path on Windows
+            user_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', ''), r'Google\Chrome\User Data')
+            if os.path.exists(user_data_dir):
+                chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+                self.context.add_log(f"{self.log_prefix} Using current Chrome profile from {user_data_dir}")
+            else:
+                self.context.add_log(f"{self.log_prefix} Warning: Chrome User Data directory not found at {user_data_dir}")
+
         try:
             #webdriver1 = webdriver.Chrome(executable_path=chrome_driver_path, options=chrome_options) 
             driver = webdriver.Chrome(service=service, options=chrome_options) 
@@ -243,6 +254,47 @@ class Chrome_selenium():
                 break
         return False 
         
+    def click_by_text(self, driver, text: str, timeout: int = 10):
+        """Finds an element containing the specified text and clicks it."""
+        try:
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.common.by import By
+
+            self.context.add_log(f"{self.log_prefix} Searching for text '{text}' to click...")
+            
+            # Using normalize-space() helps match text even with extra whitespace
+            # This XPath looks for any element whose normalized text contains the target text
+            xpath = f"//*[normalize-space()='{text}' or contains(normalize-space(), '{text}')]"
+            
+            # Wait for the element to be present and clickable
+            element = WebDriverWait(driver, timeout).until(
+                EC.element_to_be_clickable((By.XPATH, xpath))
+            )
+            
+            if element:
+                # Scroll into view before clicking
+                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+                time.sleep(0.5) # Small delay for scroll to finish
+                
+                element.click()
+                self.context.add_log(f"{self.log_prefix} Successfully clicked element with text '{text}'.")
+                return True
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Standard click failed for text '{text}', attempting JavaScript click...")
+            
+            # Fallback: try Javascript click if standard click fails
+            try:
+                xpath = f"//*[normalize-space()='{text}' or contains(normalize-space(), '{text}')]"
+                element = driver.find_element(By.XPATH, xpath)
+                driver.execute_script("arguments[0].click();", element)
+                self.context.add_log(f"{self.log_prefix} Clicked element with text '{text}' using JavaScript.")
+                return True
+            except Exception as js_err:
+                self.context.add_log(f"{self.log_prefix} Failed to click element with text '{text}': {js_err}")
+                
+        return False
+        
     def close_driver(self,driver):
             
         driver.quit()
@@ -290,11 +342,51 @@ class Chrome_selenium():
             if assign_to_variable and assign_to_variable.strip() != "":
                 self.context.set_variable(assign_to_variable.strip(), clean_html)
                 self.context.add_log(f"{self.log_prefix} HTML saved securely to variable '{assign_to_variable}' (hidden from log).")
-                return f"Success - Saved to {assign_to_variable}"
+                return clean_html
             else:
                 return clean_html
         except Exception as e:
             self.context.add_log(f"{self.log_prefix} Failed to clean HTML: {e}")
+            return None
+
+    def convert_html_to_plaintext(self, html_content: str):
+        """Converts raw HTML content to normalized plaintext by stripping tags and non-content elements."""
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            self.context.add_log(f"{self.log_prefix} Error: beautifulsoup4 is not installed.")
+            return html_content
+
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+            
+            # Remove scripts, styles, and other non-content tags
+            for element in soup(["script", "style", "noscript", "svg", "header", "footer", "nav"]):
+                element.decompose()
+            
+            # Get text with line breaks to preserve some structure
+            text = soup.get_text(separator='\n')
+            
+            # Clean up: strip lines and remove empty ones
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            return '\n'.join(lines)
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Failed to convert HTML to plaintext: {e}")
+            return ""
+
+    def get_plaintext(self, driver, assign_to_variable: str = ""):
+        """Extracts plaintext from the current page. Optionally saves to a variable."""
+        try:
+            html = driver.page_source
+            plaintext = self.convert_html_to_plaintext(html)
+            
+            if assign_to_variable and assign_to_variable.strip():
+                self.context.set_variable(assign_to_variable.strip(), plaintext)
+                self.context.add_log(f"{self.log_prefix} Plaintext saved to variable '{assign_to_variable}'.")
+            
+            return plaintext
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Failed to get plaintext from driver: {e}")
             return None
 
     def close_popup(self, driver, popup_selector: str = ".close-popup-class, .modal-close, button[aria-label='Close'], .close", popup_container_id: str = None):
@@ -352,6 +444,147 @@ class Chrome_selenium():
         except Exception:
             self.context.add_log(f"{self.log_prefix} Popup not found within timeout.")
             return False
+
+    def close_all_popups(self, driver, window_title: str = "Chrome", use_esc: bool = True, remove_overlays: bool = True):
+        """
+        Attempts to close all visible popups using multiple strategies:
+          0. Activate the Chrome window by its title (brings it to the foreground)
+          1. Press ESC key on the page body
+          2. Click all common close buttons (by CSS selector patterns)
+          3. Close any extra browser windows/tabs opened by the site
+          4. (Optional) Use JavaScript to forcefully remove modal/overlay elements
+             and restore page scroll if it was locked.
+
+        Args:
+            driver:           Active Selenium WebDriver instance.
+            window_title:     Partial or full title of the Chrome window to activate
+                              before closing popups (e.g. "Chrome", "Google Chrome",
+                              or a specific page title). Defaults to "Chrome".
+            use_esc:          If True, sends ESC key to the page body first.
+            remove_overlays:  If True, uses JS to remove leftover overlay/modal DOM elements.
+
+        Returns:
+            True always (best-effort, no exception raised on partial failure).
+        """
+        self.context.add_log(f"{self.log_prefix} Starting close_all_popups sweep...")
+
+        # --- Strategy 0: Activate Chrome window by title ---
+        if window_title:
+            try:
+                import pygetwindow as gw
+                windows = gw.getWindowsWithTitle(window_title)
+                if windows:
+                    win = windows[0]
+                    win.activate()
+                    time.sleep(0.5)
+                    self.context.add_log(f"{self.log_prefix} Activated window: '{win.title}'")
+                else:
+                    self.context.add_log(f"{self.log_prefix} Window with title '{window_title}' not found, skipping activation.")
+            except ImportError:
+                self.context.add_log(f"{self.log_prefix} pygetwindow not installed, skipping window activation.")
+            except Exception as e:
+                self.context.add_log(f"{self.log_prefix} Window activation failed: {e}")
+
+        # --- Strategy 1: ESC key ---
+        if use_esc:
+            try:
+                driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+                time.sleep(0.5)
+                self.context.add_log(f"{self.log_prefix} ESC key sent to page body.")
+            except Exception as e:
+                self.context.add_log(f"{self.log_prefix} ESC key failed: {e}")
+
+        # --- Strategy 2: Click all visible close buttons ---
+        close_selectors = [
+            "button[aria-label='Close']",
+            "button[aria-label='Đóng']",
+            "button[aria-label='close']",
+            ".btn-close",
+            ".modal-close",
+            ".close-btn",
+            ".close",
+            "button[data-dismiss='modal']",
+            "button[data-bs-dismiss='modal']",
+            "[class*='close-button']",
+            "[class*='closeButton']",
+            "[class*='popup-close']",
+            "[class*='modal-close']",
+            "[class*='dialog-close']",
+            "[id*='close-popup']",
+            "[id*='closePopup']",
+        ]
+        clicked_count = 0
+        for sel in close_selectors:
+            try:
+                buttons = driver.find_elements(By.CSS_SELECTOR, sel)
+                for btn in buttons:
+                    try:
+                        if btn.is_displayed() and btn.is_enabled():
+                            btn.click()
+                            clicked_count += 1
+                            time.sleep(0.3)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if clicked_count > 0:
+            self.context.add_log(f"{self.log_prefix} Clicked {clicked_count} close button(s).")
+
+        # --- Strategy 3: Close extra browser windows/tabs ---
+        try:
+            handles = driver.window_handles
+            if len(handles) > 1:
+                main_handle = handles[0]
+                for handle in handles[1:]:
+                    try:
+                        driver.switch_to.window(handle)
+                        driver.close()
+                        self.context.add_log(f"{self.log_prefix} Closed extra browser window/tab.")
+                    except Exception:
+                        pass
+                driver.switch_to.window(main_handle)
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Window/tab cleanup failed: {e}")
+
+        # --- Strategy 4: JS removal of leftover overlay/modal elements ---
+        if remove_overlays:
+            try:
+                driver.execute_script("""
+                    var selectors = [
+                        '[class*="modal"]', '[class*="popup"]', '[class*="overlay"]',
+                        '[class*="backdrop"]', '[class*="lightbox"]', '[class*="dialog"]',
+                        '[id*="modal"]', '[id*="popup"]', '[id*="overlay"]',
+                        '[role="dialog"]', '[role="alertdialog"]'
+                    ];
+                    selectors.forEach(function(sel) {
+                        try {
+                            document.querySelectorAll(sel).forEach(function(el) {
+                                el.remove();
+                            });
+                        } catch(e) {}
+                    });
+                    // Restore body scroll that modals often lock
+                    document.body.style.overflow = 'auto';
+                    document.body.style.position = 'static';
+                    document.documentElement.style.overflow = 'auto';
+                """)
+                self.context.add_log(f"{self.log_prefix} JS overlay removal executed, scroll restored.")
+            except Exception as e:
+                self.context.add_log(f"{self.log_prefix} JS overlay removal failed: {e}")
+
+        self.context.add_log(f"{self.log_prefix} close_all_popups sweep complete.")
+
+        # --- Final: Scroll back to the top of the page ---
+        try:
+            driver.execute_script("window.scrollTo({ top: 0, left: 0, behavior: 'instant' });")
+            time.sleep(0.3)
+            # Also send HOME key as a fallback for pages that override scroll
+            driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.CONTROL + Keys.HOME)
+            self.context.add_log(f"{self.log_prefix} Scrolled back to top of page.")
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Scroll to top failed: {e}")
+
+        return True
 
 
 class Chrome_MIC():
@@ -630,10 +863,11 @@ class HTML_Extractor:
         self.log_prefix = f"[{self.__class__.__name__}]"
         self.context.add_log(f"{self.log_prefix} Initialized with context.")
         
-    def get_html_to_variable(self, driver, variable_name: str, clean_html: bool = True):
+    def get_html_to_variable(self, driver, variable_name: Optional[str] = None, clean_html: bool = True):
         """
-        Extracts the HTML from the current driver and assigns it to a context variable.
-        If clean_html is True, it removes scripts, styles, and SVG data to save tokens for Gemini.
+        Extracts the HTML from the current driver.
+        If variable_name is provided, it assigns it to that context variable.
+        If clean_html is True, it removes scripts, styles, and SVG data.
         """
         try:
             html = driver.page_source
@@ -648,9 +882,11 @@ class HTML_Extractor:
                 except ImportError:
                     self.context.add_log(f"{self.log_prefix} BeautifulSoup4 not found, returning raw HTML.")
             
-            self.context.set_variable(variable_name, html)
-            self.context.add_log(f"{self.log_prefix} Successfully assigned HTML to variable '{variable_name}'.")
-            return True
+            if variable_name:
+                self.context.set_variable(variable_name, html)
+                self.context.add_log(f"{self.log_prefix} Successfully assigned HTML to variable '{variable_name}'.")
+            
+            return html
         except Exception as e:
             self.context.add_log(f"{self.log_prefix} Error extracting HTML: {e}")
-            return False
+            return None

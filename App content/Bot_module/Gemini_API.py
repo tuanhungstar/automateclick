@@ -49,7 +49,7 @@ class _GeminiAPIDialog(QDialog):
         self.api_key_hardcode_input = QLineEdit()
         self.api_key_variable_radio = QRadioButton("Select Global Variable:")
         self.api_key_variable_combo = QComboBox()
-        self.api_key_variable_combo.addItems(["-- Select --"] + self.global_variables)
+        self.api_key_variable_combo.addItems(["-- Select --"] + [str(v) for v in self.global_variables])
         
         api_key_layout.addRow(self.api_key_hardcode_radio, self.api_key_hardcode_input)
         api_key_layout.addRow(self.api_key_variable_radio, self.api_key_variable_combo)
@@ -81,7 +81,7 @@ class _GeminiAPIDialog(QDialog):
         self.prompt_hardcode_input.setFixedHeight(100) # Set height for multiline
         self.prompt_variable_radio = QRadioButton("Select Global Variable:")
         self.prompt_variable_combo = QComboBox()
-        self.prompt_variable_combo.addItems(["-- Select --"] + self.global_variables)
+        self.prompt_variable_combo.addItems(["-- Select --"] + [str(v) for v in self.global_variables])
         
         prompt_layout.addRow(self.prompt_hardcode_radio, self.prompt_hardcode_input)
         prompt_layout.addRow(self.prompt_variable_radio, self.prompt_variable_combo)
@@ -95,7 +95,7 @@ class _GeminiAPIDialog(QDialog):
         # NEW: Variable radio button and combo box
         self.file_variable_radio = QRadioButton("Select Global Variable:")
         self.file_variable_combo = QComboBox()
-        self.file_variable_combo.addItems(["-- Select --"] + self.global_variables)
+        self.file_variable_combo.addItems(["-- Select --"] + [str(v) for v in self.global_variables])
         
         # Existing: Hardcode radio button and input
         self.file_hardcode_radio = QRadioButton("Enter File Path Directly:")
@@ -118,7 +118,7 @@ class _GeminiAPIDialog(QDialog):
         html_text_layout = QFormLayout(html_text_group)
         self.html_variable_radio = QRadioButton("Select Global Variable:")
         self.html_variable_combo = QComboBox()
-        self.html_variable_combo.addItems(["-- None --"] + self.global_variables)
+        self.html_variable_combo.addItems(["-- None --"] + [str(v) for v in self.global_variables])
         self.html_variable_radio.setChecked(True)
         html_text_layout.addRow(self.html_variable_radio, self.html_variable_combo)
         main_layout.addWidget(html_text_group)
@@ -128,7 +128,7 @@ class _GeminiAPIDialog(QDialog):
         assign_layout = QFormLayout(assign_group)
         self.new_var_radio = QRadioButton("New Variable Name:"); self.new_var_input = QLineEdit("gemini_response")
         self.existing_var_radio = QRadioButton("Existing Variable:"); self.existing_var_combo = QComboBox()
-        self.existing_var_combo.addItems(["-- Select --"] + self.global_variables)
+        self.existing_var_combo.addItems(["-- Select --"] + [str(v) for v in self.global_variables])
         assign_layout.addRow(self.new_var_radio, self.new_var_input)
         assign_layout.addRow(self.existing_var_radio, self.existing_var_combo)
         self.new_var_radio.setChecked(True)
@@ -156,12 +156,12 @@ class _GeminiAPIDialog(QDialog):
     def _populate_from_initial_config(self, config, variable):
         # Model Config
         if config.get("model_value"):
-            self.model_combo.setCurrentText(config.get("model_value"))
+            self.model_combo.setCurrentText(str(config.get("model_value", "")))
 
         # API Key Config
         if config.get("api_key_source") == "variable":
             self.api_key_variable_radio.setChecked(True)
-            self.api_key_variable_combo.setCurrentText(config.get("api_key_value", ""))
+            self.api_key_variable_combo.setCurrentText(str(config.get("api_key_value", "")))
         else:
             self.api_key_hardcode_radio.setChecked(True)
             self.api_key_hardcode_input.setText(config.get("api_key_value", ""))
@@ -169,7 +169,7 @@ class _GeminiAPIDialog(QDialog):
         # Prompt Config
         if config.get("prompt_source") == "variable":
             self.prompt_variable_radio.setChecked(True)
-            self.prompt_variable_combo.setCurrentText(config.get("prompt_value", ""))
+            self.prompt_variable_combo.setCurrentText(str(config.get("prompt_value", "")))
         else:
             self.prompt_hardcode_radio.setChecked(True)
             # MODIFIED: Use setText/setPlainText for QTextEdit
@@ -178,7 +178,7 @@ class _GeminiAPIDialog(QDialog):
         # File Config (MODIFIED)
         if config.get("file_source") == "variable":
             self.file_variable_radio.setChecked(True)
-            self.file_variable_combo.setCurrentText(config.get("file_path_value", ""))
+            self.file_variable_combo.setCurrentText(str(config.get("file_path_value", "")))
         else:
             self.file_hardcode_radio.setChecked(True)
             self.file_path_edit.setText(config.get("file_path_value", ""))
@@ -186,12 +186,13 @@ class _GeminiAPIDialog(QDialog):
         # HTML Content Config
         if config.get("html_source") == "variable" and config.get("html_value"):
             self.html_variable_radio.setChecked(True)
-            self.html_variable_combo.setCurrentText(config.get("html_value", ""))
+            self.html_variable_combo.setCurrentText(str(config.get("html_value", "")))
 
         # Assignment Config
         if variable:
             if variable in self.global_variables:
-                self.existing_var_radio.setChecked(True); self.existing_var_combo.setCurrentText(variable)
+                self.existing_var_radio.setChecked(True)
+                self.existing_var_combo.setCurrentText(str(variable))
             else:
                 self.new_var_radio.setChecked(True); self.new_var_input.setText(variable)
 
