@@ -69,6 +69,7 @@ class ExecutionContext:
         # This directly modifies the dictionary that was passed by reference
         # from the main application's worker thread.
         self.global_variables_ref[name] = value
+        self.add_log(f"Global variable '@{name}' set to: {value}")
         
     def get_result(self, key):
         """Retrieves a result stored by a previous step."""
