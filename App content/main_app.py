@@ -14,12 +14,16 @@ import urllib.request
 import zipfile
 import shutil
 import subprocess
-import webbrowser # <<< ADD THIS LINE
+import webbrowser
+import keyboard
+import pyautogui
+import pygetwindow as gw
+
 from PIL import ImageGrab
 import PIL.Image
 from PIL.ImageQt import ImageQt
 from PyQt6.QtGui import QPixmap, QColor, QFont, QPainter, QPen, QIcon, QPolygonF, QCursor, QAction
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF, QTime
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QVariant, QObject, QSize, QPoint, QRegularExpression,QRect,QDateTime, QTimer, QPointF, QTime, QModelIndex
 from PyQt6 import QtWidgets, QtGui, QtCore
 from typing import Optional, List, Dict, Any, Tuple, Union
 import pandas as pd
@@ -42,7 +46,7 @@ from PyQt6.QtWidgets import (
     QRadioButton, QGroupBox, QCheckBox, QTextEdit,
     QTreeWidget, QTreeWidgetItem, QGridLayout, QHeaderView, QSplitter, QInputDialog,
     QStackedLayout, QBoxLayout,QMenu,QPlainTextEdit,QSizePolicy, QTextBrowser,QDateTimeEdit,QTreeWidgetItemIterator,
-    QScrollArea, QTabWidget, QFrame, QMenu, QTimeEdit
+    QScrollArea, QTabWidget, QFrame, QMenu, QTimeEdit, QDoubleSpinBox, QSpinBox
 )
 
 from PyQt6.QtGui import QIntValidator
@@ -54,7 +58,304 @@ from my_lib.BOT_take_image import MainWindow as BotTakeImageWindow
 from my_lib.Emailer import Emailer
 
 
+class RecodeStepOverlay(QtWidgets.QWidget):
+    finished = pyqtSignal(list)
+    # Signals for thread-safe UI interaction from keyboard hotkeys
+    _request_capture = pyqtSignal()
+    _request_finish = pyqtSignal()
+    _request_cancel = pyqtSignal()
+    _request_adj = pyqtSignal(str)
+    _request_capture_and_finish_signal = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(None)
+        self.main_window = parent
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        
+        self.rect_size = QSize(100, 50)
+        self.captured_steps = []
+        self.active = True
+        self.flash = False # For visual feedback
+
+        
+        # Connect signals to main thread slots
+        self._request_capture.connect(self._do_capture)
+        self._request_finish.connect(self._do_finish)
+        self._request_cancel.connect(self._do_cancel)
+        self._request_adj.connect(self._do_adj)
+        self._request_capture_and_finish_signal.connect(self._do_capture_and_finish)
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update)
+        self.timer.start(50)
+        
+        # Register global hotkeys (callbacks will emit signals)
+        try:
+            keyboard.add_hotkey('ctrl+r', lambda: self._request_capture_and_finish_signal.emit())
+            keyboard.add_hotkey('esc', lambda: self._request_cancel.emit())
+            keyboard.add_hotkey('up', lambda: self._request_adj.emit('up'))
+            keyboard.add_hotkey('down', lambda: self._request_adj.emit('down'))
+            keyboard.add_hotkey('left', lambda: self._request_adj.emit('left'))
+            keyboard.add_hotkey('right', lambda: self._request_adj.emit('right'))
+        except Exception as e:
+            print(f"Error adding hotkeys: {e}")
+        
+        self.last_pos = QPoint(-1, -1)
+        self.manual_resize = False
+        self.showFullScreen()
+
+    def _do_capture_and_finish(self):
+        if not self.active: return
+        self._do_capture()
+        # Use a small delay within the UI thread to ensure capture process is finalized
+        QTimer.singleShot(200, self._do_finish)
+
+    def _suggest_size(self):
+        if self.manual_resize: return
+        mx, my = pyautogui.position()
+        if QPoint(mx, my) == self.last_pos: return
+        self.last_pos = QPoint(mx, my)
+        
+        try:
+            import win32gui
+            # Get window at cursor
+            hwnd = win32gui.WindowFromPoint((mx, my))
+            if hwnd:
+                # Find the most specific child window at this point
+                # point = win32gui.ScreenToClient(hwnd, (mx, my)) # Not needed for ChildWindowFromPoint
+                # child = win32gui.ChildWindowFromPoint(hwnd, (mx, my))
+                # For simplicity, GetWindowRect of whatever hwnd is returned is usually good
+                rect = win32gui.GetWindowRect(hwnd)
+                w = rect[2] - rect[0]
+                h = rect[3] - rect[1]
+                
+                # If it's a reasonable size for an object (button, icon, etc.)
+                if 10 < w < 600 and 10 < h < 400:
+                    self.rect_size = QSize(w, h)
+        except:
+            pass
+
+    def _do_adj(self, direction):
+        if not self.active: return
+        self.manual_resize = True # Stop auto-suggesting if user manually adjusts
+        if direction == 'up': self.rect_size.setHeight(max(10, self.rect_size.height() + 10))
+        elif direction == 'down': self.rect_size.setHeight(max(10, self.rect_size.height() - 10))
+        elif direction == 'left': self.rect_size.setWidth(max(10, self.rect_size.width() - 10))
+        elif direction == 'right': self.rect_size.setWidth(max(10, self.rect_size.width() + 10))
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        if self.flash:
+            painter.fillRect(self.rect(), QColor(255, 255, 255, 100))
+            self.flash = False
+            return
+
+        self._suggest_size()
+        mx, my = pyautogui.position()
+
+        w, h = self.rect_size.width(), self.rect_size.height()
+        rect = QRect(int(mx - w/2), int(my - h/2), w, h)
+        
+        painter.setPen(QPen(QColor(255, 0, 0), 2))
+        painter.drawRect(rect)
+        
+        # Draw info text
+        painter.setPen(QColor(255, 255, 255))
+        painter.setBrush(QColor(0, 0, 0, 150))
+        text_rect = QRect(rect.left(), rect.bottom() + 5, 420, 40)
+        painter.drawRect(text_rect)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, 
+                         f"  Size: {w}x{h}\n  Ctrl+R: Capture & Finish | Esc: Cancel | Arrows: Adjust")
+
+    def _do_capture(self):
+        if not self.active: return
+        mx, my = pyautogui.position()
+        w, h = self.rect_size.width(), self.rect_size.height()
+        left, top = int(mx - w/2), int(my - h/2)
+        
+        try:
+            # Hide overlay briefly to avoid capturing the red rectangle
+            self.hide()
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.05)
+            
+            image = pyautogui.screenshot(region=(left, top, w, h))
+            image = image.convert('L') # Convert to grayscale (black and white)
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            base64_image = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            import win32gui
+            mx, my = pyautogui.position()
+            hwnd = win32gui.WindowFromPoint((mx, my))
+            title = "Unknown"
+            if hwnd:
+                # Get the top-level window title
+                root_hwnd = win32gui.GetAncestor(hwnd, 2) # GA_ROOT
+                title = win32gui.GetWindowText(root_hwnd)
+            
+            self.captured_steps.append({
+                'base64': base64_image,
+                'title': title,
+                'w': w, 'h': h
+            })
+            self.flash = True
+            self.update()
+            if self.main_window:
+                self.main_window._log_to_console(f"Captured step for window: {title}")
+        except Exception as e:
+            if self.main_window:
+                self.main_window._log_to_console(f"Capture failed: {e}")
+            print(f"Capture failed: {e}")
+
+
+    def _do_finish(self):
+        if not self.active: return
+        self.active = False
+        self.hide() # Hide immediately
+        self.cleanup()
+        self.finished.emit(self.captured_steps)
+        self.close()
+
+    def _do_cancel(self):
+        if not self.active: return
+        self.active = False
+        self.hide() # Hide immediately
+        self.cleanup()
+        self.finished.emit([])
+        self.close()
+
+
+    def cleanup(self):
+        try:
+            keyboard.unhook_all_hotkeys() # Safer way to clear everything we added
+        except:
+            # Fallback if unhook_all_hotkeys is not available or fails
+            try:
+                keyboard.remove_hotkey('ctrl+r')
+                keyboard.remove_hotkey('ctrl+d')
+                keyboard.remove_hotkey('esc')
+                keyboard.remove_hotkey('up')
+                keyboard.remove_hotkey('down')
+                keyboard.remove_hotkey('left')
+                keyboard.remove_hotkey('right')
+            except:
+                pass
+
+class RecodeConfigDialog(QDialog):
+    def __init__(self, captured_steps, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Recorded Steps")
+        self.setMinimumWidth(500)
+        self.captured_steps = captured_steps
+        self.results = []
+        
+        layout = QVBoxLayout(self)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        
+        for i, step in enumerate(self.captured_steps):
+            group = QGroupBox(f"Step {i+1}")
+            form = QFormLayout()
+            
+            # Preview
+            img_label = QLabel()
+            pix = QPixmap()
+            pix.loadFromData(base64.b64decode(step['base64']))
+            img_label.setPixmap(pix.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatio))
+            form.addRow("Preview:", img_label)
+            
+            title_edit = QLineEdit(step['title'])
+            form.addRow("Window Title:", title_edit)
+            
+            action_type = QComboBox()
+            action_type.addItems(["Left Click", "Right Click", "Double Click", "Wait Appear", "Wait Disappear"])
+            form.addRow("Action Type:", action_type)
+            
+            exit_cb = QCheckBox("Exit if any image found")
+            exit_cb.setChecked(True)
+            form.addRow("", exit_cb)
+
+            image_folder_edit = QLineEdit("Recorded")
+            form.addRow("Image Folder:", image_folder_edit)
+            
+            # Use timestamp and index to ensure uniqueness by default
+            default_name = f"rec_{int(time.time())}_{i}"
+            image_name_edit = QLineEdit(default_name)
+            form.addRow("Image Name:", image_name_edit)
+            
+            wait_time = QDoubleSpinBox()
+            wait_time.setValue(0.5)
+            wait_time.setSuffix(" sec")
+            form.addRow("Wait Time (between clicks):", wait_time)
+
+            timeout_spin = QSpinBox()
+            timeout_spin.setRange(1, 300)
+            timeout_spin.setValue(10)
+            timeout_spin.setSuffix(" sec")
+            timeout_spin.setVisible(False)
+            form.addRow("Timeout (Wait only):", timeout_spin)
+            
+            action_type.currentTextChanged.connect(lambda text, ts=timeout_spin, wt=wait_time: (
+                ts.setVisible("Wait" in text),
+                wt.setVisible("Click" in text)
+            ))
+            
+            group.setLayout(form)
+            self.content_layout.addWidget(group)
+            
+            # Store widgets to retrieve data later
+            step['widgets'] = {
+                'title': title_edit,
+                'action': action_type,
+                'exit': exit_cb,
+                'wait': wait_time,
+                'timeout': timeout_spin,
+                'folder': image_folder_edit,
+                'name': image_name_edit
+            }
+
+            
+        self.scroll.setWidget(self.content)
+        layout.addWidget(self.scroll)
+        
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def get_data(self):
+        data = []
+        for step in self.captured_steps:
+            w = step['widgets']
+            data.append({
+                'base64': step['base64'],
+                'title': w['title'].text(),
+                'action_type': w['action'].currentText(),
+                'exit_if_found': w['exit'].isChecked(),
+                'waiting_time': w['wait'].value(),
+                'timeout': w['timeout'].value(),
+                'image_folder': w['folder'].text().strip(),
+                'image_name': w['name'].text().strip()
+            })
+        return data
+
+
+
 class SecondWindow(QtWidgets.QDialog): # Or QtWidgets.QMainWindow if you prefer a full window
+
 
     screenshot_saved = pyqtSignal(str)
 
@@ -412,6 +713,14 @@ class ExecutionStepCard(QWidget):
             return f"Group: {self.step_data.get('group_name', 'Unnamed')}"
         
         if step_type == "step":
+            # --- NEW: Prioritize script_name if it exists ---
+            params_config = self.step_data.get("parameters_config", {})
+            config_data = params_config.get("config_data", {}).get("value", {})
+            script_name = config_data.get("script_name") if isinstance(config_data, dict) else None
+            
+            if script_name:
+                return f"Step {self.step_number}: {script_name}"
+            
             method_name = self.step_data.get("method_name", "UnknownMethod")
             return f"Step {self.step_number}: {method_name}"
             
@@ -1155,6 +1464,30 @@ class ParameterInputDialog(QDialog):
 
                 param_h_layout.addWidget(hardcoded_editor)
 
+            elif "action_type" in param_name:
+                action_type_combo = QComboBox()
+                action_type_combo.addItems(["Left Click", "Right Click", "Double Click", "Wait Appear", "Wait Disappear"])
+                self.param_editors[param_name] = action_type_combo 
+
+                param_h_layout.insertWidget(0, value_source_combo)
+                param_h_layout.insertWidget(1, action_type_combo, 2)
+                param_h_layout.insertWidget(2, variable_select_combo, 1)
+
+                # Pre-fill data if editing
+                if param_name in initial_parameters_config:
+                    config = initial_parameters_config[param_name]
+                    if config.get('type') == 'hardcoded':
+                        value_source_combo.setCurrentIndex(0)
+                        idx = action_type_combo.findText(str(config.get('value', '')))
+                        if idx != -1: action_type_combo.setCurrentIndex(idx)
+                    elif config.get('type') == 'variable':
+                        value_source_combo.setCurrentIndex(1)
+                        idx = variable_select_combo.findText(config.get('value'))
+                        if idx != -1: variable_select_combo.setCurrentIndex(idx)
+
+                value_source_combo.currentIndexChanged.connect(lambda index, editor=action_type_combo, selector=variable_select_combo: self._toggle_param_input_type(index, editor, selector))
+                self._toggle_param_input_type(value_source_combo.currentIndex(), action_type_combo, variable_select_combo)
+
             else: # Logic for all other non-image, non-file_link parameters
                 if param_name in initial_parameters_config:
                     config = initial_parameters_config[param_name]
@@ -1255,7 +1588,8 @@ class ParameterInputDialog(QDialog):
         hardcoded_editor.setVisible(is_hardcoded)
         variable_select_combo.setVisible(not is_hardcoded)
         if not is_hardcoded:
-            hardcoded_editor.clear()
+            if hasattr(hardcoded_editor, 'clear') and not isinstance(hardcoded_editor, QComboBox):
+                hardcoded_editor.clear()
 
     def _toggle_file_or_var_input(self, index: int, folder_selector_combo: QComboBox, file_selector_combo: QComboBox, variable_select_combo: QComboBox) -> None:
         is_file_selection = (index == 0)
@@ -1415,7 +1749,11 @@ class ParameterInputDialog(QDialog):
             # Logic for all other parameters (unchanged)
             value_source_index = source_combo.currentIndex()
             if value_source_index == 0:
-                value_str = self.param_editors[param_name].text().strip()
+                editor = self.param_editors[param_name]
+                if isinstance(editor, QComboBox):
+                    value_str = editor.currentText().strip()
+                else:
+                    value_str = editor.text().strip()
                 param_kind = self.param_kinds[param_name]
                 try:
                     parsed_value = None
@@ -1477,10 +1815,137 @@ class ParameterInputDialog(QDialog):
             return var_name
 
 
-# REPLACE the entire ExecutionWorker class with this one:
+class CellDetailDialog(QDialog):
+    """
+    A dialog that displays the full content of a table cell.
+    Supports HTML rendering and plain text.
+    """
+    def __init__(self, content: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Cell Detail")
+        self.resize(800, 600)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Header info
+        header = QLabel("Full Content Detail:")
+        header.setStyleSheet("font-weight: bold; font-size: 14px; color: #333;")
+        layout.addWidget(header)
+        
+        # Content display
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setStyleSheet("background-color: #ffffff; border: 1px solid #ced4da; border-radius: 4px; font-family: 'Consolas', 'Monaco', monospace;")
+        
+        # Simple heuristic to detect HTML
+        trimmed = content.strip()
+        if trimmed.lower().startswith(("<!doctype html>", "<html", "<body", "<div", "<table")):
+            self.text_edit.setHtml(content)
+        else:
+            self.text_edit.setPlainText(content)
+            
+        layout.addWidget(self.text_edit)
+        
+        # Buttons
+        button_box = QHBoxLayout()
+        button_box.addStretch()
+        
+        close_button = QPushButton("Close")
+        close_button.setStyleSheet("""
+            QPushButton {
+                background-color: #6c757d;
+                color: white;
+                border: none;
+                padding: 6px 15px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #5a6268;
+            }
+        """)
+        close_button.clicked.connect(self.accept)
+        button_box.addWidget(close_button)
+        
+        layout.addLayout(button_box)
 
-# In main_app.py
-# REPLACE the entire ExecutionWorker class with this one:
+class StepSearchDialog(QDialog):
+    """
+    A dialog that allows users to search for specific steps in the workflow
+    and navigate to them.
+    """
+    step_selected = pyqtSignal(int) # Emits the original_listbox_row_index of the selected step
+
+    def __init__(self, steps_data: List[Dict[str, Any]], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Find Step")
+        self.resize(500, 400)
+        self.steps_data = steps_data
+        
+        layout = QVBoxLayout(self)
+        
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(QLabel("Search:"))
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Enter keyword or step number...")
+        self.search_input.textChanged.connect(self._perform_search)
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
+        
+        self.results_list = QListWidget()
+        self.results_list.itemDoubleClicked.connect(self._on_item_double_clicked)
+        layout.addWidget(self.results_list)
+        
+        # Initial search (show all)
+        self._perform_search("")
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
+
+    def _perform_search(self, text: str):
+        self.results_list.clear()
+        search_term = text.lower().strip()
+        
+        for i, step in enumerate(self.steps_data):
+            # We search in method_name, class_name, and any parameters
+            searchable_text = []
+            searchable_text.append(step.get("method_name", ""))
+            searchable_text.append(step.get("class_name", ""))
+            
+            # Add parameter values to search
+            params = step.get("parameters_config", {})
+            for p_name, p_config in params.items():
+                if isinstance(p_config, dict) and p_config.get("type") == "hardcoded":
+                    searchable_text.append(str(p_config.get("value", "")))
+            
+            step_num = i + 1
+            full_text = f"step {step_num} " + " ".join(filter(None, searchable_text)).lower()
+            
+            if not search_term or search_term in full_text:
+                # --- NEW: Prioritize script_name if it exists ---
+                params_config = step.get("parameters_config", {})
+                config_data = params_config.get("config_data", {}).get("value", {})
+                script_name = config_data.get("script_name") if isinstance(config_data, dict) else None
+                
+                if script_name:
+                    display_name = script_name
+                else:
+                    display_name = step.get("method_name", f"Step {step_num}")
+                
+                if step.get("type") == "group_start":
+                    display_name = f"Group: {step.get('group_name', 'Unnamed')}"
+                
+                item_text = f"Step {step_num}: {display_name}"
+                item = QListWidgetItem(item_text)
+                # Store the original index for navigation
+                item.setData(Qt.ItemDataRole.UserRole, i) 
+                self.results_list.addItem(item)
+
+    def _on_item_double_clicked(self, item: QListWidgetItem):
+        original_index = item.data(Qt.ItemDataRole.UserRole)
+        self.step_selected.emit(original_index)
+        self.accept()
 
 class ExecutionWorker(QThread):
     execution_started = pyqtSignal(str)
@@ -1716,7 +2181,12 @@ class ExecutionWorker(QThread):
                         elif config['type'] == 'hardcoded_file': resolved_parameters[param_name] = config['value']; params_str_debug.append(f"{param_name}=FILE('{config['value']}')")
                         elif config['type'] == 'variable':
                             var_name = config['value']
-                            if var_name in self.global_variables: resolved_parameters[param_name] = self.global_variables[var_name]; params_str_debug.append(f"{param_name}=@{var_name}({repr(self.global_variables[var_name])})")
+                            if var_name in self.global_variables:
+                                val = self.global_variables[var_name]
+                                val_repr = repr(val)
+                                if len(val_repr) > 100: val_repr = val_repr[:100] + "..."
+                                resolved_parameters[param_name] = val
+                                params_str_debug.append(f"{param_name}=@{var_name}({val_repr})")
                             else: raise ValueError(f"Global variable '{var_name}' not found for parameter '{param_name}'.")
                     self.context.add_log(f"Executing: {class_name}.{method_name}({', '.join(params_str_debug)})")
                     try:
@@ -1901,6 +2371,16 @@ class RearrangeStepItemWidget(QWidget):
         
         # 1. Start with the Step number, which is always present.
         display_parts = [f"Step {step_num}:"]
+        
+        # --- NEW: Prioritize script_name if it exists ---
+        params_config = self.step_data.get("parameters_config", {})
+        config_data = params_config.get("config_data", {}).get("value", {})
+        script_name = config_data.get("script_name") if isinstance(config_data, dict) else None
+        
+        if script_name:
+            display_parts.append(f"{script_name}")
+            return " ".join(display_parts)
+        # --- END NEW ---
         
         # 2. Add the variable assignment, if it exists.
         assign_var = self.step_data.get("assign_to_variable_name")
@@ -4000,6 +4480,14 @@ class WorkflowCanvas(QWidget):
         title_prefix = f"{step_num}. "
 
         if step_type == "step":
+            # --- NEW: Prioritize script_name if it exists ---
+            params_config = step_data.get("parameters_config", {})
+            config_data = params_config.get("config_data", {}).get("value", {})
+            script_name = config_data.get("script_name") if isinstance(config_data, dict) else None
+            
+            if script_name:
+                return f"{title_prefix}{script_name}"
+
             method_name = step_data.get("method_name", "Unknown")
             assign_var = step_data.get("assign_to_variable_name")
             params_config = step_data.get("parameters_config", {})
@@ -4482,9 +4970,12 @@ class MainWindow(QMainWindow):
         self.update_app_btn = QPushButton("🔄 Update App")
         self.always_on_top_button = QPushButton("📌 Always On Top: Off")
         self.user_manual_button = QPushButton("📘 User Manual") # <<< NEW LINE
+        self.find_step_button = QPushButton("🔍 Find Step")
         self.toggle_log_checkbox = QCheckBox("📋 Show Log")
+        self.recode_step_button = QPushButton("⏺️ Recode step")
         #create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
-        create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button,self.export_workflow_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button,self.user_manual_button]) #, self.toggle_log_checkbox]
+        create_section("Tools & Settings", [self.recode_step_button, self.open_screenshot_tool_button, self.view_workflow_button,self.export_workflow_button, self.find_step_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button,self.user_manual_button]) #, self.toggle_log_checkbox]
+
         
         # Connections
         #self.execute_all_button.clicked.connect(self.execute_all_steps)
@@ -4498,7 +4989,9 @@ class MainWindow(QMainWindow):
         self.rearrange_steps_button.clicked.connect(self.open_rearrange_steps_dialog)
         self.clear_selected_button.clicked.connect(self.clear_selected_steps)
         self.remove_all_steps_button.clicked.connect(self.clear_all_steps)
+        self.recode_step_button.clicked.connect(self.start_recode_step)
         self.open_screenshot_tool_button.clicked.connect(self.open_screenshot_tool)
+
         self.view_workflow_button.clicked.connect(self._handle_view_workflow_click)
         self.export_workflow_button.clicked.connect(self._handle_export_workflow_to_image) # <<< ADD THIS LINE
         self.update_app_btn.clicked.connect(self.update_application)
@@ -4506,6 +4999,7 @@ class MainWindow(QMainWindow):
         self.set_wait_time_button.clicked.connect(self.set_wait_time)
         self.always_on_top_button.clicked.connect(self.toggle_always_on_top)
         self.user_manual_button.clicked.connect(self.open_user_manual) # <<< NEW LINE
+        self.find_step_button.clicked.connect(self._open_step_search_dialog)
 
         menu_layout.addStretch()
 
@@ -4584,6 +5078,7 @@ class MainWindow(QMainWindow):
         self.data_table_view = QTableView()
         self.data_table_view.setEditTriggers(QTableView.EditTrigger.NoEditTriggers) # Make it read-only
         self.data_table_view.setAlternatingRowColors(True)
+        self.data_table_view.doubleClicked.connect(self._handle_data_table_double_click)
         layout.addWidget(self.data_table_view)
 
         # Add the completed widget as a new tab
@@ -4614,6 +5109,12 @@ class MainWindow(QMainWindow):
         vars_panel = QWidget()
         vars_layout = QVBoxLayout(vars_panel)
         vars_layout.addWidget(QLabel("📊 Global Variables", objectName="section-header"))
+        
+        self.var_search_input = QLineEdit()
+        self.var_search_input.setPlaceholderText("Search variable...")
+        self.var_search_input.textChanged.connect(self._update_variables_list_display)
+        vars_layout.addWidget(self.var_search_input)
+        
         self.variables_list = QListWidget(); vars_layout.addWidget(self.variables_list)
         btn_layout = QHBoxLayout()
         
@@ -5413,6 +5914,71 @@ class MainWindow(QMainWindow):
         self.screenshot_window.screenshot_saved.connect(self._handle_screenshot_tool_closed)
         self.screenshot_window.show()
 
+    def start_recode_step(self):
+        self.hide()
+        self.recode_overlay = RecodeStepOverlay(self)
+        self.recode_overlay.finished.connect(self._handle_recode_step_finished)
+
+    def _handle_recode_step_finished(self, captured_steps):
+        self.show()
+        if not captured_steps:
+            self._log_to_console("Recode step cancelled.")
+            return
+            
+        dialog = RecodeConfigDialog(captured_steps, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            config_data = dialog.get_data()
+            
+            # Show insertion popup to select where to insert
+            insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+            if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_tree_item, insert_mode = insertion_dialog.get_insertion_point()
+                insert_data_index = self._calculate_flat_insertion_index(selected_tree_item, insert_mode)
+            else:
+                self._log_to_console("Step insertion cancelled. Recorded steps will not be added.")
+                return
+
+            for i, step in enumerate(config_data):
+                # 1. Save image to text
+                folder_name = step['image_folder']
+                filename = step['image_name']
+                
+                # Ensure the target directory exists
+                recorded_dir = os.path.join(self.base_directory, 'Click_image', folder_name)
+                os.makedirs(recorded_dir, exist_ok=True)
+                
+                file_path = os.path.join(recorded_dir, filename + ".txt")
+                # Handle potential overwrite or duplicate naming issues if necessary
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump({filename: step['base64']}, f)
+                
+                # 2. Add Unified Image Action Advanced step
+                click_step = {
+                    "type": "step",
+                    "class_name": "Bot_utility",
+                    "method_name": "image_action_advanced",
+                    "module_name": "Gui_Automate",
+                    "parameters_config": {
+                        "window_title": {"type": "hardcoded", "value": step['title']},
+                        "image_to_click": {"type": "hardcoded_file", "value": f"{folder_name}/{filename}"},
+                        "action_type": {"type": "hardcoded", "value": step['action_type']},
+                        "exit_if_found": {"type": "hardcoded", "value": step['exit_if_found']},
+                        "waiting_time": {"type": "hardcoded", "value": step['waiting_time']},
+                        "timeout": {"type": "hardcoded", "value": step['timeout']}
+                    },
+                    "assign_to_variable_name": ""
+                }
+                # Insert at the calculated index, incrementing for each subsequent step
+                self.added_steps_data.insert(insert_data_index + i, click_step)
+                
+            self._rebuild_execution_tree()
+            self._update_workflow_tab() 
+            self._save_workflow_to_temp_file()
+            self._log_to_console(f"Recode step finished. Added {len(config_data)} steps at index {insert_data_index}.")
+        else:
+            self._log_to_console("Recode configuration cancelled.")
+
+
     def _handle_screenshot_tool_closed(self, saved_filename: str) -> None:
         self.show()
         self._log_to_console(f"Screenshot tool closed. Saved filename: '{saved_filename}'")
@@ -5896,7 +6462,7 @@ class MainWindow(QMainWindow):
                 instance = class_obj(context=dummy_context)
                 dialog = instance.configure_data_hub(
                     parent_window=self,
-                    global_variables=list(self.global_variables.keys())
+                    global_variables=[str(k) for k in self.global_variables.keys()]
                 )
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     config_data = dialog.get_config_data()
@@ -6171,9 +6737,9 @@ class MainWindow(QMainWindow):
                 # 4. Call it, passing in the initial config data
                 dialog = config_method(
                     parent_window=self,
-                    global_variables=list(self.global_variables.keys()),
+                    global_variables=[str(k) for k in self.global_variables.keys()],
                     initial_config=initial_config,
-                    initial_variable=initial_variable
+                    initial_variable=str(initial_variable) if initial_variable is not None else None
                 )
 
                 # 5. Run the dialog and get the *new* data
@@ -6261,7 +6827,7 @@ class MainWindow(QMainWindow):
                     
             self.active_param_input_dialog = ParameterInputDialog(f"{class_name}.{method_name}", 
             params_for_dialog, 
-            list(self.global_variables.keys()), 
+            [str(k) for k in self.global_variables.keys()], 
             self._get_image_filenames(), 
             self.gui_communicator, 
             initial_parameters_config=dialog_parameters_config, 
@@ -7341,11 +7907,21 @@ class MainWindow(QMainWindow):
         if not self.global_variables:
             self.variables_list.addItem("No global variables defined.")
             return
+            
+        search_term = ""
+        if hasattr(self, 'var_search_input'):
+            search_term = self.var_search_input.text().lower()
+
         for name, value in self.global_variables.items():
+            if search_term and search_term not in name.lower():
+                continue
             value_str = repr(value)
             if len(value_str) > 60:
                 value_str = value_str[:57] + "..."
             self.variables_list.addItem(f"{name} = {value_str}")
+            
+        if self.variables_list.count() == 0 and search_term:
+            self.variables_list.addItem("No matching variables found.")
 
 # In MainWindow class, REPLACE the add_variable method
 
@@ -8892,12 +9468,12 @@ class MainWindow(QMainWindow):
         """
         Handles double-clicking a variable in the list. If the 'Data' tab is
         active, it attempts to display the variable's data in the table.
-        Now inspects lists for worksheets.
+        Supports DataFrames, Worksheets, HTML strings, and JSON objects.
         """
         # 1. Check if the "Data" tab is the active tab
         data_tab_index = -1
         for i in range(self.main_tab_widget.count()):
-            if self.main_tab_widget.tabText(i) == "📊 Data":
+            if "Data" in self.main_tab_widget.tabText(i):
                 data_tab_index = i
                 break
         
@@ -8910,43 +9486,78 @@ class MainWindow(QMainWindow):
             return
             
         value = self.global_variables.get(var_name)
-
         df = None
-        worksheet_to_display = None
 
-        # 3. Check the type of the value
+        # 3. Handle different data types
         try:
             if isinstance(value, pd.DataFrame):
                 df = value
             elif isinstance(value, OpenpyxlWorksheet):
-                worksheet_to_display = value
-            elif isinstance(value, list):
-                # --- NEW: Check first 5 items in the list ---
-                for sub_item in value[:5]: # Slices list, safe for lists < 5 items
-                    if isinstance(sub_item, OpenpyxlWorksheet):
-                        worksheet_to_display = sub_item
-                        self._log_to_console(f"Displaying worksheet found in list '@{var_name}'.")
-                        break # Found one, no need to check further
-            
-            # 4. Convert worksheet to DataFrame if one was found
-            if worksheet_to_display is not None:
                 # Convert openpyxl.Worksheet to a pandas DataFrame
-                data = worksheet_to_display.values
-                # Get the first row as columns
+                data = value.values
                 columns = next(data)[0:] 
-                # Create the DataFrame
                 df = pd.DataFrame(data, columns=columns)
+            elif isinstance(value, list):
+                # Check for list of worksheets or just a list of data
+                is_worksheet_list = False
+                for sub_item in value[:5]:
+                    if isinstance(sub_item, OpenpyxlWorksheet):
+                        is_worksheet_list = True
+                        data = sub_item.values
+                        columns = next(data)[0:] 
+                        df = pd.DataFrame(data, columns=columns)
+                        self._log_to_console(f"Displaying worksheet found in list '@{var_name}'.")
+                        break
+                
+                if not is_worksheet_list:
+                    # Regular list: show as a single column DataFrame
+                    df = pd.DataFrame({"List Items": value})
             
-            # 5. Display the DataFrame or clear the table
+            elif isinstance(value, dict):
+                # Dict: show as a JSON-formatted string in a single cell
+                try:
+                    import json
+                    json_str = json.dumps(value, indent=4)
+                    df = pd.DataFrame({"JSON Data": [json_str]})
+                except:
+                    df = pd.DataFrame({"Dictionary": [str(value)]})
+            
+            elif isinstance(value, str):
+                # String: check if it looks like HTML or JSON
+                trimmed = value.strip()
+                if trimmed.lower().startswith(("<!doctype html>", "<html", "<body")):
+                    df = pd.DataFrame({"HTML Content": [value]})
+                elif (trimmed.startswith('{') and trimmed.endswith('}')) or (trimmed.startswith('[') and trimmed.endswith(']')):
+                    df = pd.DataFrame({"JSON/String Data": [value]})
+                else:
+                    df = pd.DataFrame({"Text Value": [value]})
+            
+            else:
+                # Other types: show as string
+                df = pd.DataFrame({f"{type(value).__name__}": [str(value)]})
+
+            # 4. Display the DataFrame
             if df is not None:
                 self._display_dataframe_in_table(df)
             else:
-                # Clear the table if the type is not displayable
                 self.data_table_view.setModel(None)
                 
         except Exception as e:
             self._log_to_console(f"Error displaying variable '{var_name}': {e}")
             self.data_table_view.setModel(None)
+
+    def _handle_data_table_double_click(self, index: QModelIndex) -> None:
+        """
+        Opens a detail dialog for the double-clicked cell.
+        This allows viewing full HTML, JSON, or long text.
+        """
+        try:
+            content = str(index.data())
+            if content:
+                dialog = CellDetailDialog(content, self)
+                dialog.exec()
+        except Exception as e:
+            self._log_to_console(f"Error opening cell detail: {e}")
             
     def _display_dataframe_in_table(self, df: pd.DataFrame) -> None:
         """
@@ -9273,6 +9884,27 @@ class MainWindow(QMainWindow):
             error_message = f"An unexpected error occurred while trying to open the user manual: {e}"
             self._log_to_console(f"CRITICAL: {error_message}")
             QMessageBox.critical(self, "Error", error_message)
+    def _open_step_search_dialog(self):
+        """Opens the step search dialog."""
+        if not self.added_steps_data:
+            QMessageBox.information(self, "Empty Workflow", "There are no steps to search.")
+            return
+            
+        dialog = StepSearchDialog(self.added_steps_data, self)
+        dialog.step_selected.connect(self._handle_step_search_selection)
+        dialog.exec()
+
+    def _handle_step_search_selection(self, step_index: int):
+        """Handles selecting a step from the search results."""
+        # 1. Switch to Workflow tab
+        self._update_workflow_tab(switch_to_tab=True)
+        
+        # 2. Center on the selected step
+        # We use a small delay to ensure the tab has finished switching/rendering
+        QTimer.singleShot(300, lambda: self._center_workflow_canvas_on_step(step_index))
+        
+        self._log_to_console(f"Navigating to step {step_index + 1} via search.")
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     

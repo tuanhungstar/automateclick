@@ -20,3 +20,6 @@ sqlalchemy
 pyperclipimg
 cryptography
 webdriver-manager
+gspread
+google-auth
+beautifulsoup4
