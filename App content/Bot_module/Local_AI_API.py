@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageGrab
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QDialogButtonBox,
     QComboBox, QWidget, QGroupBox, QMessageBox, QLabel,
-    QHBoxLayout, QRadioButton, QFileDialog, QTextEdit, QCheckBox
+    QHBoxLayout, QRadioButton, QFileDialog, QTextEdit, QCheckBox, QSpinBox
 )
 from PyQt6.QtCore import Qt
 
@@ -47,7 +47,7 @@ class _LocalAIDialog(QDialog):
         url_group = QGroupBox("Local AI Server URL")
         url_layout = QFormLayout(url_group)
         self.url_hardcode_radio = QRadioButton("Enter URL Directly:")
-        self.url_hardcode_input = QLineEdit("http://api-localai.germantest.net")
+        self.url_hardcode_input = QLineEdit("http://localhost:8001")
         self.url_variable_radio = QRadioButton("Select Global Variable:")
         self.url_variable_combo = QComboBox()
         self.url_variable_combo.addItems(["-- Select --"] + [str(v) for v in self.global_variables])
@@ -71,7 +71,13 @@ class _LocalAIDialog(QDialog):
             "/detect (Object Detection)",
             "/prompt (Prompt Generation)",
             "/extract-product (Product Extraction)",
-            "/extract-product-from-text (Plaintext Product Extraction)"
+            "/extract-product-from-text (Plaintext Product Extraction)",
+            "--- RAG Model (port 8001) ---",
+            "/classify (RAG: Classify Product)",
+            "/ingest-history (RAG: Ingest History XLSX/CSV)",
+            "/ingest (RAG: Ingest Document PDF/TXT)",
+            "/health (RAG: Health Check)",
+            "/reset (RAG: Reset Database)"
         ])
         self.action_combo.currentIndexChanged.connect(self._on_action_changed)
         action_layout.addWidget(self.action_combo)
@@ -134,11 +140,22 @@ class _LocalAIDialog(QDialog):
         
         self.simulation_checkbox = QCheckBox("Simulation (Draw detection rectangles)")
         self.simulation_checkbox.setVisible(False) # Only for /detect
-        
+
+        # Chunk size — only for /ingest-history
+        self.chunk_size_label = QLabel("Chunk Size (rows):")
+        self.chunk_size_spin = QSpinBox()
+        self.chunk_size_spin.setRange(0, 1000000)
+        self.chunk_size_spin.setValue(500)
+        self.chunk_size_spin.setSpecialValueText("No chunking (send all at once)")
+        self.chunk_size_spin.setSingleStep(100)
+        self.chunk_size_label.setVisible(False)
+        self.chunk_size_spin.setVisible(False)
+
         file_layout.addRow(self.file_variable_radio, self.file_variable_combo)
         file_layout.addRow(self.file_hardcode_radio, file_path_layout)
         file_layout.addRow(self.capture_window_radio, self.win_title_input)
         file_layout.addRow(self.simulation_checkbox)
+        file_layout.addRow(self.chunk_size_label, self.chunk_size_spin)
         
         self.file_hardcode_radio.setChecked(True)
         main_layout.addWidget(self.file_group)
@@ -176,6 +193,8 @@ class _LocalAIDialog(QDialog):
         self.file_group.setVisible(False)
         self.source_type_label.setVisible(False)
         self.source_type_combo.setVisible(False)
+        self.chunk_size_label.setVisible(False)
+        self.chunk_size_spin.setVisible(False)
         
         if "/generate" in action:
             self.prompt_group.setTitle("Image Prompt")
@@ -220,6 +239,19 @@ class _LocalAIDialog(QDialog):
             self.prompt_group.setVisible(True)
             self.secondary_group.setTitle("Translation / Context")
             self.secondary_group.setVisible(True)
+        elif "/classify" in action:
+            self.prompt_group.setTitle("Product Info / Description")
+            self.prompt_group.setVisible(True)
+        elif "/ingest-history" in action:
+            self.file_group.setTitle("History File (XLSX or CSV)")
+            self.file_group.setVisible(True)
+            self.chunk_size_label.setVisible(True)
+            self.chunk_size_spin.setVisible(True)
+        elif "/ingest" in action:
+            self.file_group.setTitle("Document File (PDF or TXT)")
+            self.file_group.setVisible(True)
+        elif "/health" in action or "/reset" in action:
+            pass  # No inputs needed
         else:
             self.simulation_checkbox.setVisible(False)
 
@@ -268,8 +300,7 @@ class _LocalAIDialog(QDialog):
         
         self.simulation_checkbox.setChecked(config.get("simulation", False))
         self.source_type_combo.setCurrentText(config.get("source_type", "HTML Content"))
-
-        pass
+        self.chunk_size_spin.setValue(config.get("chunk_size", 500))
 
         if variable:
             if variable in self.global_variables:
@@ -321,6 +352,7 @@ class _LocalAIDialog(QDialog):
             "window_title": self.win_title_input.text().strip(),
             "simulation": self.simulation_checkbox.isChecked(),
             "source_type": self.source_type_combo.currentText(),
+            "chunk_size": self.chunk_size_spin.value(),
             "assign_to": self.get_assignment_variable()
         }
 
@@ -555,6 +587,91 @@ class Local_AI_API:
                 prompt_text = str(prompt)
                 secondary_text = secondary
                 response = requests.post(full_url, json={"word": prompt_text, "translation": secondary_text}, timeout=300)
+                response.raise_for_status()
+                result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
+
+            # --- RAG Model Endpoints (rag_model.py, default port 8001) ---
+            elif endpoint == "/classify":
+                if not prompt: raise ValueError("Product Info / Description is required for /classify")
+                payload = {"product_info": str(prompt)}
+                response = requests.post(full_url, json=payload, timeout=300)
+                response.raise_for_status()
+                result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
+
+            elif endpoint == "/ingest-history":
+                if not file_path or not os.path.exists(file_path):
+                    raise ValueError(f"History file not found: {file_path}")
+
+                chunk_size = config_data.get("chunk_size", 0)
+
+                # --- CHUNKED UPLOAD ---
+                if chunk_size and chunk_size > 0:
+                    fname = os.path.basename(file_path).lower()
+                    if fname.endswith(".xlsx"):
+                        df_full = pd.read_excel(file_path)
+                    elif fname.endswith(".csv"):
+                        df_full = pd.read_csv(file_path)
+                    else:
+                        raise ValueError("Chunk mode only supports .xlsx or .csv files.")
+
+                    total_rows = len(df_full)
+                    total_chunks = (total_rows + chunk_size - 1) // chunk_size
+                    self._log(f"Chunked upload: {total_rows} rows → {total_chunks} chunks of {chunk_size} rows each.")
+
+                    temp_dir = os.path.join(os.path.dirname(__file__), "..", "temps")
+                    os.makedirs(temp_dir, exist_ok=True)
+
+                    total_ingested = 0
+                    chunk_results = []
+                    for chunk_idx in range(total_chunks):
+                        chunk_df = df_full.iloc[chunk_idx * chunk_size : (chunk_idx + 1) * chunk_size]
+                        chunk_file = os.path.join(temp_dir, f"ingest_chunk_{os.urandom(3).hex()}.csv")
+                        chunk_df.to_csv(chunk_file, index=False)
+                        self._log(f"Sending chunk {chunk_idx + 1}/{total_chunks} ({len(chunk_df)} rows)...")
+                        try:
+                            with open(chunk_file, "rb") as f:
+                                files = {"file": (os.path.basename(chunk_file), f, "text/csv")}
+                                resp = requests.post(full_url, files=files, timeout=600)
+                            resp.raise_for_status()
+                            resp_json = resp.json()
+                            chunk_results.append(resp_json.get("message", str(resp_json)))
+                            total_ingested += len(chunk_df)
+                            self._log(f"Chunk {chunk_idx + 1} done: {resp_json.get('message', 'OK')}")
+                        finally:
+                            try: os.remove(chunk_file)
+                            except: pass
+
+                    result_data = json.dumps({
+                        "total_rows_sent": total_ingested,
+                        "chunks": total_chunks,
+                        "chunk_size": chunk_size,
+                        "results": chunk_results
+                    }, ensure_ascii=False, indent=2)
+
+                # --- SINGLE UPLOAD (no chunking) ---
+                else:
+                    with open(file_path, "rb") as f:
+                        files = {"file": (os.path.basename(file_path), f)}
+                        response = requests.post(full_url, files=files, timeout=600)
+                    response.raise_for_status()
+                    result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
+
+            elif endpoint == "/ingest":
+                if not file_path or not os.path.exists(file_path):
+                    raise ValueError(f"Document file not found: {file_path}")
+                with open(file_path, "rb") as f:
+                    files = {"file": (os.path.basename(file_path), f)}
+                    response = requests.post(full_url, files=files, timeout=300)
+                response.raise_for_status()
+                result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
+
+            elif endpoint == "/health":
+                response = requests.get(full_url, timeout=30)
+                response.raise_for_status()
+                result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
+
+            elif endpoint == "/reset":
+                response = requests.post(full_url, timeout=60)
                 response.raise_for_status()
                 result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
 
