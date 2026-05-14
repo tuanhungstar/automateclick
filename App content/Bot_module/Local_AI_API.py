@@ -73,6 +73,7 @@ class _LocalAIDialog(QDialog):
             "/prompt (Prompt Generation)",
             "/extract-product (Product Extraction)",
             "/extract-product-from-text (Plaintext Product Extraction)",
+            "/extract-product-from-image (Image Product Extraction)",
             "--- RAG Model (port 8001) ---",
             "/classify (RAG: Classify Product)",
             "/ingest-history (RAG: Ingest History XLSX/CSV)",
@@ -230,6 +231,13 @@ class _LocalAIDialog(QDialog):
             self.prompt_group.setTitle("Text Content")
             self.prompt_group.setVisible(True)
             self.secondary_group.setTitle("Product Name to Identify")
+            self.secondary_group.setVisible(True)
+        elif "/extract-product-from-image" in action:
+            self.file_group.setTitle("Image File / Capture / URL")
+            self.file_group.setVisible(True)
+            self.prompt_group.setTitle("Custom Prompt (Optional)")
+            self.prompt_group.setVisible(True)
+            self.secondary_group.setTitle("Target Product Name (Optional)")
             self.secondary_group.setVisible(True)
         elif "/extract-product" in action:
             self.prompt_group.setTitle("Content (HTML or URL)")
@@ -499,7 +507,7 @@ class Local_AI_API:
                 response.raise_for_status()
                 result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
 
-            elif endpoint in ["/detect", "/detect-precise"]:
+            elif endpoint in ["/detect", "/detect-precise", "/extract-product-from-image"]:
                 # --- INTEGRATED CAPTURE FOR /detect and /detect-precise ---
                 if config_data.get("file_source") == "capture":
                     win_title = config_data.get("window_title", "")
@@ -542,21 +550,47 @@ class Local_AI_API:
                     shot.save(file_path)
                     self._log(f"Captured high-res screenshot: {file_path} ({shot.width}x{shot.height})")
 
+                is_temp_file = False
+                if file_path and (file_path.startswith("http://") or file_path.startswith("https://")):
+                    self._log(f"Downloading image from URL: {file_path}")
+                    try:
+                        img_resp = requests.get(file_path, timeout=30)
+                        img_resp.raise_for_status()
+                        temp_dir = os.path.join(os.path.dirname(__file__), "..", "temps")
+                        os.makedirs(temp_dir, exist_ok=True)
+                        file_path_temp = os.path.join(temp_dir, f"dl_image_{os.urandom(4).hex()}.png")
+                        with open(file_path_temp, "wb") as f_out:
+                            f_out.write(img_resp.content)
+                        file_path = file_path_temp
+                        is_temp_file = True
+                    except Exception as e:
+                        raise ValueError(f"Failed to download image from URL: {e}")
+
                 if not file_path or not os.path.exists(file_path): raise ValueError(f"File not found: {file_path}")
                 
-                with open(file_path, "rb") as f:
-                    files = {"file": (os.path.basename(file_path), f)}
-                    if endpoint == "/detect-precise":
-                        # /detect-precise uses 'labels' Form parameter
-                        data = {"labels": str(prompt)}
-                        response = requests.post(full_url, data=data, files=files, timeout=600)
-                    else:
-                        # /detect uses 'prompt' Form parameter
-                        data = {"prompt": str(prompt)} if prompt else {}
-                        response = requests.post(full_url, data=data, files=files, timeout=300)
-                
-                response.raise_for_status()
-                ai_json = response.json()
+                try:
+                    with open(file_path, "rb") as f:
+                        files = {"file": (os.path.basename(file_path), f)}
+                        if endpoint == "/detect-precise":
+                            # /detect-precise uses 'labels' Form parameter
+                            data = {"labels": str(prompt)}
+                            response = requests.post(full_url, data=data, files=files, timeout=600)
+                        elif endpoint == "/extract-product-from-image":
+                            data = {}
+                            if prompt: data["prompt"] = str(prompt)
+                            if secondary: data["myproduct"] = str(secondary)
+                            response = requests.post(full_url, data=data, files=files, timeout=600)
+                        else:
+                            # /detect uses 'prompt' Form parameter
+                            data = {"prompt": str(prompt)} if prompt else {}
+                            response = requests.post(full_url, data=data, files=files, timeout=300)
+                    
+                    response.raise_for_status()
+                    ai_json = response.json()
+                finally:
+                    if is_temp_file and os.path.exists(file_path):
+                        try: os.remove(file_path)
+                        except: pass
                 
                 # --- SIMULATION MODE (DRAW RECTANGLES) ---
                 if config_data.get("simulation"):
