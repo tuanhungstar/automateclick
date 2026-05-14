@@ -25,8 +25,153 @@ import openpyxl
 import datetime
 from datetime import datetime
 import pyperclipimg
+from typing import Optional, List, Dict, Any
+
+# --- PyQt6 Imports ---
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, QDialogButtonBox,
+    QComboBox, QWidget, QGroupBox, QMessageBox, QLabel, QHBoxLayout, QRadioButton,
+    QCheckBox, QDoubleSpinBox
+)
+from PyQt6.QtCore import Qt
     
 from my_lib.shared_context import ExecutionContext as Context
+
+#
+# --- HELPER: The GUI Dialog for Bot Utility ---
+#
+class _BotUtilityDialog(QDialog):
+    def __init__(self, global_variables: List[str], parent: Optional[QWidget] = None,
+                 initial_config: Optional[Dict[str, Any]] = None,
+                 initial_variable: Optional[str] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Bot Utility Configuration")
+        self.setMinimumWidth(500)
+        self.global_variables = global_variables
+
+        main_layout = QVBoxLayout(self)
+
+        # 1. Action Selection
+        action_group = QGroupBox("Action Selection")
+        action_layout = QFormLayout(action_group)
+        self.method_combo = QComboBox()
+        self.method_combo.addItems([
+            "advance_action (AI Detection Action)",
+            "left_click (Image Recognition)",
+            "right_click (Image Recognition)",
+            "double_click (Image Recognition)",
+            "activate_window",
+            "maximize_window",
+            "close_window"
+        ])
+        self.method_combo.currentTextChanged.connect(self._on_method_changed)
+        action_layout.addRow("Method:", self.method_combo)
+        main_layout.addWidget(action_group)
+
+        # 2. Advance Action Configuration
+        self.advance_group = QGroupBox("Advance Action Settings")
+        advance_layout = QFormLayout(self.advance_group)
+        
+        self.ai_var_combo = QComboBox()
+        self.ai_var_combo.addItems(["-- Select Variable --"] + [str(v) for v in self.global_variables])
+        
+        self.label_input = QLineEdit()
+        self.label_input.setPlaceholderText("e.g., Liên hệ, Button Name")
+        
+        self.action_type_combo = QComboBox()
+        self.action_type_combo.addItems(["left click", "right click", "double click", "move mouse", "check if button appear", "check if button disappear"])
+        
+        advance_layout.addRow("AI Response (Variable):", self.ai_var_combo)
+        advance_layout.addRow("Target Label:", self.label_input)
+        advance_layout.addRow("Action Type:", self.action_type_combo)
+        
+        self.click_all_check = QCheckBox("Click All Matching Elements")
+        self.click_delay_spin = QDoubleSpinBox()
+        self.click_delay_spin.setRange(0.0, 60.0)
+        self.click_delay_spin.setValue(0.5)
+        self.click_delay_spin.setSuffix(" sec")
+        
+        advance_layout.addRow(self.click_all_check)
+        advance_layout.addRow("Delay between clicks:", self.click_delay_spin)
+        
+        main_layout.addWidget(self.advance_group)
+
+        # 3. Standard Image Action Configuration
+        self.image_group = QGroupBox("Image Action Settings")
+        image_layout = QFormLayout(self.image_group)
+        self.image_name_input = QLineEdit()
+        self.image_name_input.setPlaceholderText("Image name in Click_image folder")
+        image_layout.addRow("Image Name:", self.image_name_input)
+        main_layout.addWidget(self.image_group)
+
+        # 4. Window Action Configuration
+        self.window_group = QGroupBox("Window Action Settings")
+        window_layout = QFormLayout(self.window_group)
+        self.window_title_input = QLineEdit()
+        window_layout.addRow("Window Title:", self.window_title_input)
+        main_layout.addWidget(self.window_group)
+
+        # Buttons
+        self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        main_layout.addWidget(self.button_box)
+
+        # Connections
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+
+        self._on_method_changed(self.method_combo.currentText())
+        if initial_config: self._populate_from_initial_config(initial_config)
+
+    def _on_method_changed(self, method_name):
+        self.advance_group.setVisible("advance_action" in method_name)
+        self.image_group.setVisible("_click" in method_name)
+        self.window_group.setVisible("_window" in method_name or "advance_action" in method_name)
+
+    def _populate_from_initial_config(self, config):
+        method = config.get("method")
+        if method: self.method_combo.setCurrentText(method)
+        
+        if "advance_action" in method:
+            self.ai_var_combo.setCurrentText(config.get("ai_response_var", "-- Select Variable --"))
+            self.label_input.setText(config.get("target_label", ""))
+            self.action_type_combo.setCurrentText(config.get("action_type", "left click"))
+            self.click_all_check.setChecked(config.get("click_all", False))
+            self.click_delay_spin.setValue(config.get("delay", 0.5))
+        elif "_click" in method:
+            self.image_name_input.setText(config.get("image_to_click", ""))
+        elif "_window" in method:
+            self.window_title_input.setText(config.get("title", ""))
+
+    def get_executor_method_name(self) -> str:
+        method_text = self.method_combo.currentText()
+        return method_text.split(" ")[0]
+
+    def get_config_data(self) -> Optional[Dict[str, Any]]:
+        method = self.get_executor_method_name()
+        config = {"method": self.method_combo.currentText()}
+        
+        if method == "advance_action":
+            ai_var = self.ai_var_combo.currentText()
+            if ai_var == "-- Select Variable --":
+                QMessageBox.warning(self, "Input Error", "Please select an AI response variable.")
+                return None
+            config.update({
+                "ai_response": ai_var,
+                "target_label": self.label_input.text().strip(),
+                "action_type": self.action_type_combo.currentText(),
+                "window_title": self.window_title_input.text().strip(),
+                "click_all": self.click_all_check.isChecked(),
+                "delay": self.click_delay_spin.value()
+            })
+        elif "_click" in method:
+            config["image_to_click"] = self.image_name_input.text().strip()
+        elif "_window" in method:
+            config["title"] = self.window_title_input.text().strip()
+            
+        return config
+
+    def get_assignment_variable(self) -> Optional[str]:
+        return None # Usually these actions return True/False or None
 
 class Bot_utility:
     '''
@@ -46,6 +191,174 @@ class Bot_utility:
         
         self.click_image_folder_path = context.get_click_image_base_dir()
         pass
+
+    def configure_data_hub(self, parent_window: QWidget, global_variables: List[str], 
+                           initial_config: Optional[Dict[str, Any]] = None, 
+                           initial_variable: Optional[str] = None) -> QDialog:
+        """
+        Configures the Bot Utility actions.
+        """
+        return _BotUtilityDialog(
+            global_variables=global_variables, 
+            parent=parent_window,
+            initial_config=initial_config,
+            initial_variable=initial_variable
+        )
+        
+    def advance_action(self, ai_response, target_label, action_type="left click", window_title=None, click_all=False, delay=0.5):
+        """
+        Advanced action based on AI detection results.
+        """
+        self.context.add_log(f"{self.log_prefix} advance_action called. Label: '{target_label}', Action: '{action_type}', Click All: {click_all}")
+        try:
+            # 0. Resolve variable if name provided
+            if isinstance(ai_response, str):
+                self.context.add_log(f"{self.log_prefix} Attempting to resolve variable: {ai_response}")
+                resolved = self.context.get_variable(ai_response)
+                if resolved is not None:
+                    ai_response = resolved
+                    self.context.add_log(f"{self.log_prefix} Variable '{ai_response}' resolved successfully.")
+                else:
+                    self.context.add_log(f"{self.log_prefix} Variable '{ai_response}' not found or empty.")
+
+            # 1. Parse JSON from various input types
+            data = None
+            if isinstance(ai_response, pd.DataFrame):
+                self.context.add_log(f"{self.log_prefix} Processing DataFrame input.")
+                if not ai_response.empty:
+                    val = ai_response.iloc[0, 0]
+                    if isinstance(val, str):
+                        try: 
+                            data = json.loads(val)
+                            self.context.add_log(f"{self.log_prefix} Parsed JSON from first cell.")
+                        except: data = val
+                    else: data = val
+            elif isinstance(ai_response, str):
+                try: 
+                    data = json.loads(ai_response)
+                    self.context.add_log(f"{self.log_prefix} Parsed JSON from string.")
+                except: data = ai_response
+            elif isinstance(ai_response, dict):
+                data = ai_response
+                self.context.add_log(f"{self.log_prefix} Using dictionary input.")
+
+            if data is None:
+                self.context.add_log(f"{self.log_prefix} ERROR: Could not parse AI response (Data is None).")
+                return False
+
+            if isinstance(data, str):
+                try: 
+                    data = json.loads(data)
+                    self.context.add_log(f"{self.log_prefix} Parsed nested JSON string.")
+                except: pass
+
+            def find_key_recursive(obj, target_key):
+                if isinstance(obj, dict):
+                    if target_key in obj: return obj[target_key]
+                    for v in obj.values():
+                        res = find_key_recursive(v, target_key)
+                        if res: return res
+                elif isinstance(obj, list):
+                    for item in obj:
+                        res = find_key_recursive(item, target_key)
+                        if res: return res
+                return None
+
+            elements = find_key_recursive(data, "results") or find_key_recursive(data, "elements") or find_key_recursive(data, "objects")
+            
+            if not elements or not isinstance(elements, list):
+                if isinstance(data, list):
+                    elements = data
+                else:
+                    self.context.add_log(f"{self.log_prefix} ERROR: No elements found in AI response. Data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
+                    return False
+            
+            self.context.add_log(f"{self.log_prefix} Searching for label '{target_label}' in {len(elements)} elements.")
+            # 2. Find target label(s)
+            matching_elements = []
+            for el in elements:
+                label = el.get("label") or el.get("keyword") or ""
+                # If target_label is empty, match ALL elements found
+                if not target_label or str(label).lower().strip() == str(target_label).lower().strip():
+                    matching_elements.append(el)
+            
+            if not click_all and matching_elements:
+                matching_elements = [matching_elements[0]]
+                
+            # 3. Handle 'check' actions
+            if action_type == "check if button appear":
+                res = len(matching_elements) > 0
+                self.context.add_log(f"{self.log_prefix} Check appear '{target_label}': {res}")
+                return res
+            if action_type == "check if button disappear":
+                res = len(matching_elements) == 0
+                self.context.add_log(f"{self.log_prefix} Check disappear '{target_label}': {res}")
+                return res
+            
+            # 4. Handle interaction actions
+            if not matching_elements:
+                self.context.add_log(f"{self.log_prefix} Label '{target_label}' not found.")
+                return False
+            
+            self.context.add_log(f"{self.log_prefix} Found {len(matching_elements)} matches for '{target_label}'. Click All={click_all}")
+            
+            success_count = 0
+            for i, target_el in enumerate(matching_elements):
+                if i > 0 and delay > 0:
+                    self.context.add_log(f"{self.log_prefix} Waiting {delay}s before next click...")
+                    time.sleep(delay)
+                
+                pix = target_el.get("bbox_pixels")
+                if not pix:
+                    bbox = target_el.get("bbox") or target_el.get("box")
+                    if isinstance(bbox, list) and len(bbox) == 4:
+                        pix = {"xmin": bbox[0], "ymin": bbox[1], "xmax": bbox[2], "ymax": bbox[3]}
+                
+                if not pix:
+                    self.context.add_log(f"{self.log_prefix} No coordinates found for element {i+1}.")
+                    continue
+                
+                # Calculate center in image coordinates
+                img_x = (pix["xmin"] + pix["xmax"]) / 2
+                img_y = (pix["ymin"] + pix["ymax"]) / 2
+                
+                # Calculate screen coordinates using window offset
+                offset_x, offset_y = 0, 0
+                if window_title:
+                    wins = gw.getWindowsWithTitle(window_title)
+                    if wins:
+                        win = wins[0]
+                        offset_x, offset_y = win.left, win.top
+                        if win.isMaximized:
+                            offset_x += 8
+                            offset_y += 8
+                    else:
+                        self.context.add_log(f"{self.log_prefix} WARNING: Window '{window_title}' not found.")
+                
+                screen_x = img_x + offset_x
+                screen_y = img_y + offset_y
+                
+                act = str(action_type).lower().strip()
+                try:
+                    if act == "move mouse":
+                        pyautogui.moveTo(screen_x, screen_y, duration=0.2)
+                    elif act == "left click":
+                        pyautogui.click(screen_x, screen_y)
+                    elif act == "right click":
+                        pyautogui.rightClick(screen_x, screen_y)
+                    elif act == "double click":
+                        pyautogui.doubleClick(screen_x, screen_y)
+                    else:
+                        continue
+                    
+                    success_count += 1
+                except Exception as click_err:
+                    self.context.add_log(f"{self.log_prefix} Interaction {i+1} failed: {click_err}")
+
+            return success_count > 0
+        except Exception as e:
+            self.context.add_log(f"{self.log_prefix} Error in advance_action: {e}")
+            return False
         
     def click_ai_element(self, ai_response_json, label_to_click):
         """Clicks an element identified by AI coordinates in a JSON response.

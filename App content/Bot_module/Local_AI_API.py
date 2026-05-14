@@ -69,6 +69,7 @@ class _LocalAIDialog(QDialog):
             "/ocr (Image OCR)",
             "/invoice (Invoice Processing)",
             "/detect (Object Detection)",
+            "/detect-precise (High Precision Detection)",
             "/prompt (Prompt Generation)",
             "/extract-product (Product Extraction)",
             "/extract-product-from-text (Plaintext Product Extraction)",
@@ -218,7 +219,10 @@ class _LocalAIDialog(QDialog):
             self.prompt_group.setVisible(True)
         elif "/detect" in action:
             self.file_group.setTitle("Image File / Capture")
-            self.prompt_group.setTitle("Custom Prompt (Optional, e.g. 'List all buttons')")
+            if "/detect-precise" in action:
+                self.prompt_group.setTitle("Labels (Comma separated, e.g. 'Button 1, Button 2')")
+            else:
+                self.prompt_group.setTitle("Custom Prompt (Optional, e.g. 'List all buttons')")
             self.file_group.setVisible(True)
             self.prompt_group.setVisible(True)
             self.simulation_checkbox.setVisible(True)
@@ -495,8 +499,8 @@ class Local_AI_API:
                 response.raise_for_status()
                 result_data = json.dumps(response.json(), ensure_ascii=False, indent=2)
 
-            elif endpoint == "/detect":
-                # --- INTEGRATED CAPTURE FOR /detect ---
+            elif endpoint in ["/detect", "/detect-precise"]:
+                # --- INTEGRATED CAPTURE FOR /detect and /detect-precise ---
                 if config_data.get("file_source") == "capture":
                     win_title = config_data.get("window_title", "")
                     if not win_title: raise ValueError("Window Title is required for Integrated Capture")
@@ -524,10 +528,8 @@ class Local_AI_API:
                     except: pass
                     
                     # Capture the window area more robustly
-                    # Maximized windows often have a -8, -8 offset with extra border
                     left, top, width, height = win.left, win.top, win.width, win.height
                     if win.isMaximized:
-                        # Trim the invisible borders typical of maximized windows
                         left += 8
                         top += 8
                         width -= 16
@@ -535,49 +537,55 @@ class Local_AI_API:
                     
                     self._log(f"Capturing region: L:{left}, T:{top}, W:{width}, H:{height}")
                     
-                    # Use ImageGrab directly as it's often more reliable with DPI on Windows
-                    # Capture the absolute screen coordinates in full physical resolution
                     bbox = (max(0, left), max(0, top), left + width, top + height)
                     shot = ImageGrab.grab(bbox=bbox)
-                    
-                    # DO NOT RESIZE. Sending the full resolution image to the AI 
-                    # provides the best quality for OCR and object detection.
-                    # Our click utility in Gui_Automate already handles scaling 
-                    # by comparing AI image_size vs screen resolution.
-                    
                     shot.save(file_path)
                     self._log(f"Captured high-res screenshot: {file_path} ({shot.width}x{shot.height})")
 
                 if not file_path or not os.path.exists(file_path): raise ValueError(f"File not found: {file_path}")
-                data = {"prompt": str(prompt)} if prompt else {}
+                
                 with open(file_path, "rb") as f:
                     files = {"file": (os.path.basename(file_path), f)}
-                    response = requests.post(full_url, data=data, files=files, timeout=300)
+                    if endpoint == "/detect-precise":
+                        # /detect-precise uses 'labels' Form parameter
+                        data = {"labels": str(prompt)}
+                        response = requests.post(full_url, data=data, files=files, timeout=600)
+                    else:
+                        # /detect uses 'prompt' Form parameter
+                        data = {"prompt": str(prompt)} if prompt else {}
+                        response = requests.post(full_url, data=data, files=files, timeout=300)
+                
                 response.raise_for_status()
                 ai_json = response.json()
                 
-                # The server now returns pixel-perfect bbox_pixels mapped back 
-                # to the original image dimensions [xmin, ymin, xmax, ymax].
-                
                 # --- SIMULATION MODE (DRAW RECTANGLES) ---
-                if config_data.get("simulation") and "elements" in ai_json:
+                if config_data.get("simulation"):
                     try:
-                        temp_dir = os.path.join(os.path.dirname(__file__), "..", "temps")
-                        os.makedirs(temp_dir, exist_ok=True)
-                        debug_path = os.path.join(temp_dir, "debug_detect.png")
-                        
-                        with Image.open(file_path) as img:
-                            # Convert to RGB if necessary for drawing
-                            if img.mode != "RGB":
-                                img = img.convert("RGB")
-                            draw = ImageDraw.Draw(img)
-                            for el in ai_json["elements"]:
-                                pix = el.get("bbox_pixels")
-                                if pix:
-                                    draw.rectangle([pix["xmin"], pix["ymin"], pix["xmax"], pix["ymax"]], outline="red", width=3)
+                        elements = []
+                        if endpoint == "/detect":
+                            elements = ai_json.get("elements", [])
+                        elif endpoint == "/detect-precise":
+                            elements = ai_json.get("results", [])
+
+                        if elements:
+                            temp_dir = os.path.join(os.path.dirname(__file__), "..", "temps")
+                            os.makedirs(temp_dir, exist_ok=True)
+                            debug_path = os.path.join(temp_dir, f"debug_{endpoint.replace('/', '')}.png")
                             
-                            img.save(debug_path)
-                            self._log(f"Simulation image saved: {debug_path}")
+                            with Image.open(file_path) as img:
+                                if img.mode != "RGB":
+                                    img = img.convert("RGB")
+                                draw = ImageDraw.Draw(img)
+                                for el in elements:
+                                    pix = el.get("bbox_pixels")
+                                    if pix:
+                                        draw.rectangle([pix["xmin"], pix["ymin"], pix["xmax"], pix["ymax"]], outline="red", width=3)
+                                        # Draw label text if available
+                                        label = el.get("label") or el.get("keyword") or "item"
+                                        draw.text((pix["xmin"], max(0, pix["ymin"] - 15)), label, fill="red")
+                                
+                                img.save(debug_path)
+                                self._log(f"Simulation image saved: {debug_path}")
                     except Exception as de:
                         self._log(f"Simulation Error: {de}")
 
