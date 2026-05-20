@@ -4225,7 +4225,7 @@ class WorkflowCanvas(QWidget):
     def _show_context_menu(self, pos: QPoint, clicked_node_data: Optional[Dict] = None):
         """Shows a context menu with workflow options."""
         context_menu = QMenu(self)
-        configure_action, execute_action, save_template_action = None, None, None # <-- Add save_template_action
+        configure_action, copy_action, delete_action, execute_action, save_template_action = None, None, None, None, None # <-- Add copy_action, delete_action
         
         if clicked_node_data:
             step_type = clicked_node_data.get("type")
@@ -4254,9 +4254,11 @@ class WorkflowCanvas(QWidget):
 
             if step_type in ["step", "loop_start", "IF_START", "group_start"]:
                 configure_action = context_menu.addAction("⚙️ Configure Parameters")
+                copy_action = context_menu.addAction("📋 Copy Step")
+                delete_action = context_menu.addAction("🗑️ Delete Step")
 
             # Add separator if any primary actions exist
-            if execute_action or configure_action or save_template_action: context_menu.addSeparator()
+            if execute_action or configure_action or save_template_action or delete_action: context_menu.addSeparator()
         
         redraw_action = context_menu.addAction("🔄 Smart Redraw Layout")
         reset_zoom_action = context_menu.addAction("🔍 Reset Zoom")
@@ -4266,6 +4268,8 @@ class WorkflowCanvas(QWidget):
         
         if action == execute_action and clicked_node_data: self.execute_step_requested.emit(clicked_node_data)
         elif action == configure_action and clicked_node_data: self.main_window.edit_step_from_data(clicked_node_data)
+        elif action == copy_action and clicked_node_data: self.main_window.copy_step_from_data(clicked_node_data)
+        elif action == delete_action and clicked_node_data: self.main_window._handle_delete_request(clicked_node_data)
         # --- START: Handle the new action ---
         elif action == save_template_action and clicked_node_data:
             # We can directly call the existing handler method from MainWindow
@@ -4972,7 +4976,7 @@ class MainWindow(QMainWindow):
         self.user_manual_button = QPushButton("📘 User Manual") # <<< NEW LINE
         self.find_step_button = QPushButton("🔍 Find Step")
         self.toggle_log_checkbox = QCheckBox("📋 Show Log")
-        self.recode_step_button = QPushButton("⏺️ Recode step")
+        self.recode_step_button = QPushButton("⏺️ Record step")
         #create_section("Tools & Settings", [self.open_screenshot_tool_button, self.view_workflow_button, self.update_app_btn, self.always_on_top_button, self.toggle_log_checkbox])
         create_section("Tools & Settings", [self.recode_step_button, self.open_screenshot_tool_button, self.view_workflow_button,self.export_workflow_button, self.find_step_button, self.set_wait_time_button, self.update_app_btn, self.always_on_top_button,self.user_manual_button]) #, self.toggle_log_checkbox]
 
@@ -6909,6 +6913,190 @@ class MainWindow(QMainWindow):
                 self._save_workflow_to_temp_file()
         elif step_type in ["loop_end", "ELSE", "IF_END", "group_end"]:
             QMessageBox.information(self, "Edit Block Marker", "To change parameters, edit the corresponding 'Start' block.")
+
+    def copy_step_in_execution_tree(self, step_data_dict: Dict[str, Any]) -> None:
+        """
+        Copies a step by opening its configuration dialog and then asking for an insertion point.
+        """
+        if not step_data_dict or not isinstance(step_data_dict, dict):
+            QMessageBox.warning(self, "Invalid Data", "Cannot copy this item type or no data found.")
+            return
+            
+        step_type = step_data_dict["type"]
+        new_step_data = None
+        new_steps_to_insert = [] # For blocks like Loop (Start+End) or IF (Start+Else+End)
+
+        # =================================================================
+        # --- PART 1: CONFIGURE THE COPIED STEP ---
+        # =================================================================
+        
+        custom_config_method_name = step_data_dict.get("custom_config_method")
+        executor_method_name = step_data_dict.get("method_name")
+
+        if not custom_config_method_name and executor_method_name == "_execute_data_hub_task":
+            custom_config_method_name = "configure_data_hub"
+
+        if custom_config_method_name:
+            try:
+                class_name = step_data_dict["class_name"]
+                module_name = step_data_dict["module_name"]
+                params_config = step_data_dict.get("parameters_config")
+                config_data_val = params_config.get("config_data") if params_config else None
+                initial_config = config_data_val.get("value") if config_data_val else {}
+                initial_variable = step_data_dict.get("assign_to_variable_name")
+
+                if self.module_directory not in sys.path:
+                    sys.path.insert(0, self.module_directory)
+                module = importlib.import_module(module_name)
+                importlib.reload(module)
+                class_obj = getattr(module, class_name)
+                dummy_context = ExecutionContext()
+                dummy_context.set_gui_communicator(self.gui_communicator)
+                instance = class_obj(context=dummy_context)
+                config_method = getattr(instance, custom_config_method_name)
+
+                dialog = config_method(
+                    parent_window=self,
+                    global_variables=[str(k) for k in self.global_variables.keys()],
+                    initial_config=initial_config,
+                    initial_variable=str(initial_variable) if initial_variable is not None else None
+                )
+
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    new_config_data = dialog.get_config_data()
+                    if new_config_data is None: return
+                    
+                    new_executor_method = dialog.get_executor_method_name()
+                    new_assign_var = dialog.get_assignment_variable()
+
+                    if new_assign_var and new_assign_var not in self.global_variables:
+                        self.global_variables[new_assign_var] = None
+                        self._update_variables_list_display()
+
+                    new_step_data = step_data_dict.copy()
+                    new_step_data.update({
+                        "parameters_config": {"config_data": {"type": "hardcoded", "value": new_config_data}},
+                        "assign_to_variable_name": new_assign_var,
+                        "method_name": new_executor_method,
+                        "custom_config_method": custom_config_method_name
+                    })
+                    # Remove original index so it doesn't conflict
+                    if "original_listbox_row_index" in new_step_data: del new_step_data["original_listbox_row_index"]
+                    new_steps_to_insert = [new_step_data]
+
+            except Exception as e:
+                QMessageBox.critical(self, "Copy Error", f"Could not open configuration for copying:\n{e}")
+                return
+            finally:
+                if self.module_directory in sys.path: sys.path.remove(self.module_directory)
+
+        elif step_type == "step":
+            try:
+                class_name, method_name, module_name = step_data_dict["class_name"], step_data_dict["method_name"], step_data_dict["module_name"]
+                parameters_config = step_data_dict.get("parameters_config", {})
+                assign_var = step_data_dict.get("assign_to_variable_name")
+                dialog_params = {k: v for k, v in parameters_config.items() if k != "original_listbox_row_index"}
+
+                if self.module_directory not in sys.path: sys.path.insert(0, self.module_directory)
+                module = importlib.import_module(module_name)
+                importlib.reload(module)
+                class_obj = getattr(module, class_name)
+                
+                # Inspect for docstring and params
+                init_kwargs = {}
+                if 'context' in inspect.signature(class_obj.__init__).parameters:
+                    init_kwargs['context'] = ExecutionContext()
+                temp_instance = class_obj(**init_kwargs)
+                method_obj = getattr(temp_instance, method_name)
+                func = method_obj.__func__ if inspect.ismethod(method_obj) else method_obj
+                sig = inspect.signature(func)
+                params_for_dialog = {p.name: (p.default, p.kind) for p in sig.parameters.values() if p.name not in ['self', 'context']}
+                doc = inspect.getdoc(method_obj) or ""
+
+                dialog = ParameterInputDialog(f"{class_name}.{method_name}", params_for_dialog, 
+                                             [str(k) for k in self.global_variables.keys()], self._get_image_filenames(), 
+                                             self.gui_communicator, initial_parameters_config=dialog_params, 
+                                             initial_assign_to_variable_name=assign_var, method_docstring=doc, parent=self)
+                
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    new_params = dialog.get_parameters_config()
+                    if new_params is None: return
+                    new_assign = dialog.get_assignment_variable()
+                    
+                    if new_assign and new_assign not in self.global_variables:
+                        self.global_variables[new_assign] = None
+                        self._update_variables_list_display()
+
+                    new_step_data = step_data_dict.copy()
+                    new_step_data.update({"parameters_config": new_params, "assign_to_variable_name": new_assign})
+                    if "original_listbox_row_index" in new_step_data: del new_step_data["original_listbox_row_index"]
+                    new_steps_to_insert = [new_step_data]
+
+            except Exception as e:
+                QMessageBox.critical(self, "Copy Error", f"Could not open configuration for copying:\n{e}")
+                return
+            finally:
+                if self.module_directory in sys.path: sys.path.remove(self.module_directory)
+
+        elif step_type == "loop_start":
+            loop_config = step_data_dict["loop_config"]
+            dialog = LoopConfigDialog(self.global_variables, parent=self, initial_config=loop_config)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_loop_config = dialog.get_config()
+                if new_loop_config is None: return
+                
+                new_iter_var = new_loop_config.get("assign_iteration_to_variable")
+                if new_iter_var and new_iter_var not in self.global_variables:
+                    self.global_variables[new_iter_var] = None
+                    self._update_variables_list_display()
+
+                self.loop_id_counter += 1
+                loop_id = f"loop_{self.loop_id_counter}"
+                start_data = {"type": "loop_start", "loop_id": loop_id, "loop_config": new_loop_config}
+                end_data = {"type": "loop_end", "loop_id": loop_id, "loop_config": new_loop_config}
+                new_steps_to_insert = [start_data, end_data]
+
+        elif step_type == "IF_START":
+            cond_config = step_data_dict["condition_config"]
+            dialog = ConditionalConfigDialog(self.global_variables, parent=self, initial_config=cond_config)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_cond_config = dialog.get_config()
+                if new_cond_config is None: return
+                
+                self.if_id_counter += 1
+                if_id = f"if_{self.if_id_counter}"
+                start_data = {"type": "IF_START", "if_id": if_id, "condition_config": new_cond_config}
+                else_data = {"type": "ELSE", "if_id": if_id, "condition_config": new_cond_config}
+                end_data = {"type": "IF_END", "if_id": if_id, "condition_config": new_cond_config}
+                new_steps_to_insert = [start_data, else_data, end_data]
+
+        elif step_type == "group_start":
+            group_name = step_data_dict.get("group_name", "")
+            new_name, ok = QInputDialog.getText(self, "Copy Group", "Enter name for the copied group:", text=group_name)
+            if ok and new_name:
+                self.group_id_counter += 1
+                group_id = f"group_{self.group_id_counter}"
+                start_data = {"type": "group_start", "group_id": group_id, "group_name": new_name}
+                end_data = {"type": "group_end", "group_id": group_id, "group_name": new_name}
+                new_steps_to_insert = [start_data, end_data]
+            else: return
+
+        # =================================================================
+        # --- PART 2: INSERT THE COPIED STEP(S) ---
+        # =================================================================
+        
+        if new_steps_to_insert:
+            insertion_dialog = StepInsertionDialog(self.execution_tree, parent=self)
+            if insertion_dialog.exec() == QDialog.DialogCode.Accepted:
+                selected_item, mode = insertion_dialog.get_insertion_point()
+                insert_idx = self._calculate_flat_insertion_index(selected_item, mode)
+                
+                for i, step in enumerate(new_steps_to_insert):
+                    self.added_steps_data.insert(insert_idx + i, step)
+                
+                self._update_original_listbox_row_indices()
+                self._rebuild_execution_tree(item_to_focus_data=new_steps_to_insert[0])
+                self._save_workflow_to_temp_file()
 
     def clear_selected_steps(self) -> None:
         selected_items = self.execution_tree.selectedItems()
@@ -9281,6 +9469,26 @@ class MainWindow(QMainWindow):
             
         else:
             QMessageBox.warning(self, "Edit Error", "Could not find the corresponding UI element.")
+
+    def copy_step_from_data(self, step_data: Dict[str, Any]):
+        """
+        Initiates the copy process for a step from the workflow canvas.
+        """
+        # 1. Get the unique identifier for the step
+        step_index = step_data.get("original_listbox_row_index")
+
+        # 2. Basic validation
+        if step_index is None:
+            QMessageBox.warning(self, "Copy Error", "The selected workflow shape has no valid identifier.")
+            return
+
+        # 3. Check if the index is valid
+        if not (0 <= step_index < len(self.added_steps_data)):
+            QMessageBox.warning(self, "Copy Error", f"The step index '{step_index}' is out of bounds.")
+            return
+
+        # 4. Perform the copy operation
+        self.copy_step_in_execution_tree(step_data)
 
 # In MainWindow class, add this new method:
 
