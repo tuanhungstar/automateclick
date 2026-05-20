@@ -142,8 +142,24 @@ class _ReadOutlookDialog(QDialog):
         self.existing_var_radio = QRadioButton("Existing Variable:"); self.existing_var_combo = QComboBox(); self.existing_var_combo.addItems(["-- Select --"] + global_variables)
         assign_layout.addRow(self.assign_results_check); assign_layout.addRow(self.new_var_radio, self.new_var_input); assign_layout.addRow(self.existing_var_radio, self.existing_var_combo)
         main_layout.addWidget(assign_group)
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter existing variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
         
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel); main_layout.addWidget(self.button_box)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        current = self.existing_var_combo.currentText()
+        self.existing_var_combo.blockSignals(True)
+        self.existing_var_combo.clear(); self.existing_var_combo.addItems(filtered)
+        if current in filtered: self.existing_var_combo.setCurrentText(current)
+        self.existing_var_combo.blockSignals(False)
 
         # Connections
         self.load_folders_button.clicked.connect(self._load_folders)
@@ -444,8 +460,26 @@ class _SendOutlookDialog(QDialog):
         
         main_layout.addLayout(form_layout)
         
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         main_layout.addWidget(self.button_box)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower() and v != "-- Select Variable --"]
+        combos = [self.to_combo, self.cc_combo, self.bcc_combo, self.subject_combo, self.body_combo, self.attach_combo]
+        for combo in combos:
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(filtered)
+            if current in filtered: combo.setCurrentText(current)
+            combo.blockSignals(False)
 
         # Connections
         self.button_box.accepted.connect(self.accept)

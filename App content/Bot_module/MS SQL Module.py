@@ -100,11 +100,29 @@ class _MssqlConfigDialog(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.win_auth_radio.setChecked(True)
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter existing variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+        if initial_config:
+            self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        current = self.existing_var_combo.currentText()
+        self.existing_var_combo.blockSignals(True)
+        self.existing_var_combo.clear(); self.existing_var_combo.addItems(filtered)
+        if current in filtered: self.existing_var_combo.setCurrentText(current)
+        self.existing_var_combo.blockSignals(False)
         self.assign_checkbox.setChecked(True)
         self.new_var_radio.setChecked(True)
         self._toggle_auth_widgets()
         self._toggle_assignment_widgets()
-        self._populate_from_initial_config(initial_config, initial_variable)
 
     def _toggle_auth_widgets(self):
         is_sql_auth = self.sql_auth_radio.isChecked()
@@ -342,10 +360,35 @@ class _MssqlQueryDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         self.sql_from_text_radio.setChecked(True)
         self.assign_checkbox.setChecked(True)
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+        if initial_config:
+            self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_basic = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.sql_var_combo, filtered_basic)
+        _update(self.existing_var_combo, filtered_basic)
         self.new_var_radio.setChecked(True)
         self._toggle_sql_input_widgets()
         self._toggle_assignment_widgets()
-        if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
 
     def _toggle_sql_input_widgets(self):
         self.sql_statement_edit.setEnabled(self.sql_from_text_radio.isChecked())
@@ -675,9 +718,30 @@ class _MssqlWriteDialog(QDialog):
         #self.apply_button.clicked.connect(self._apply_changes)
         self.cancel_button.clicked.connect(self.reject)
         
-        # Initialize
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
         self._populate_from_initial_config()
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_df = ["-- Select DataFrame --"] + [v for v in self.df_variables if text.lower() in v.lower()]
         
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.df_var_combo, filtered_df)
+
     def _on_dataframe_changed(self, df_var_name: str):
         """When DataFrame changes, load all columns into the Exclude list"""
         if df_var_name == "-- Select DataFrame --":
@@ -1112,6 +1176,28 @@ class _MssqlMergeDialog(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
 
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_df = ["-- Select DataFrame --"] + [v for v in self.df_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.df_var_combo, filtered_df)
+
         self._populate_static_fields()
 
     def showEvent(self, event):
@@ -1483,6 +1569,28 @@ class _MssqlExecuteQueryDialog(QDialog):
         self.sql_from_text_radio.setChecked(True)
         self._toggle_sql_input_widgets()
         
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_basic = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.sql_var_combo, filtered_basic)
+
         if initial_config:
             self._populate_from_initial_config(initial_config)
 
@@ -1610,6 +1718,22 @@ class _MssqlCloseDialog(QDialog):
         if initial_config: self.conn_var_combo.setCurrentText(initial_config.get("connection_var", "-- Select Connection to Close --"))
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject); main_layout.addWidget(self.button_box)
+        
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter connection variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select Connection to Close --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        current = self.conn_var_combo.currentText()
+        self.conn_var_combo.blockSignals(True)
+        self.conn_var_combo.clear(); self.conn_var_combo.addItems(filtered)
+        if current in filtered: self.conn_var_combo.setCurrentText(current)
+        self.conn_var_combo.blockSignals(False)
 
     def get_executor_method_name(self): return "_execute_mssql_close"
     def get_assignment_variable(self): return None
@@ -1726,6 +1850,29 @@ class _MssqlQueryUpdateDialog(QDialog):
         self.new_var_radio.setChecked(True)
         self._toggle_sql_input_widgets()
         self._toggle_assignment_widgets()
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_basic = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.sql_var_combo, filtered_basic)
+        _update(self.existing_var_combo, filtered_basic)
 
         if initial_config:
             self._populate_from_initial_config(initial_config, initial_variable)

@@ -460,30 +460,8 @@ class Code_Executor:
                 self._add_log(f"Made classes from '{module_name}' available to script.")
             if hasattr(context, 'global_variables_ref') and isinstance(context.global_variables_ref, dict): local_scope.update(context.global_variables_ref)
             
-            original_local_scope = dict(local_scope)
-            
             if code_to_run.strip():
                 exec(code_to_run, globals(), local_scope)
-                    
-            if hasattr(context, 'global_variables_ref') and isinstance(context.global_variables_ref, dict):
-                for var_name, value in local_scope.items():
-                    # Skip internal/special variables
-                    if var_name in ['__builtins__', 'context', 'original_local_scope', 'original_sys_path', 'code_to_run', 'imported_module_path']:
-                        continue
-                    
-                    # Sync back to global variables if the variable existed globally before OR if it was newly created in local scope
-                    # and the user might expect it to persist (common in simple scripts).
-                    # However, to avoid overwriting explicit context.set_variable calls, we check if the value in local_scope
-                    # is different from both the original and the current global value.
-                    
-                    is_new_var = var_name not in original_local_scope
-                    is_changed = value is not original_local_scope.get(var_name)
-                    
-                    if is_new_var or is_changed:
-                        # If the user ALREADY called context.set_variable, the current global value 
-                        # might be different from the local value. We prioritize the local value 
-                        # if it was also changed in the script, assuming the script's local state is the "latest".
-                        context.set_variable(var_name, value)
                     
             self._add_log(f"Code execution finished.")
             return None

@@ -188,7 +188,32 @@ class _OracleQueryDialog(QDialog):
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
         self.sql_from_text_radio.setChecked(True); self.assign_checkbox.setChecked(True); self.new_var_radio.setChecked(True)
         self._toggle_sql_input_widgets(); self._toggle_assignment_widgets()
-        if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+        if initial_config:
+            self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection Engine --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_basic = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.sql_var_combo, filtered_basic)
+        _update(self.existing_var_combo, filtered_basic)
     def _toggle_sql_input_widgets(self): self.sql_statement_edit.setEnabled(self.sql_from_text_radio.isChecked()); self.sql_var_combo.setEnabled(not self.sql_from_text_radio.isChecked())
     def _toggle_assignment_widgets(self):
         is_assign_enabled = self.assign_checkbox.isChecked()
@@ -339,7 +364,31 @@ class _OracleWriteDialog(_OracleWriteMergeBaseDialog):
         self.load_schema_button.clicked.connect(self._load_schema); self.create_new_table_checkbox.toggled.connect(self._toggle_target_widgets)
         self.table_tree.itemDoubleClicked.connect(lambda item: (self.new_schema_input.setText(item.parent().text(0)), self.new_table_input.setText(item.text(0))) if item.parent() else None)
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
-        self._toggle_target_widgets(); self._populate_from_initial_config()
+        
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+        self._toggle_target_widgets()
+        self._populate_from_initial_config()
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_df = ["-- Select DataFrame --"] + [v for v in self.df_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.df_var_combo, filtered_df)
+
     def _toggle_target_widgets(self): is_new = self.create_new_table_checkbox.isChecked(); self.new_schema_input.setEnabled(is_new); self.new_table_input.setEnabled(is_new); self.table_tree.setEnabled(not is_new)
     def _populate_from_initial_config(self):
         if not self.initial_config: self.create_new_table_checkbox.setChecked(True); self._toggle_target_widgets(); return
@@ -416,7 +465,31 @@ class _OracleMergeDialog(_OracleWriteMergeBaseDialog):
         self.add_join_condition_button.clicked.connect(lambda: self._add_row_to_layout(self.join_layout, self.join_condition_widgets, self._create_join_condition_row))
         self.add_update_column_button.clicked.connect(lambda: self._add_row_to_layout(self.update_layout, self.update_column_widgets, self._create_update_column_row))
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
-        self._populate_from_initial_config(); self._on_source_df_changed(self.df_var_combo.currentText())
+        
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+        self._populate_from_initial_config()
+        self._on_source_df_changed(self.df_var_combo.currentText())
+
+    def _apply_var_filter(self, text: str):
+        filtered_conn = ["-- Select Connection --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_df = ["-- Select DataFrame --"] + [v for v in self.df_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.conn_var_combo, filtered_conn)
+        _update(self.df_var_combo, filtered_df)
+
     def _on_source_df_changed(self, df_var_name):
         df = self._get_context_variable(df_var_name) if df_var_name != "-- Select DataFrame --" else None
         self.source_df_columns = sorted([c.upper() for c in df.columns]) if isinstance(df, pd.DataFrame) else []

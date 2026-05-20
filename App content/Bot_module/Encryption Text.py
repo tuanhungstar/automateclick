@@ -293,6 +293,29 @@ class _TextEncryptDialog(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
 
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+    def _apply_var_filter(self, text: str):
+        filtered_basic = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_var = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.variable_combo, filtered_var)
+        _update(self.password_variable_combo, filtered_var)
+        _update(self.existing_var_combo, filtered_basic)
+
         # Initial setup
         self.new_var_radio.setChecked(True)
         self._on_source_changed()
@@ -561,6 +584,29 @@ class _TextDecryptDialog(QDialog):
         self.test_button.clicked.connect(self._test_decryption)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+    def _apply_var_filter(self, text: str):
+        filtered_basic = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_var = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.variable_combo, filtered_var)
+        _update(self.password_variable_combo, filtered_var)
+        _update(self.existing_var_combo, filtered_basic)
 
         # Initial setup
         self.new_var_radio.setChecked(True)

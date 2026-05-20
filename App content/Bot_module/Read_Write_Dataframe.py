@@ -128,13 +128,20 @@ class _FileLoaderDialog(QDialog):
         main_layout.addWidget(column_group)
 
         # 5. Assign Results
-        assign_group = QGroupBox("Assign Results to Variable"); assign_layout = QFormLayout(assign_group)
-        self.assign_results_check = QCheckBox("Assign results (DataFrame) to a variable")
-        self.new_var_radio = QRadioButton("New Variable Name:"); self.new_var_input = QLineEdit("new_data")
-        self.existing_var_radio = QRadioButton("Existing Variable:"); self.existing_var_combo = QComboBox(); self.existing_var_combo.addItems(["-- Select --"] + global_variables)
-        assign_layout.addRow(self.assign_results_check); assign_layout.addRow(self.new_var_radio, self.new_var_input); assign_layout.addRow(self.existing_var_radio, self.existing_var_combo)
-        main_layout.addWidget(assign_group)
+        assign_group = QGroupBox("Assign Loaded DataFrame to Variable")
+        assign_layout = QFormLayout(assign_group)
+        self.assign_results_check = QCheckBox("Assign results to variable")
+        self.new_var_radio = QRadioButton("New Variable Name:")
+        self.new_var_input = QLineEdit("loaded_data")
+        self.existing_var_radio = QRadioButton("Existing Variable:")
+        self.existing_var_combo = QComboBox()
+        self.existing_var_combo.addItems(["-- Select --"] + self.global_variables)
         
+        assign_layout.addRow(self.assign_results_check)
+        assign_layout.addRow(self.new_var_radio, self.new_var_input)
+        assign_layout.addRow(self.existing_var_radio, self.existing_var_combo)
+        main_layout.addWidget(assign_group)
+
         # Dialog Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         main_layout.addWidget(self.button_box)
@@ -153,6 +160,14 @@ class _FileLoaderDialog(QDialog):
         self._toggle_assignment_widgets(True)
         self.assign_results_check.setChecked(True)
         self.new_var_radio.setChecked(True)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        current = self.existing_var_combo.currentText()
+        self.existing_var_combo.blockSignals(True)
+        self.existing_var_combo.clear(); self.existing_var_combo.addItems(filtered)
+        if current in filtered: self.existing_var_combo.setCurrentText(current)
+        self.existing_var_combo.blockSignals(False)
 
     def _browse_for_file(self):
         file_type = self.file_type_combo.currentText()
@@ -338,9 +353,16 @@ class _FileWriterDialog(QDialog):
         self.browse_button = QPushButton("Browse...")
         path_layout = QHBoxLayout(); path_layout.addWidget(self.file_path_edit); path_layout.addWidget(self.browse_button)
         
-        self.path_var_combo = QComboBox()
-        self.path_var_combo.addItems(["-- Select Variable --"] + self.global_variables)
+        self.path_var_combo = QComboBox(); self.path_var_combo.addItems(["-- Select Variable --"] + self.global_variables)
         self.path_var_combo.setEnabled(False)
+        
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
 
         source_layout.addRow("DataFrame to Save:", self.df_var_combo)
         source_layout.addRow("Save as File Type:", self.file_type_combo)
@@ -371,6 +393,20 @@ class _FileWriterDialog(QDialog):
 
         self._on_file_type_changed(self.file_type_combo.currentText())
         if initial_config: self._populate_from_initial_config(initial_config)
+
+    def _apply_var_filter(self, text: str):
+        filtered_df = ["-- Select DataFrame --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        filtered_path = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.df_var_combo, filtered_df)
+        _update(self.path_var_combo, filtered_path)
 
     def _toggle_path_source(self):
         is_static = self.static_path_radio.isChecked()
@@ -1008,6 +1044,14 @@ class _FileMergerDialog(QDialog):
         self.new_var_radio.setChecked(True)
         main_layout.addWidget(assign_group)
 
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter existing variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
         # Dialog Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         main_layout.addWidget(self.button_box)
@@ -1020,6 +1064,14 @@ class _FileMergerDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
 
         if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        current = self.existing_var_combo.currentText()
+        self.existing_var_combo.blockSignals(True)
+        self.existing_var_combo.clear(); self.existing_var_combo.addItems(filtered)
+        if current in filtered: self.existing_var_combo.setCurrentText(current)
+        self.existing_var_combo.blockSignals(False)
 
     def _browse_for_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Select Folder Containing Files to Merge")
@@ -1217,6 +1269,14 @@ class _FolderReaderDialog(QDialog):
         self.new_var_radio.setChecked(True)
         main_layout.addWidget(assign_group)
 
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
         # Dialog Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         main_layout.addWidget(self.button_box)
@@ -1227,6 +1287,19 @@ class _FolderReaderDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
 
         if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _apply_var_filter(self, text: str):
+        filtered_basic = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.folder_var_combo, filtered_basic)
+        _update(self.existing_var_combo, filtered_basic)
 
     def _toggle_path_source(self, source: str):
         is_variable = (source == "From Variable")

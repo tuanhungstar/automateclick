@@ -185,7 +185,28 @@ class _LocalAIDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         
         self._on_action_changed()
-        if initial_config: self._populate_from_initial_config(initial_config, initial_variable)
+
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Filter global variables...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout)
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
+        if initial_config:
+            self._populate_from_initial_config(initial_config, initial_variable)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        combos = [self.url_variable_combo, self.prompt_variable_combo, 
+                  self.secondary_variable_combo, self.file_variable_combo, self.existing_var_combo]
+        for combo in combos:
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(filtered)
+            if current in filtered: combo.setCurrentText(current)
+            combo.blockSignals(False)
 
     def _on_action_changed(self):
         action = self.action_combo.currentText()

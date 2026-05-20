@@ -69,6 +69,19 @@ class _ExcelReadActionRow(QFrame):
         self.row_var_combo.currentTextChanged.connect(lambda t: self.row_spin.setDisabled(t != "-- Select Variable --"))
         self.new_var_radio.setChecked(True); self.existing_var_radio.toggled.connect(lambda c: self.existing_var_combo.setEnabled(c)); self.existing_var_combo.setEnabled(False)
         
+    def update_variable_combos(self, filtered_vars: List[str]):
+        """Updates all variable combos with filtered list, preserving selection."""
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+        
+        _update(self.col_var_combo, filtered_vars)
+        _update(self.row_var_combo, filtered_vars)
+        _update(self.existing_var_combo, ["-- Select --"] + [v for v in filtered_vars if v != "-- Select Variable --"])
+        
     def _on_action_changed(self, action: str):
         is_cell = (action == "Read Cell")
         self.row_label.setVisible(is_cell); self.row_spin.setVisible(is_cell); self.row_var_combo.setVisible(is_cell)
@@ -151,6 +164,19 @@ class _ExcelWriteActionRow(QFrame):
         self.row_var_combo.currentTextChanged.connect(lambda t: self.row_spin.setDisabled(t != "-- Select Variable --"))
         self.val_var_combo.currentTextChanged.connect(lambda t: self.val_edit.setDisabled(t != "-- Select Variable --"))
 
+    def update_variable_combos(self, filtered_vars: List[str]):
+        """Updates all variable combos with filtered list, preserving selection."""
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+
+        _update(self.col_var_combo, filtered_vars)
+        _update(self.row_var_combo, filtered_vars)
+        _update(self.val_var_combo, filtered_vars)
+
     def _on_col_var_changed(self, text):
         is_var = (text != "-- Select Variable --")
         self.col_combo.setDisabled(is_var)
@@ -225,6 +251,14 @@ class _ExcelReadDialog(QDialog):
         self.action_rows: List[_ExcelReadActionRow] = []
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel); main_layout.addWidget(self.button_box)
         
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Type keyword to filter dropdowns...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout) # Put at the top
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
         browse_btn.clicked.connect(self._browse_file); self.get_sheets_btn.clicked.connect(lambda: self._fetch_sheets_and_headers(True))
         self.sheet_dropdown.currentTextChanged.connect(self._on_sheet_selected)
         self.add_action_btn.clicked.connect(self._add_action_row)
@@ -232,6 +266,20 @@ class _ExcelReadDialog(QDialog):
         self.sheet_var_combo.currentTextChanged.connect(lambda t: self.sheet_name_edit.setDisabled(t != "-- Select Variable --"))
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
         if initial_config: self._populate_from_config(initial_config)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.file_var_combo, filtered)
+        _update(self.sheet_var_combo, filtered)
+        for row in self.action_rows: row.update_variable_combos(filtered)
 
     def _browse_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Excel", "", "Excel Files (*.xlsx *.xls *.xlsm)")
@@ -270,6 +318,11 @@ class _ExcelReadDialog(QDialog):
         if len(self.action_rows) >= 10: return
         row = _ExcelReadActionRow(self.global_variables, len(self.action_rows)); row.delete_btn.clicked.connect(lambda: self._remove_action_row(row))
         if self.current_headers: row.set_headers(self.current_headers)
+        # Apply current filter to new row
+        filter_text = self.filter_le.text()
+        if filter_text:
+            filtered = ["-- Select Variable --"] + [v for v in self.global_variables if filter_text.lower() in v.lower()]
+            row.update_variable_combos(filtered)
         self.actions_list_layout.addWidget(row); self.action_rows.append(row)
 
     def _remove_action_row(self, row):
@@ -363,6 +416,14 @@ class _ExcelWriteDialog(QDialog):
         self.save_check = QCheckBox("Save workbook after writing"); self.save_check.setChecked(True); main_layout.addWidget(self.save_check)
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel); main_layout.addWidget(self.button_box)
         
+        # --- Filter Setup ---
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filter Variables:"))
+        self.filter_le = QLineEdit(); self.filter_le.setPlaceholderText("Type keyword to filter dropdowns...")
+        filter_layout.addWidget(self.filter_le)
+        main_layout.insertLayout(0, filter_layout) # Put at the top
+        self.filter_le.textChanged.connect(self._apply_var_filter)
+
         browse_btn.clicked.connect(self._browse_file); self.get_sheets_btn.clicked.connect(lambda: self._fetch_sheets_and_headers(True))
         self.sheet_dropdown.currentTextChanged.connect(self._on_sheet_selected)
         self.add_action_btn.clicked.connect(self._add_action_row)
@@ -370,6 +431,20 @@ class _ExcelWriteDialog(QDialog):
         self.sheet_var_combo.currentTextChanged.connect(lambda t: self.sheet_name_edit.setDisabled(t != "-- Select Variable --"))
         self.button_box.accepted.connect(self.accept); self.button_box.rejected.connect(self.reject)
         if initial_config: self._populate_from_config(initial_config)
+
+    def _apply_var_filter(self, text: str):
+        filtered = ["-- Select Variable --"] + [v for v in self.global_variables if text.lower() in v.lower()]
+        
+        def _update(combo: QComboBox, items: List[str]):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(items)
+            if current in items: combo.setCurrentText(current)
+            combo.blockSignals(False)
+            
+        _update(self.file_var_combo, filtered)
+        _update(self.sheet_var_combo, filtered)
+        for row in self.action_rows: row.update_variable_combos(filtered)
 
     def _browse_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Excel", "", "Excel Files (*.xlsx *.xls)")
@@ -408,6 +483,11 @@ class _ExcelWriteDialog(QDialog):
         if len(self.action_rows) >= 10: return
         row = _ExcelWriteActionRow(self.global_variables, len(self.action_rows)); row.delete_btn.clicked.connect(lambda: self._remove_action_row(row))
         if self.current_headers: row.set_headers(self.current_headers)
+        # Apply current filter to new row
+        filter_text = self.filter_le.text()
+        if filter_text:
+            filtered = ["-- Select Variable --"] + [v for v in self.global_variables if filter_text.lower() in v.lower()]
+            row.update_variable_combos(filtered)
         self.actions_list_layout.addWidget(row); self.action_rows.append(row)
 
     def _remove_action_row(self, row):
@@ -448,6 +528,8 @@ class Excel_Write:
             row_idx = context.get_variable(action["row_var"]) if action["row_var"] else action["row"]
             val = context.get_variable(action["val_var"]) if action["val_var"] else action["val"]
             sheet[f"{col}{row_idx}"] = val
-            self._log(f"Wrote '{val}' to {col}{row_idx}")
+            log_val = str(val)
+            if len(log_val) > 100: log_val = log_val[:100] + "..."
+            self._log(f"Wrote '{log_val}' to {col}{row_idx}")
         if config_data.get("save"): wb.save(file_path)
         wb.close()
