@@ -11,7 +11,7 @@
                     "value": [
                         {
                             "var": "folder_link",
-                            "val": "D:/extract_project/pdf_folder"
+                            "val": "D:/extract_project/error"
                         },
                         {
                             "var": "folder_files_excel",
@@ -19,7 +19,7 @@
                         },
                         {
                             "var": "API_Key",
-                            "val": ""
+                            "val": "enteryourKEY"
                         }
                     ]
                 }
@@ -197,7 +197,7 @@
                 "config_data": {
                     "type": "hardcoded",
                     "value": {
-                        "code_string": "df_pdf_list = context.get_variable('pdf_file_list')\nexcel_folder = context.get_variable('folder_files_excel')\ni = context.get_variable('inerate_pd')\npdf_file_name = df_pdf_list.at[i,\"file_name\"]\npdf_file_name = pdf_file_name.replace('pdf','xlsx')\nexcel_link = excel_folder +'/'+pdf_file_name\ncontext.set_variable('excel_link',excel_link )",
+                        "code_string": "df_pdf_list = context.get_variable('pdf_file_list')\nexcel_folder = context.get_variable('folder_files_excel')\ni = context.get_variable('inerate_pd')\npdf_file_name = df_pdf_list.at[i,\"file_name\"]\npdf_file_name = pdf_file_name.replace('pdf','xlsx')\nexcel_link = excel_folder +'\\\\'+pdf_file_name\ncontext.set_variable('excel_link',excel_link )",
                         "imported_module_path": null,
                         "script_name": "create_excel_link"
                     }
@@ -264,7 +264,7 @@
                     "operator": "==",
                     "right_operand": {
                         "type": "hardcoded",
-                        "value": false
+                        "value": true
                     }
                 }
             },
@@ -283,7 +283,7 @@
                         "type": "variable",
                         "value": "whichAI"
                     },
-                    "operator": "==",
+                    "operator": "is not",
                     "right_operand": {
                         "type": "hardcoded",
                         "value": "Gemini"
@@ -333,7 +333,7 @@
                         "type": "variable",
                         "value": "whichAI"
                     },
-                    "operator": "==",
+                    "operator": "is not",
                     "right_operand": {
                         "type": "hardcoded",
                         "value": "Gemini"
@@ -384,7 +384,7 @@
                         "type": "variable",
                         "value": "whichAI"
                     },
-                    "operator": "==",
+                    "operator": "is not",
                     "right_operand": {
                         "type": "hardcoded",
                         "value": "Gemini"
@@ -490,7 +490,7 @@
                     "operator": "==",
                     "right_operand": {
                         "type": "hardcoded",
-                        "value": false
+                        "value": true
                     }
                 }
             },
@@ -520,7 +520,7 @@
                     "operator": "==",
                     "right_operand": {
                         "type": "hardcoded",
-                        "value": false
+                        "value": true
                     }
                 }
             },
@@ -546,21 +546,71 @@
                 970,
                 2450
             ]
+        },
+        {
+            "type": "step",
+            "class_name": "Merge_file",
+            "method_name": "_merge_files",
+            "module_name": "Read_Write_Dataframe",
+            "parameters_config": {
+                "config_data": {
+                    "type": "hardcoded",
+                    "value": {
+                        "folder_path": "D:/extract_project/excel",
+                        "file_type": "Excel",
+                        "keyword": "xlsx",
+                        "template_file": "AN 1 HQ021944A-AA PANTS SPR26.xlsx",
+                        "mismatch_strategy": "Align to template (add/drop cols)"
+                    }
+                }
+            },
+            "assign_to_variable_name": "merged_data",
+            "custom_config_method": "configure_data_hub",
+            "workflow_pos": [
+                970,
+                2570
+            ]
+        },
+        {
+            "type": "step",
+            "class_name": "File_Writer",
+            "method_name": "_save_file_data",
+            "module_name": "Read_Write_Dataframe",
+            "parameters_config": {
+                "config_data": {
+                    "type": "hardcoded",
+                    "value": {
+                        "dataframe_var": "merged_data",
+                        "use_var_path": false,
+                        "file_path": "D:/extract_project/combination.xlsx",
+                        "path_variable_name": "",
+                        "file_type": "Excel",
+                        "sheet_name": "Sheet1",
+                        "include_index": false
+                    }
+                }
+            },
+            "assign_to_variable_name": null,
+            "custom_config_method": "configure_data_hub",
+            "workflow_pos": [
+                970,
+                2690
+            ]
         }
     ],
     "global_variables": {
-        "gemini_cell": "```json\n[\n  {\n    \"item\": \"1\",\n    \"style no\": \"HQ021944A-AA PANTS SPR26 L\",\n    \"PO number\": \"DOTCOM 1-4500657661\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"528\",\n    \"price\": \"950.400\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"2\",\n    \"style no\": \"HQ021944A-AA PANTS SPR26 L\",\n    \"PO number\": \"INITIAL-11-4500657383\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"1606\",\n    \"price\": \"2890.800\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"3\",\n    \"style no\": \"HQ021944A-AA PANTS SPR26 L\",\n    \"PO number\": \"INITIAL-7-4500657383\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"1820\",\n    \"price\": \"3276.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"4\",\n    \"style no\": \"HQ021944A-AA PANTS SPR26 L\",\n    \"PO number\": \"INITIAL-8-4500657383\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"3288\",\n    \"price\": \"5918.400\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"5\",\n    \"style no\": \"HQ021944A-AA PANTS SPR26 L\",\n    \"PO number\": \"INITIAL-9-4500657383\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"7488\",\n    \"price\": \"13478.400\",\n    \"Currency\": \"USD\"\n  }\n]\n```",
+        "gemini_cell": "```json\n[\n  {\n    \"item\": \"1\",\n    \"style no\": \"KQ9R34 (KC/ 1938)\",\n    \"PO number\": \"1938\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"12096\",\n    \"price\": \"51649.920\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"2\",\n    \"style no\": \"KQ9U97\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"9600\",\n    \"price\": \"36864.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"3\",\n    \"style no\": \"KQ9V35\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"12000\",\n    \"price\": \"50280.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"4\",\n    \"style no\": \"KQ9W99 KC1939\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"12000\",\n    \"price\": \"45240.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"5\",\n    \"style no\": \"KQ9U97\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"4690\",\n    \"price\": \"18009.600\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"6\",\n    \"style no\": \"KQ9U97 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"5030\",\n    \"price\": \"19315.200\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"7\",\n    \"style no\": \"KQ9V35 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"12000\",\n    \"price\": \"50280.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"8\",\n    \"style no\": \"KQ9W99 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"4806\",\n    \"price\": \"18118.620\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"9\",\n    \"style no\": \"KQ9W99 KC1939\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"7194\",\n    \"price\": \"27121.380\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"10\",\n    \"style no\": \"KQ9U97\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"4690\",\n    \"price\": \"18009.600\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"11\",\n    \"style no\": \"KQ9U97 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"5030\",\n    \"price\": \"19315.200\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"12\",\n    \"style no\": \"KQ9V35 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"12000\",\n    \"price\": \"50280.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"13\",\n    \"style no\": \"KQ9W99 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"4806\",\n    \"price\": \"18118.620\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"14\",\n    \"style no\": \"KQ9W99 KC1939\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"7194\",\n    \"price\": \"27121.380\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"15\",\n    \"style no\": \"KQ9D61 (KC 1863)\",\n    \"PO number\": \"1863\",\n    \"deliery date\": \"20/12/2025\",\n    \"quantity\": \"18000\",\n    \"price\": \"58860.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"16\",\n    \"style no\": \"KQ9D61 (KC1859- KC 1862)\",\n    \"PO number\": \"1859\",\n    \"deliery date\": \"30/10/2025\",\n    \"quantity\": \"18000\",\n    \"price\": \"57240.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"17\",\n    \"style no\": \"KQ9D61 (KC1859- KC 1862)\",\n    \"PO number\": \"1862\",\n    \"deliery date\": \"20/12/2025\",\n    \"quantity\": \"36000\",\n    \"price\": \"114480.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"18\",\n    \"style no\": \"KQ9S55 (KC 1860-KC 1909)\",\n    \"PO number\": \"1860\",\n    \"deliery date\": \"30/10/2025\",\n    \"quantity\": \"18000\",\n    \"price\": \"58140.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"19\",\n    \"style no\": \"KQ9S55 (KC 1860-KC 1909)\",\n    \"PO number\": \"1909\",\n    \"deliery date\": \"30/12/2025\",\n    \"quantity\": \"44400\",\n    \"price\": \"143412.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"20\",\n    \"style no\": \"KQ9S55(KC 1864)\",\n    \"PO number\": \"1864\",\n    \"deliery date\": \"20/12/2025\",\n    \"quantity\": \"14400\",\n    \"price\": \"46512.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"21\",\n    \"style no\": \"KQ9S55 (KC 1865)\",\n    \"PO number\": \"1865\",\n    \"deliery date\": \"20/12/2025\",\n    \"quantity\": \"14400\",\n    \"price\": \"47088.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"22\",\n    \"style no\": \"KQ9S55 (KC 1908)\",\n    \"PO number\": \"1908\",\n    \"deliery date\": \"30/12/2025\",\n    \"quantity\": \"48000\",\n    \"price\": \"152640.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"23\",\n    \"style no\": \"KQ9D61 (KC 1859) L\",\n    \"PO number\": \"1859\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"4456\",\n    \"price\": \"14170.080\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"24\",\n    \"style no\": \"KQ9D61/ (KC1859KC 1862)\",\n    \"PO number\": \"1859\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"13544\",\n    \"price\": \"43069.920\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"25\",\n    \"style no\": \"KQ9S55 (KC 1860-KC 1909)\",\n    \"PO number\": \"1860\",\n    \"deliery date\": \"20/12/2025\",\n    \"quantity\": \"18592\",\n    \"price\": \"60052.160\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"26\",\n    \"style no\": \"KQ9S55 (KC 1860-KC 1909)\",\n    \"PO number\": \"1909\",\n    \"deliery date\": \"30/12/2025\",\n    \"quantity\": \"44400\",\n    \"price\": \"143412.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"27\",\n    \"style no\": \"KQ9S55 (KC 1908)\",\n    \"PO number\": \"1908\",\n    \"deliery date\": \"30/12/2025\",\n    \"quantity\": \"48000\",\n    \"price\": \"152640.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"28\",\n    \"style no\": \"KQ9U97/\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"4690\",\n    \"price\": \"18009.600\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"29\",\n    \"style no\": \"KQ9U97 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"5030\",\n    \"price\": \"19315.200\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"30\",\n    \"style no\": \"KQ9V35 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"12000\",\n    \"price\": \"50280.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"31\",\n    \"style no\": \"KQ9W99 F25 L\",\n    \"PO number\": \"2324\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"4806\",\n    \"price\": \"18118.620\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"32\",\n    \"style no\": \"KQ9W99 KC1939\",\n    \"PO number\": \"1939\",\n    \"deliery date\": \"10/12/2025\",\n    \"quantity\": \"7194\",\n    \"price\": \"27121.380\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"33\",\n    \"style no\": \"KT9D83\",\n    \"PO number\": \"1788\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"11380\",\n    \"price\": \"32433.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"34\",\n    \"style no\": \"KT9D83\",\n    \"PO number\": \"1788\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"11644\",\n    \"price\": \"33185.400\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"35\",\n    \"style no\": \"KT9L37\",\n    \"PO number\": \"1787\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"27893\",\n    \"price\": \"73916.450\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"36\",\n    \"style no\": \"KT9L37\",\n    \"PO number\": \"1787\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"14107\",\n    \"price\": \"37383.550\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"37\",\n    \"style no\": \"KT9W28\",\n    \"PO number\": \"1789\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"11593\",\n    \"price\": \"31880.750\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"38\",\n    \"style no\": \"KT9W28\",\n    \"PO number\": \"1789\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"13607\",\n    \"price\": \"37419.250\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"39\",\n    \"style no\": \"KT9139 S26\",\n    \"PO number\": \"2223\",\n    \"deliery date\": \"25/12/2025\",\n    \"quantity\": \"22800\",\n    \"price\": \"41040.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"40\",\n    \"style no\": \"KT9T32 S26\",\n    \"PO number\": \"2186\",\n    \"deliery date\": \"25/12/2025\",\n    \"quantity\": \"17400\",\n    \"price\": \"43500.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"41\",\n    \"style no\": \"KT9T32 S26\",\n    \"PO number\": \"2187\",\n    \"deliery date\": \"25/12/2025\",\n    \"quantity\": \"11400\",\n    \"price\": \"28500.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"42\",\n    \"style no\": \"KT9U30/ S26\",\n    \"PO number\": \"2223\",\n    \"deliery date\": \"25/12/2025\",\n    \"quantity\": \"66048\",\n    \"price\": \"127472.640\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"43\",\n    \"style no\": \"KT9D83\",\n    \"PO number\": \"1788\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"11380\",\n    \"price\": \"32433.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"44\",\n    \"style no\": \"KT9D83\",\n    \"PO number\": \"1788\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"11644\",\n    \"price\": \"33185.400\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"45\",\n    \"style no\": \"KT9L37\",\n    \"PO number\": \"1787\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"27893\",\n    \"price\": \"73916.450\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"46\",\n    \"style no\": \"KT9L37\",\n    \"PO number\": \"1787\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"14107\",\n    \"price\": \"37383.550\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"47\",\n    \"style no\": \"KT9W28\",\n    \"PO number\": \"1789\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"11593\",\n    \"price\": \"31880.750\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"48\",\n    \"style no\": \"KT9W28\",\n    \"PO number\": \"1789\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"13607\",\n    \"price\": \"37419.250\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"49\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08719-00 (02 750866)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"6000\",\n    \"price\": \"28020.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"50\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08720-00 (20 750869)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"4002\",\n    \"price\": \"18689.340\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"51\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08721-00 (02 750867)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"4800\",\n    \"price\": \"22416.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"52\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08722-00 (20 750870)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"1775\",\n    \"price\": \"8289.250\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"53\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08722-00 (20 750870)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"1633\",\n    \"price\": \"7773.080\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"54\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08723-00 (02 750868)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"3600\",\n    \"price\": \"16812.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"55\",\n    \"style no\": \"TTJK243040 F25\",\n    \"PO number\": \"08724-00 (20 750871)\",\n    \"deliery date\": \"15/09/2025\",\n    \"quantity\": \"2400\",\n    \"price\": \"11208.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"56\",\n    \"style no\": \"KS9T69 F25\",\n    \"PO number\": \"1786\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"22698\",\n    \"price\": \"83528.640\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"57\",\n    \"style no\": \"KS9T69 F25\",\n    \"PO number\": \"1786\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"5382\",\n    \"price\": \"19805.760\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"58\",\n    \"style no\": \"KT9D83\",\n    \"PO number\": \"1788\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"11380\",\n    \"price\": \"32433.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"59\",\n    \"style no\": \"KT9D83\",\n    \"PO number\": \"1788\",\n    \"deliery date\": \"10/10/2025\",\n    \"quantity\": \"11644\",\n    \"price\": \"33185.400\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"60\",\n    \"style no\": \"KT9L37\",\n    \"PO number\": \"1787\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"27893\",\n    \"price\": \"73916.450\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"61\",\n    \"style no\": \"KT9L37\",\n    \"PO number\": \"1787\",\n    \"deliery date\": \"12/09/2025\",\n    \"quantity\": \"14107\",\n    \"price\": \"37383.550\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"62\",\n    \"style no\": \"KT9W28\",\n    \"PO number\": \"1789\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"11593\",\n    \"price\": \"31880.750\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"63\",\n    \"style no\": \"KT9W28\",\n    \"PO number\": \"1789\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"13607\",\n    \"price\": \"37419.250\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"64\",\n    \"style no\": \"KQ9D61 (KC 1859) L\",\n    \"PO number\": \"1859\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"4456\",\n    \"price\": \"14170.080\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"65\",\n    \"style no\": \"KQ9D61 (KC1859-KC 1862)\",\n    \"PO number\": \"1859\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"13544\",\n    \"price\": \"43069.920\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"66\",\n    \"style no\": \"KQ9S55 (KC 1860-KC 1909)/\",\n    \"PO number\": \"1860\",\n    \"deliery date\": \"20/12/2025\",\n    \"quantity\": \"18592\",\n    \"price\": \"60052.160\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"67\",\n    \"style no\": \"KQ9S55 (KC 1860-KC 1909)\",\n    \"PO number\": \"1909\",\n    \"deliery date\": \"30/12/2025\",\n    \"quantity\": \"44400\",\n    \"price\": \"143412.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"68\",\n    \"style no\": \"KQ9S55 (KC 1908)\",\n    \"PO number\": \"1908\",\n    \"deliery date\": \"30/12/2025\",\n    \"quantity\": \"48000\",\n    \"price\": \"152640.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"69\",\n    \"style no\": \"KQ9R28 SS2025\",\n    \"PO number\": \"31 24 12992\",\n    \"deliery date\": \"22/10/2024\",\n    \"quantity\": \"21600\",\n    \"price\": \"96120.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"70\",\n    \"style no\": \"KQ9R54 SS2025\",\n    \"PO number\": \"31 24 12992\",\n    \"deliery date\": \"28/10/2024\",\n    \"quantity\": \"21600\",\n    \"price\": \"83160.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"71\",\n    \"style no\": \"KQ9S10 SS2025\",\n    \"PO number\": \"31 24 12992\",\n    \"deliery date\": \"22/10/2024\",\n    \"quantity\": \"21600\",\n    \"price\": \"83592.000\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"72\",\n    \"style no\": \"MS5FZ016 F25\",\n    \"PO number\": \"E12914 - 15737330\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"17663\",\n    \"price\": \"85488.920\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"73\",\n    \"style no\": \"MS5FZ016 F25\",\n    \"PO number\": \"E12914- 15737330\",\n    \"deliery date\": \"30/09/2025\",\n    \"quantity\": \"2341\",\n    \"price\": \"11330.440\",\n    \"Currency\": \"USD\"\n  },\n  {\n    \"item\": \"74\",\n    \"style no\": \"K4S502PM F25\",\n    \"PO number\": \"1014176\",\n    \"deliery date\": \"30/08/2025\",\n    \"quantity\": \"34020\",\n    \"price\": \"159894.000\",\n    \"Currency\": \"USD\"\n  }\n]\n```",
         "df_single": null,
         "folder_files": null,
         "df_all": null,
-        "number_of_file": 1,
-        "inerate": 1,
-        "pdf_file_link": "D:/extract_project/pdf_folder\\AN 1 HQ021944A-AA PANTS SPR26.pdf",
-        "excel_link": "D:/extract_project/excel/AN 1 HQ021944A-AA PANTS SPR26.xlsx",
-        "inerate_pd": 0,
+        "number_of_file": 8,
+        "inerate": 8,
+        "pdf_file_link": "D:/extract_project/error\\PO ANNEX PREMIER.pdf",
+        "excel_link": "D:/extract_project/excel\\PO ANNEX PREMIER.xlsx",
+        "inerate_pd": 7,
         "folder_files_excel": "D:/extract_project/excel",
         "isExtracted": true,
-        "folder_link": "D:/extract_project/pdf_folder",
+        "folder_link": "D:/extract_project/error",
         "pdf_file_list": null,
         "excel_file_list": null,
         "pd": null,
@@ -570,7 +620,8 @@
         "whichAI": "Local",
         "AI_response": null,
         "AI_prompt": "\n\n                You are a precise data extraction engine for Purchase Order in pdf file.\n\n                INSTRUCTIONS:\n\n                1. Identify the PO number, style no, deliery date, quantity, price information in pdf file and put them in json file\n                2. PO can file can content multiple items, please put all of tem in Json which user can convert to Dataframe later\n                3. item is sequency number, price is FOB Amount, convert e.g $ 950.400 to 950.400 put $ symbol in Currency column\n                Return ONLY a JSON object with this this structure for ALL items you find in the file:\n\n                [\n  {\n    \"item\": \"1\",\n    \"style no\": \"HQ021944A-AA PANTS SPR26 L\",\n    \"PO number\": \"DOTCOM 1-4500657661\",\n    \"deliery date\": \"15/12/2025\",\n    \"quantity\": \"528\",\n    \"price\": \"950.400\",\n    \"Currency\": \"USD\"\n  },\n]\n                \n",
-        "API_Key": "AIzaSyApBc_GE5ljOcn_aGOTvFlryYjJCcdYrQc",
-        "local_ai_response": null
+        "API_Key": "enteryourKEY",
+        "local_ai_response": null,
+        "merged_data": null
     }
 }
