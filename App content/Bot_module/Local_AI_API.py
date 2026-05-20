@@ -745,6 +745,15 @@ class Local_AI_API:
 
         except Exception as e:
             error_message = f"FATAL ERROR during Local AI call: {e}"
+            # Extract response object if available (e.g. from requests HTTPError or local variable)
+            resp_obj = None
+            if hasattr(e, 'response') and e.response is not None:
+                resp_obj = e.response
+            elif 'response' in locals() and response is not None:
+                resp_obj = response
+                
+            if resp_obj is not None and hasattr(resp_obj, 'text') and resp_obj.text:
+                error_message += f"\nRaw Server Response: {resp_obj.text[:1000]}"
             self._log(error_message)
             raise RuntimeError(error_message)
 

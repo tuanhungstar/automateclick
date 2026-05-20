@@ -355,11 +355,24 @@ class Gemini_API:
         try:
             # Handle file upload if path is provided and exists
             if file_path and os.path.exists(file_path):
-                self._log(f"Attempting to upload file: {os.path.basename(file_path)}")
+                filename = os.path.basename(file_path)
+                self._log(f"Attempting to upload file: {filename}")
                 
-                # FIX: Explicitly pass the file path using the keyword 'file='
-                # This resolves the "takes 1 positional argument but 2 were given" error.
-                uploaded_file = client.files.upload(file=file_path) 
+                # Guess mime type and fallback to application/octet-stream if unknown
+                mime_type, _ = mimetypes.guess_type(file_path)
+                if not mime_type:
+                    mime_type = "application/octet-stream"
+                
+                # Upload using a file-like object to prevent UnicodeEncodeError in httpx headers
+                # when the file path contains non-ASCII characters (e.g. Vietnamese).
+                with open(file_path, "rb") as f:
+                    uploaded_file = client.files.upload(
+                        file=f,
+                        config=types.UploadFileConfig(
+                            display_name=filename,
+                            mime_type=mime_type
+                        )
+                    )
                 
                 contents.append(uploaded_file)
                 self._log(f"File uploaded successfully to: {uploaded_file.uri}")
